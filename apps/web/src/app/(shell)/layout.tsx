@@ -1,11 +1,17 @@
-import { Nav } from "../_nav";
-import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
+import { supabaseServer } from "@/lib/supabase/server";
+import Nav from "./nav";
 
-export default function ShellLayout({ children }: { children: ReactNode }) {
+export default async function ShellLayout({ children }: { children: React.ReactNode }) {
+  const supabase = await supabaseServer();
+  const { data } = await supabase.auth.getUser();
+
+  if (!data?.user) redirect("/login");
+
   return (
-    <div>
+    <div className="min-h-screen w-full">
       <Nav />
-      <main style={{ padding: 16 }}>{children}</main>
+      <main className="w-full">{children}</main>
     </div>
   );
 }

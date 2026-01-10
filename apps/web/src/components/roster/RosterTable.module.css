@@ -1,12 +1,20 @@
+/* apps/web/src/components/roster/RosterTable.module.css
+ *
+ * Modern roster table styling:
+ * - Left-most status pill
+ * - Clean spacing + subtle hover
+ * - Responsive hide columns (md/lg)
+ */
+
 .card {
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 16px;
     background: #fff;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 10px 28px rgba(0, 0, 0, 0.06);
     overflow: hidden;
 }
 
-.cardHeader {
+.header {
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
@@ -17,24 +25,25 @@
 }
 
 .title {
+    font-weight: 750;
     font-size: 14px;
-    font-weight: 700;
     letter-spacing: -0.01em;
 }
 
 .subtitle {
-    margin-top: 2px;
+    margin-top: 3px;
     font-size: 12px;
-    color: rgba(0, 0, 0, 0.55);
+    opacity: 0.65;
 }
 
 .count {
     font-size: 12px;
-    color: rgba(0, 0, 0, 0.55);
+    opacity: 0.7;
     white-space: nowrap;
 }
 
-.tableWrap {
+.wrap {
+    width: 100%;
     overflow: auto;
 }
 
@@ -45,137 +54,101 @@
     font-size: 13px;
 }
 
-.theadTh {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    background: rgba(255, 255, 255, 0.92);
-    backdrop-filter: blur(8px);
+.table th {
     text-align: left;
-    padding: 12px 14px;
     font-size: 11px;
-    letter-spacing: 0.04em;
+    font-weight: 750;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
-    color: rgba(0, 0, 0, 0.55);
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.row {
-    cursor: pointer;
-    transition: background 140ms ease;
-}
-
-.rowOdd {
-    background: #ffffff;
-}
-
-.rowEven {
-    background: #fafafa;
-}
-
-.row:hover {
-    background: #f2f7ff;
-}
-
-.cell {
+    opacity: 0.75;
     padding: 12px 14px;
     border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    white-space: nowrap;
+}
+
+.table td {
+    padding: 14px 14px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
     vertical-align: middle;
     white-space: nowrap;
 }
 
-.name {
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    white-space: normal;
+.row {
+    cursor: pointer;
 }
 
-.entity {
-    font-weight: 600;
-    white-space: normal;
+.row:hover td {
+    background: rgba(0, 0, 0, 0.018);
 }
 
-.sub {
-    margin-top: 2px;
-    font-size: 12px;
-    color: rgba(0, 0, 0, 0.55);
-    white-space: normal;
+.colPill {
+    width: 110px;
 }
 
-.monoChip {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-        "Courier New", monospace;
-    font-size: 12px;
-    padding: 6px 10px;
-    border-radius: 10px;
-    background: rgba(0, 0, 0, 0.04);
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    display: inline-block;
+.colTech {
+    width: 120px;
+}
+
+.colName {
+    min-width: 240px;
 }
 
 .pill {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
+    justify-content: center;
     border-radius: 999px;
-    border: 1px solid rgba(0, 0, 0, 0.10);
+    padding: 6px 10px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 700;
+    border: 1px solid rgba(0, 0, 0, 0.08);
 }
 
 .pillActive {
-    background: #ecfdf5;
-    color: #047857;
-    border-color: rgba(4, 120, 87, 0.18);
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.22);
 }
 
 .pillInactive {
-    background: #fff1f2;
-    color: #be123c;
-    border-color: rgba(190, 18, 60, 0.18);
+    background: rgba(239, 68, 68, 0.10);
+    border-color: rgba(239, 68, 68, 0.22);
 }
 
-.dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
+.pillUnknown {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+    opacity: 0.8;
 }
 
-.dotActive {
-    background: #10b981;
+.primary {
+    font-weight: 700;
 }
 
-.dotInactive {
-    background: #fb7185;
+.secondary {
+    margin-top: 3px;
+    font-size: 12px;
+    opacity: 0.65;
+    max-width: 460px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+    opacity: 0.85;
 }
 
 .empty {
-    padding: 28px 18px;
-    color: rgba(0, 0, 0, 0.55);
-    text-align: left;
+    padding: 18px 14px;
+    font-size: 13px;
+    opacity: 0.75;
 }
 
-.colStatus {
-    width: 120px;
-}
-
-.colTech {
-    width: 140px;
-}
-
-/* responsive hides */
-.hideUpMd {
-    display: none;
-}
-
+/* Responsive hiding */
 @media (max-width: 768px) {
     .hideMd {
         display: none;
-    }
-
-    .hideUpMd {
-        display: block;
     }
 }
 

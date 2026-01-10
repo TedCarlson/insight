@@ -1,4 +1,9 @@
 // apps/web/src/components/roster/RosterTable.tsx
+//
+// Modern roster table renderer (status pill + tech id leading columns)
+// - Removes the confusing "—" secondary line under the name when no company/contractor exists
+// - Renames "Contractor" column to "Company"
+// - Company column renders contractor_name OR company_name (whichever exists)
 
 "use client";
 
@@ -7,90 +12,116 @@ import { useRouter } from "next/navigation";
 import type { RosterRow } from "@/lib/roster/types";
 import styles from "./RosterTable.module.css";
 
+type Props = {
+    rows: RosterRow[];
+};
+
 function fmt(v: string | null | undefined) {
-    return v && String(v).trim().length > 0 ? String(v) : "—";
+    return v && String(v).trim().length > 0 ? String(v) : "";
 }
 
-function entityLabel(r: RosterRow) {
-    if (r.contractor_name && r.contractor_name.trim()) return r.contractor_name;
-    if (r.company_name && r.company_name.trim()) return r.company_name;
-    return "—";
+function dashIfEmpty(v: string | null | undefined) {
+    const s = fmt(v);
+    return s ? s : "—";
 }
 
-function StatusPill({ active }: { active: boolean }) {
-    return (
-        <span className={`${styles.pill} ${active ? styles.pillActive : styles.pillInactive}`}>
-            <span className={`${styles.dot} ${active ? styles.dotActive : styles.dotInactive}`} />
-            {active ? "Active" : "Inactive"}
-        </span>
-    );
+function pillState(activeFlag: boolean | null | undefined): "active" | "inactive" | "unknown" {
+    if (activeFlag === true) return "active";
+    if (activeFlag === false) return "inactive";
+    return "unknown";
 }
 
-export default function RosterTable({ rows }: { rows: RosterRow[] }) {
+function companyOrContractor(r: RosterRow) {
+    // Only one should exist, but accept either
+    return fmt(r.company_name) || fmt(r.contractor_name) || "";
+}
+
+export default function RosterTable({ rows }: Props) {
     const router = useRouter();
-    const data = useMemo(() => rows ?? [], [rows]);
+    const data = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
+
+    function onRowClick(r: RosterRow) {
+        if (!r?.person_id) return;
+        router.push(`/roster/${String(r.person_id)}`);
+    }
 
     return (
         <section className={styles.card}>
-            <header className={styles.cardHeader}>
+            <div className={styles.header}>
                 <div>
                     <div className={styles.title}>Roster</div>
-                    <div className={styles.subtitle}>Click a row to view/edit</div>
+                    <div className={styles.subtitle}>People visible in current scope</div>
                 </div>
-                <div className={styles.count}>{data.length.toLocaleString()} shown</div>
-            </header>
 
-            <div className={styles.tableWrap}>
+                <div className={styles.count}>
+                    {data.length} row{data.length === 1 ? "" : "s"}
+                </div>
+            </div>
+
+            <div className={styles.wrap}>
                 <table className={styles.table}>
                     <thead>
                         <tr>
-                            <th className={`${styles.theadTh} ${styles.colStatus}`}>Status</th>
-                            <th className={`${styles.theadTh} ${styles.colTech}`}>Tech ID</th>
-                            <th className={styles.theadTh}>Full Name</th>
-                            <th className={`${styles.theadTh} ${styles.hideMd}`}>Email</th>
-                            <th className={`${styles.theadTh} ${styles.hideMd}`}>Mobile</th>
-                            <th className={styles.theadTh}>Entity</th>
-                            <th className={`${styles.theadTh} ${styles.hideLg}`}>Region</th>
-                            <th className={`${styles.theadTh} ${styles.hideLg}`}>Office</th>
+                            <th className={styles.colPill}>Status</th>
+                            <th className={styles.colTech}>Tech ID</th>
+                            <th className={styles.colName}>Name</th>
+                            <th className={styles.hideMd}>Email</th>
+                            <th className={styles.hideLg}>Mobile</th>
+                            <th className={styles.hideMd}>Company</th>
+                            <th className={styles.hideLg}>Region</th>
+                            <th className={styles.hideLg}>Office</th>
                         </tr>
                     </thead>
 
                     <tbody>
-                        {data.map((r, idx) => (
-                            <tr
-                                key={r.person_id}
-                                className={`${styles.row} ${idx % 2 === 0 ? styles.rowOdd : styles.rowEven}`}
-                                onClick={() => router.push(`/roster/${r.person_id}`)}
-                                title="Open details"
-                            >
-                                <td className={styles.cell}>
-                                    <StatusPill active={!!r.active_flag} />
-                                </td>
+                        {data.map((r) => {
+                            const state = pillState(r.active_flag);
+                            const secondary = companyOrContractor(r); // used under name only if present
 
-                                <td className={styles.cell}>
-                                    <span className={styles.monoChip}>{fmt(r.tech_id)}</span>
-                                </td>
+                            return (
+                                <tr
+                                    key={r.person_id}
+                                    className={styles.row}
+                                    onClick={() => onRowClick(r)}
+                                    role="button"
+                                    tabIndex={0}
+                                >
+                                    <td className={styles.colPill}>
+                                        <span
+                                            className={[
+                                                styles.pill,
+                                                state === "active" ? styles.pillActive : "",
+                                                state === "inactive" ? styles.pillInactive : "",
+                                                state === "unknown" ? styles.pillUnknown : "",
+                                            ].join(" ")}
+                                            title={state === "unknown" ? "Unknown" : state === "active" ? "Active" : "Inactive"}
+                                        >
+                                            {state === "unknown" ? "—" : state === "active" ? "Active" : "Inactive"}
+                                        </span>
+                                    </td>
 
-                                <td className={styles.cell}>
-                                    <div className={styles.name}>{fmt(r.name)}</div>
-                                    <div className={`${styles.sub} ${styles.hideUpMd}`}>{fmt(r.email)}</div>
-                                </td>
+                                    <td className={styles.colTech}>
+                                        <span className={styles.mono}>{dashIfEmpty(r.tech_id)}</span>
+                                    </td>
 
-                                <td className={`${styles.cell} ${styles.sub} ${styles.hideMd}`}>{fmt(r.email)}</td>
-                                <td className={`${styles.cell} ${styles.sub} ${styles.hideMd}`}>{fmt(r.mobile)}</td>
+                                    <td className={styles.colName}>
+                                        <div className={styles.primary}>{dashIfEmpty(r.name)}</div>
 
-                                <td className={styles.cell}>
-                                    <div className={styles.entity}>{entityLabel(r)}</div>
-                                    <div className={styles.sub}>
-                                        {fmt(r.region_name)}
-                                        {r.office_name ? ` • ${r.office_name}` : ""}
-                                    </div>
-                                </td>
+                                        {/* Only render the secondary line when there is real content */}
+                                        {secondary ? <div className={styles.secondary}>{secondary}</div> : null}
+                                    </td>
 
-                                <td className={`${styles.cell} ${styles.sub} ${styles.hideLg}`}>{fmt(r.region_name)}</td>
-                                <td className={`${styles.cell} ${styles.sub} ${styles.hideLg}`}>{fmt(r.office_name)}</td>
-                            </tr>
-                        ))}
+                                    <td className={styles.hideMd}>{dashIfEmpty(r.email)}</td>
+                                    <td className={styles.hideLg}>{dashIfEmpty(r.mobile)}</td>
+
+                                    {/* Company column: contractor_name OR company_name */}
+                                    <td className={styles.hideMd}>{dashIfEmpty(companyOrContractor(r))}</td>
+
+                                    <td className={styles.hideLg}>{dashIfEmpty(r.region_name)}</td>
+                                    <td className={styles.hideLg}>{dashIfEmpty(r.office_name)}</td>
+                                </tr>
+                            );
+                        })}
 
                         {data.length === 0 && (
                             <tr>

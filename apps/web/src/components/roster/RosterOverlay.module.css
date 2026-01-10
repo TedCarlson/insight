@@ -1,0 +1,26 @@
+.noticeRow {
+    margin-bottom: 10px;
+}
+
+.errorText {
+    font-size: 12px;
+    color: #b00020;
+    border: 1px solid rgba(176, 0, 32, 0.25);
+    background: rgba(176, 0, 32, 0.06);
+    padding: 10px;
+    border-radius: 10px;
+}
+
+.jsonBlock {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.35;
+    border: 1px solid rgba(0, 0, 0, 0.10);
+    background: rgba(0, 0, 0, 0.03);
+    padding: 10px;
+    border-radius: 10px;
+    overflow: auto;
+    max-height: 320px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}

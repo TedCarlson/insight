@@ -1,0 +1,159 @@
+/* apps/web/src/components/roster/RosterTable.module.css
+ *
+ * Modern roster table styling:
+ * - Left-most status pill
+ * - Clean spacing + subtle hover
+ * - Responsive hide columns (md/lg)
+ */
+
+.card {
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 10px 28px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+}
+
+.header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    background: linear-gradient(to bottom, #ffffff, #fbfbfc);
+}
+
+.title {
+    font-weight: 750;
+    font-size: 14px;
+    letter-spacing: -0.01em;
+}
+
+.subtitle {
+    margin-top: 3px;
+    font-size: 12px;
+    opacity: 0.65;
+}
+
+.count {
+    font-size: 12px;
+    opacity: 0.7;
+    white-space: nowrap;
+}
+
+.wrap {
+    width: 100%;
+    overflow: auto;
+}
+
+.table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+}
+
+.table th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 750;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    opacity: 0.75;
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    white-space: nowrap;
+}
+
+.table td {
+    padding: 14px 14px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.row {
+    cursor: pointer;
+}
+
+.row:hover td {
+    background: rgba(0, 0, 0, 0.018);
+}
+
+.colPill {
+    width: 110px;
+}
+
+.colTech {
+    width: 120px;
+}
+
+.colName {
+    min-width: 240px;
+}
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.pillActive {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.22);
+}
+
+.pillInactive {
+    background: rgba(239, 68, 68, 0.10);
+    border-color: rgba(239, 68, 68, 0.22);
+}
+
+.pillUnknown {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.10);
+    opacity: 0.8;
+}
+
+.primary {
+    font-weight: 700;
+}
+
+.secondary {
+    margin-top: 3px;
+    font-size: 12px;
+    opacity: 0.65;
+    max-width: 460px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.empty {
+    padding: 18px 14px;
+    font-size: 13px;
+    opacity: 0.75;
+}
+
+/* Responsive hiding */
+@media (max-width: 768px) {
+    .hideMd {
+        display: none;
+    }
+}
+
+@media (max-width: 1024px) {
+    .hideLg {
+        display: none;
+    }
+}

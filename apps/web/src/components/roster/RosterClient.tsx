@@ -1,11 +1,10 @@
 // apps/web/src/components/roster/RosterClient.tsx
 //
-// Roster page client controller
-// - Owns URL query sync + one-time auto-expand (fetch all rows if server sent only first page)
-// - Owns "Add Person" overlay open/close state
-// - Passes `rows` + `totalCount` into RosterFiltersUI for UI hints
-// - Reset removed (auto-apply + clearing search makes Reset redundant)
-// - Guards against undefined `initialRows` to prevent runtime "reading 'length'" errors
+// Wire-up: 2 overlay entry paths
+// 1) Add Person + assignments (existing)
+// 2) Click table row -> Edit overlay w/ hydrate from selected row (new)
+//
+// Note: persistence handlers are still optional; this wires the surface + hydration.
 
 "use client";
 
@@ -16,7 +15,7 @@ import { RosterFiltersUI, RosterTable } from ".";
 import { RosterOverlay } from "./RosterOverlay";
 
 type Props = {
-    initialRows?: RosterRow[]; // defensive: can be undefined due to RLS/view filters or fetch shape changes
+    initialRows?: RosterRow[];
     initialCount: number;
     initialLimit: number;
     initialOffset: number;
@@ -39,38 +38,24 @@ function toQuery(filters: RosterFilters) {
     return p.toString();
 }
 
-type OverlayMode = "create" | "existing";
+type OverlayMode = "create" | "edit";
 type CreationStage = "pre_person" | "post_person";
 
 const OVERLAY_ENABLED = true;
 
-export default function RosterClient({
-    initialRows,
-    initialCount,
-    initialLimit,
-    initialOffset,
-    initialFilters,
-    options,
-}: Props) {
+export default function RosterClient(props: Props) {
     const router = useRouter();
 
-    // Defensive default: prevents runtime crashes and stabilizes effect deps
-    const rows: RosterRow[] = Array.isArray(initialRows) ? initialRows : [];
+    const rows = useMemo(() => (Array.isArray(props.initialRows) ? props.initialRows : []), [props.initialRows]);
 
-    // Default to "show all" for current scope
-    const [filters, setFilters] = useState<RosterFilters>({
-        ...initialFilters,
-        limit: String(initialCount),
-        offset: "0",
-    });
+    const [filters, setFilters] = useState<RosterFilters>(props.initialFilters);
 
     const didAutoExpand = useRef(false);
 
-    // If server delivered only first page, auto-refresh once to fetch all rows.
     useEffect(() => {
         if (didAutoExpand.current) return;
 
-        const serverDeliveredAll = rows.length >= initialCount;
+        const serverDeliveredAll = rows.length >= props.initialCount;
         if (serverDeliveredAll) {
             didAutoExpand.current = true;
             return;
@@ -78,58 +63,102 @@ export default function RosterClient({
 
         didAutoExpand.current = true;
 
-        const next: RosterFilters = {
-            ...filters,
-            limit: String(initialCount),
-            offset: "0",
-        };
-
-        setFilters(next);
-        router.push(`/roster?${toQuery(next)}`);
+        const merged: RosterFilters = { ...filters, limit: String(props.initialCount), offset: "0" };
+        setFilters(merged);
+        router.push(`/roster?${toQuery(merged)}`);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [rows.length, initialCount]);
+    }, []);
 
-    useMemo(() => toQuery(filters), [filters]);
-
-    function apply(next: Partial<RosterFilters>) {
+    function apply(next: RosterFilters) {
         const merged: RosterFilters = { ...filters, ...next };
-        if (!("offset" in next)) merged.offset = "0";
         setFilters(merged);
         router.push(`/roster?${toQuery(merged)}`);
     }
 
-    // Overlay state (button-only entry)
     const [overlayOpen, setOverlayOpen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>("create");
     const [creationStage, setCreationStage] = useState<CreationStage>("pre_person");
+
+    const [overlayPersonId, setOverlayPersonId] = useState<string | undefined>(undefined);
+    const [selectedRow, setSelectedRow] = useState<RosterRow | null>(null);
 
     function closeOverlay() {
         setOverlayOpen(false);
         setCreationStage("pre_person");
         setOverlayMode("create");
+        setOverlayPersonId(undefined);
+        setSelectedRow(null);
     }
 
     function openCreateOverlay() {
+        setSelectedRow(null);
+        setOverlayPersonId(undefined);
         setOverlayMode("create");
         setCreationStage("pre_person");
         setOverlayOpen(true);
     }
 
+    function openEditOverlay(row: RosterRow) {
+        setSelectedRow(row);
+        setOverlayPersonId(String(row.person_id));
+        setOverlayMode("edit");
+        setCreationStage("post_person");
+        setOverlayOpen(true);
+    }
+
     return (
-        <div className="space-y-3">
+        <div style={{ display: "grid", gap: 14 }}>
             <RosterFiltersUI
                 filters={filters}
-                options={options}
+                options={props.options}
                 rows={rows}
-                totalCount={initialCount}
+                totalCount={props.initialCount}
                 onChange={apply}
                 onAddNew={OVERLAY_ENABLED ? openCreateOverlay : undefined}
             />
 
-            <RosterTable rows={rows} />
+            <RosterTable rows={rows} onSelectRow={OVERLAY_ENABLED ? openEditOverlay : undefined} />
 
             {OVERLAY_ENABLED && (
-                <RosterOverlay open={overlayOpen} mode={overlayMode} creationStage={creationStage} onClose={closeOverlay} />
+                <RosterOverlay
+                    open={overlayOpen}
+                    mode={overlayMode}
+                    creationStage={creationStage}
+                    personId={overlayPersonId}
+                    initialPerson={
+                        selectedRow
+                            ? {
+                                  full_name: selectedRow.name ?? "",
+                                  email: selectedRow.email ?? undefined,
+                                  mobile: selectedRow.mobile ?? undefined,
+                              }
+                            : undefined
+                    }
+                    initialActivity={
+                        selectedRow
+                            ? {
+                                  active_flag: selectedRow.active_flag ?? undefined,
+                                  tech_id: selectedRow.tech_id ?? undefined,
+                              }
+                            : undefined
+                    }
+                    onHydrateBundle={
+                        selectedRow
+                            ? async () => ({
+                                  person: {
+                                      full_name: selectedRow.name ?? "",
+                                      email: selectedRow.email ?? undefined,
+                                      mobile: selectedRow.mobile ?? undefined,
+                                  },
+                                  activity: {
+                                      active_flag: selectedRow.active_flag ?? undefined,
+                                      tech_id: selectedRow.tech_id ?? undefined,
+                                  },
+                              })
+                            : undefined
+                    }
+                    onClose={closeOverlay}
+                />
             )}
         </div>
     );

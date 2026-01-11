@@ -1,27 +1,23 @@
 // apps/web/src/components/roster/RosterTable.tsx
 //
-// Modern roster table renderer (status pill + tech id leading columns)
-// - Removes the confusing "—" secondary line under the name when no company/contractor exists
-// - Renames "Contractor" column to "Company"
-// - Company column renders contractor_name OR company_name (whichever exists)
+// Roster table renderer
+// - Wire-up: row click opens overlay edit (via onSelectRow)
+// - Removes broken navigation to /roster/:person_id (route doesn't exist in zip)
+// - Keeps current visual table
 
 "use client";
 
 import { useMemo } from "react";
-import { useRouter } from "next/navigation";
 import type { RosterRow } from "@/lib/roster/types";
 import styles from "./RosterTable.module.css";
 
 type Props = {
     rows: RosterRow[];
+    onSelectRow?: (row: RosterRow) => void;
 };
 
-function fmt(v: string | null | undefined) {
-    return v && String(v).trim().length > 0 ? String(v) : "";
-}
-
-function dashIfEmpty(v: string | null | undefined) {
-    const s = fmt(v);
+function fmt(v: any) {
+    const s = v === null || v === undefined ? "" : String(v).trim();
     return s ? s : "—";
 }
 
@@ -32,17 +28,15 @@ function pillState(activeFlag: boolean | null | undefined): "active" | "inactive
 }
 
 function companyOrContractor(r: RosterRow) {
-    // Only one should exist, but accept either
     return fmt(r.company_name) || fmt(r.contractor_name) || "";
 }
 
-export default function RosterTable({ rows }: Props) {
-    const router = useRouter();
+export default function RosterTable({ rows, onSelectRow }: Props) {
     const data = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
 
     function onRowClick(r: RosterRow) {
         if (!r?.person_id) return;
-        router.push(`/roster/${String(r.person_id)}`);
+        onSelectRow?.(r);
     }
 
     return (
@@ -66,70 +60,37 @@ export default function RosterTable({ rows }: Props) {
                             <th className={styles.colTech}>Tech ID</th>
                             <th className={styles.colName}>Name</th>
                             <th className={styles.hideMd}>Email</th>
-                            <th className={styles.hideLg}>Mobile</th>
-                            <th className={styles.hideMd}>Company</th>
-                            <th className={styles.hideLg}>Region</th>
-                            <th className={styles.hideLg}>Office</th>
+                            <th className={styles.hideMd}>Mobile</th>
+                            <th className={styles.hideLg}>MSO</th>
+                            <th className={styles.colCompany}>Company</th>
+                            <th className={styles.hideLg}>Updated</th>
                         </tr>
                     </thead>
 
                     <tbody>
                         {data.map((r) => {
                             const state = pillState(r.active_flag);
-                            const secondary = companyOrContractor(r); // used under name only if present
-
                             return (
                                 <tr
-                                    key={r.person_id}
+                                    key={String(r.person_id)}
                                     className={styles.row}
                                     onClick={() => onRowClick(r)}
-                                    role="button"
-                                    tabIndex={0}
+                                    role={onSelectRow ? "button" : undefined}
+                                    tabIndex={onSelectRow ? 0 : undefined}
                                 >
                                     <td className={styles.colPill}>
-                                        <span
-                                            className={[
-                                                styles.pill,
-                                                state === "active" ? styles.pillActive : "",
-                                                state === "inactive" ? styles.pillInactive : "",
-                                                state === "unknown" ? styles.pillUnknown : "",
-                                            ].join(" ")}
-                                            title={state === "unknown" ? "Unknown" : state === "active" ? "Active" : "Inactive"}
-                                        >
-                                            {state === "unknown" ? "—" : state === "active" ? "Active" : "Inactive"}
-                                        </span>
+                                        <span className={[styles.pill, styles[`pill_${state}`]].join(" ")}>{state}</span>
                                     </td>
-
-                                    <td className={styles.colTech}>
-                                        <span className={styles.mono}>{dashIfEmpty(r.tech_id)}</span>
-                                    </td>
-
-                                    <td className={styles.colName}>
-                                        <div className={styles.primary}>{dashIfEmpty(r.name)}</div>
-
-                                        {/* Only render the secondary line when there is real content */}
-                                        {secondary ? <div className={styles.secondary}>{secondary}</div> : null}
-                                    </td>
-
-                                    <td className={styles.hideMd}>{dashIfEmpty(r.email)}</td>
-                                    <td className={styles.hideLg}>{dashIfEmpty(r.mobile)}</td>
-
-                                    {/* Company column: contractor_name OR company_name */}
-                                    <td className={styles.hideMd}>{dashIfEmpty(companyOrContractor(r))}</td>
-
-                                    <td className={styles.hideLg}>{dashIfEmpty(r.region_name)}</td>
-                                    <td className={styles.hideLg}>{dashIfEmpty(r.office_name)}</td>
+                                    <td className={styles.colTech}>{fmt(r.tech_id)}</td>
+                                    <td className={styles.colName}>{fmt(r.name)}</td>
+                                    <td className={styles.hideMd}>{fmt(r.email)}</td>
+                                    <td className={styles.hideMd}>{fmt(r.mobile)}</td>
+                                    <td className={styles.hideLg}>{fmt(r.mso_name)}</td>
+                                    <td className={styles.colCompany}>{companyOrContractor(r)}</td>
+                                    <td className={styles.hideLg}>{fmt(r.last_updated)}</td>
                                 </tr>
                             );
                         })}
-
-                        {data.length === 0 && (
-                            <tr>
-                                <td className={styles.empty} colSpan={8}>
-                                    No roster rows match the current filters.
-                                </td>
-                            </tr>
-                        )}
                     </tbody>
                 </table>
             </div>

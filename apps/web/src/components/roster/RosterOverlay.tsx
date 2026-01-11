@@ -1,15 +1,16 @@
 // apps/web/src/components/roster/RosterOverlay.tsx
 //
-// RosterOverlay (v0.2.4) — Overlay scroll lock + Notes section clip fix
-// - Locks page/body scroll while overlay is open (background no longer scrolls)
-// - Keeps overlay scrolling inside .ovScroll (wheel + touch)
-// - Fixes Notes field being visually clipped by section:
-//   - Section no longer clips vertically (overflow-y: visible)
-//   - Still prevents horizontal bleed (overflow-x: hidden)
+// RosterOverlay (v0.2.9) — IMMERSIVE overlay
+// - Single scroll: ovRoot
+// - Sticky header: ovHeader
+// - No internal scroll containers (ovScroll has no overflow/height constraints)
+// - Preserve person_id gating + locked banner
+// - Backdrop blur
 
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import styles from "./RosterOverlay.module.css";
 
 export type OverlayMode = "create" | "edit";
 export type CreationStage = "pre_person" | "post_person";
@@ -73,6 +74,10 @@ export type RosterOverlayProps = {
     onClose: () => void;
 };
 
+function cx(...parts: Array<string | false | null | undefined>) {
+    return parts.filter(Boolean).join(" ");
+}
+
 function normalizeString(v: unknown) {
     const s = v === null || v === undefined ? "" : String(v);
     return s.trim();
@@ -101,7 +106,7 @@ function isValidFullName(full_name: string) {
 function coerceMode(mode: RosterOverlayProps["mode"]): OverlayMode {
     if (mode === "create") return "create";
     if (mode === "edit") return "edit";
-    return "edit"; // legacy "existing"
+    return "edit";
 }
 
 function safeConfirm(msg: string) {
@@ -110,22 +115,22 @@ function safeConfirm(msg: string) {
 
 function SectionHeader(props: { title: string; subtitle: string; right?: React.ReactNode }) {
     return (
-        <div className="secHead">
-            <div className="secHeadLeft">
-                <div className="secTitle">{props.title}</div>
-                <div className="secSub">{props.subtitle}</div>
+        <div className={styles.secHead}>
+            <div className={styles.secHeadLeft}>
+                <div className={styles.secTitle}>{props.title}</div>
+                <div className={styles.secSub}>{props.subtitle}</div>
             </div>
-            {props.right ? <div className="secHeadRight">{props.right}</div> : null}
+            {props.right ? <div className={styles.secHeadRight}>{props.right}</div> : null}
         </div>
     );
 }
 
 function Field(props: { label: string; hint?: string; children: React.ReactNode }) {
     return (
-        <div className="field">
-            <div className="fieldTop">
-                <div className="fieldLabel">{props.label}</div>
-                {props.hint ? <div className="fieldHint">{props.hint}</div> : null}
+        <div className={styles.field}>
+            <div className={styles.fieldTop}>
+                <div className={styles.fieldLabel}>{props.label}</div>
+                {props.hint ? <div className={styles.fieldHint}>{props.hint}</div> : null}
             </div>
             {props.children}
         </div>
@@ -133,18 +138,14 @@ function Field(props: { label: string; hint?: string; children: React.ReactNode 
 }
 
 function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
-    return <input {...props} className={["input", props.className ?? ""].join(" ")} />;
-}
-
-function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-    return <textarea {...props} className={["textarea", props.className ?? ""].join(" ")} />;
+    return <input {...props} className={cx(styles.input, props.className)} />;
 }
 
 function Toggle(props: { value?: boolean; onChange: (vv: boolean) => void; disabled?: boolean }) {
     return (
         <button
             type="button"
-            className={["toggle", props.value ? "toggleOn" : ""].join(" ")}
+            className={cx(styles.toggle, props.value ? styles.toggleOn : "")}
             disabled={props.disabled}
             onClick={() => props.onChange(!(props.value ?? false))}
         >
@@ -153,12 +154,49 @@ function Toggle(props: { value?: boolean; onChange: (vv: boolean) => void; disab
     );
 }
 
-function BlockedSection(props: { title: string; message: string }) {
+function BlockedBanner(props: { title: string; message: string }) {
     return (
-        <div className="blocked">
-            <div className="blockedTitle">{props.title}</div>
-            <div className="blockedMsg">{props.message}</div>
+        <div className={styles.lockBanner} role="note" aria-label="Locked section">
+            <div className={styles.lockBannerLeft}>
+                <span className={styles.lockIcon}>🔒</span>
+                <div>
+                    <div className={styles.lockTitle}>{props.title}</div>
+                    <div className={styles.lockMsg}>{props.message}</div>
+                </div>
+            </div>
         </div>
+    );
+}
+
+function AutoGrowTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+    const { className, value, onInput, ...domProps } = props;
+    const ref = useRef<HTMLTextAreaElement | null>(null);
+
+    const resize = () => {
+        const el = ref.current;
+        if (!el) return;
+        el.style.height = "0px";
+        el.style.height = `${el.scrollHeight}px`;
+    };
+
+    useEffect(() => {
+        resize();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [value]);
+
+    return (
+        <textarea
+            {...domProps}
+            value={value}
+            ref={(n) => {
+                ref.current = n;
+            }}
+            className={cx(styles.textarea, styles.textareaAuto, className)}
+            onInput={(e) => {
+                resize();
+                onInput?.(e);
+            }}
+        />
     );
 }
 
@@ -185,7 +223,9 @@ export function RosterOverlay(props: RosterOverlayProps) {
     const [activityDraft, setActivityDraft] = useState<ActivityDraft>({});
     const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>({});
 
-    // Lock page scroll while overlay is open (prevents background scroll)
+    const prevAssignmentsLockedRef = useRef<boolean>(false);
+    const [unlockPulse, setUnlockPulse] = useState(false);
+
     useEffect(() => {
         if (!open) return;
 
@@ -336,6 +376,17 @@ export function RosterOverlay(props: RosterOverlayProps) {
         return false;
     }, [mode, creationStage]);
 
+    useEffect(() => {
+        const prev = prevAssignmentsLockedRef.current;
+        prevAssignmentsLockedRef.current = assignmentsLocked;
+
+        if (open && mode === "create" && prev === true && assignmentsLocked === false) {
+            setUnlockPulse(true);
+            const t = window.setTimeout(() => setUnlockPulse(false), 900);
+            return () => window.clearTimeout(t);
+        }
+    }, [open, mode, assignmentsLocked]);
+
     const saveEnabled = useMemo(() => {
         if (saving || loading) return false;
 
@@ -381,18 +432,18 @@ export function RosterOverlay(props: RosterOverlayProps) {
 
                 baselineRef.current = baselineRef.current
                     ? {
-                        ...baselineRef.current,
-                        person: { ...personDraft },
-                        location: { ...locationDraft },
-                        activity: { ...activityDraft },
-                        schedule: { ...scheduleDraft },
-                    }
+                          ...baselineRef.current,
+                          person: { ...personDraft },
+                          location: { ...locationDraft },
+                          activity: { ...activityDraft },
+                          schedule: { ...scheduleDraft },
+                      }
                     : {
-                        person: { ...personDraft },
-                        location: { ...locationDraft },
-                        activity: { ...activityDraft },
-                        schedule: { ...scheduleDraft },
-                    };
+                          person: { ...personDraft },
+                          location: { ...locationDraft },
+                          activity: { ...activityDraft },
+                          schedule: { ...scheduleDraft },
+                      };
 
                 return;
             }
@@ -421,18 +472,18 @@ export function RosterOverlay(props: RosterOverlayProps) {
 
             baselineRef.current = baselineRef.current
                 ? {
-                    ...baselineRef.current,
-                    person: { ...personDraft },
-                    location: { ...locationDraft },
-                    activity: { ...activityDraft },
-                    schedule: { ...scheduleDraft },
-                }
+                      ...baselineRef.current,
+                      person: { ...personDraft },
+                      location: { ...locationDraft },
+                      activity: { ...activityDraft },
+                      schedule: { ...scheduleDraft },
+                  }
                 : {
-                    person: { ...personDraft },
-                    location: { ...locationDraft },
-                    activity: { ...activityDraft },
-                    schedule: { ...scheduleDraft },
-                };
+                      person: { ...personDraft },
+                      location: { ...locationDraft },
+                      activity: { ...activityDraft },
+                      schedule: { ...scheduleDraft },
+                  };
         } catch (e: any) {
             setErrorMsg(e?.message ? String(e.message) : "Save failed.");
         } finally {
@@ -442,77 +493,85 @@ export function RosterOverlay(props: RosterOverlayProps) {
 
     if (!open) return null;
 
-    return (
-        <div className="ovRoot" aria-modal="true" role="dialog">
-            <div className="ovBackdrop" onClick={requestClose} />
+    const lockableSectionClass = cx(
+        styles.sec,
+        assignmentsLocked ? styles.secLocked : "",
+        unlockPulse ? styles.secUnlockPulse : ""
+    );
 
-            <div className="ovPanel" onWheel={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()}>
-                <div className="ovHeader">
-                    <div className="ovHeaderLeft">
-                        <div className="ovTitleRow">
-                            <div className="ovTitle">{mode === "create" ? "Add Person" : "Edit Person"}</div>
-                            <span className={["ovBadge", mode === "create" ? "ovBadgeCreate" : "ovBadgeEdit"].join(" ")}>
+    const lockDisabled = assignmentsLocked;
+
+    return (
+        <div className={styles.ovRoot} aria-modal="true" role="dialog">
+            <div className={styles.ovBackdrop} onClick={requestClose} />
+
+            <div className={styles.ovPanel} onWheel={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()}>
+                <div className={styles.ovHeader}>
+                    <div className={styles.ovHeaderLeft}>
+                        <div className={styles.ovTitleRow}>
+                            <div className={styles.ovTitle}>{mode === "create" ? "Add Person" : "Edit Person"}</div>
+                            <span className={cx(styles.ovBadge, mode === "create" ? styles.ovBadgeCreate : styles.ovBadgeEdit)}>
                                 {mode === "create" ? "CREATE" : "EDIT"}
                             </span>
                             {dirty.any ? (
-                                <span className="ovDirtyPill" title="Unsaved changes">
+                                <span className={styles.ovDirtyPill} title="Unsaved changes">
                                     Unsaved
                                 </span>
                             ) : null}
                         </div>
 
-                        <div className="ovSub">
+                        <div className={styles.ovSub}>
                             {mode === "edit" ? (
                                 <span>
-                                    person_id: <span className="ovMono">{props.personId}</span>
+                                    person_id: <span className={styles.ovMono}>{props.personId}</span>
                                 </span>
                             ) : creationStage === "pre_person" ? (
-                                <span className="ovGateMsg">Save person to open assignments</span>
+                                <span className={styles.ovGateMsg}>Save person to open assignments</span>
                             ) : (
                                 <span>
-                                    person_id: <span className="ovMono">{personId ?? "—"}</span>
+                                    person_id: <span className={styles.ovMono}>{personId ?? "—"}</span>
                                 </span>
                             )}
                         </div>
                     </div>
 
-                    <div className="ovHeaderRight">
-                        <button className="ovBtn" onClick={requestClose} type="button" disabled={saving}>
+                    <div className={styles.ovHeaderRight}>
+                        <button className={styles.ovBtn} onClick={requestClose} type="button" disabled={saving}>
                             Close
                         </button>
 
-                        <button className="ovBtn ovBtnPrimary" onClick={onSave} type="button" disabled={!saveEnabled}>
+                        <button className={cx(styles.ovBtn, styles.ovBtnPrimary)} onClick={onSave} type="button" disabled={!saveEnabled}>
                             {saving ? "Saving…" : mode === "create" && creationStage === "pre_person" ? "Save Person" : "Save"}
                         </button>
                     </div>
                 </div>
 
-                <div className="ovBody">
-                    {errorMsg ? <div className="ovError">{errorMsg}</div> : null}
+                <div className={styles.ovBody}>
+                    {errorMsg ? <div className={styles.ovError}>{errorMsg}</div> : null}
 
                     {loading ? (
-                        <div className="ovLoading">
-                            <div className="ovSkeletonLine" />
-                            <div className="ovSkeletonLine" />
-                            <div className="ovSkeletonLine short" />
+                        <div className={styles.ovLoading}>
+                            <div className={styles.ovSkeletonLine} />
+                            <div className={styles.ovSkeletonLine} />
+                            <div className={cx(styles.ovSkeletonLine, styles.ovSkeletonLineShort)} />
                         </div>
                     ) : (
-                        <div className="ovScroll">
-                            <section className="sec">
+                        <div className={styles.ovScroll}>
+                            <section className={styles.sec}>
                                 <SectionHeader
                                     title="Person"
                                     subtitle={mode === "create" ? "Minimal required: full name." : "Edit person identity fields."}
-                                    right={dirty.person ? <span className="secDirty">Edited</span> : null}
+                                    right={dirty.person ? <span className={styles.secDirty}>Edited</span> : null}
                                 />
 
-                                <div className="grid2">
+                                <div className={styles.grid2}>
                                     <Field label="Full Name" hint={mode === "create" ? "required" : undefined}>
                                         <Input
                                             value={personDraft.full_name}
                                             onChange={(e) => setPersonDraft({ ...personDraft, full_name: e.target.value })}
                                             placeholder="Full name"
                                         />
-                                        {!personValid ? <div className="fieldNote">Enter at least 2 characters.</div> : null}
+                                        {!personValid ? <div className={styles.fieldNote}>Enter at least 2 characters.</div> : null}
                                     </Field>
 
                                     <Field label="Email" hint="optional">
@@ -531,485 +590,92 @@ export function RosterOverlay(props: RosterOverlayProps) {
                                         />
                                     </Field>
 
-                                    <div className="span2">
+                                    <div className={styles.span2}>
                                         <Field label="Notes" hint="optional">
-                                            <Textarea
-                                                className="notesTextarea"
+                                            <AutoGrowTextarea
+                                                className={styles.notesTextarea}
                                                 value={personDraft.notes ?? ""}
                                                 onChange={(e) => setPersonDraft({ ...personDraft, notes: e.target.value })}
                                                 placeholder="Notes about this person (internal)…"
-                                                rows={5}
                                             />
                                         </Field>
                                     </div>
                                 </div>
                             </section>
 
-                            <section className={["sec", assignmentsLocked ? "secLocked" : ""].join(" ")}>
+                            <section className={lockableSectionClass}>
                                 <SectionHeader
                                     title="Location"
                                     subtitle={assignmentsLocked ? "Locked until person is saved." : "Optional. Can be saved later."}
-                                    right={dirty.location ? <span className="secDirty">Edited</span> : null}
+                                    right={dirty.location ? <span className={styles.secDirty}>Edited</span> : null}
                                 />
 
                                 {assignmentsLocked ? (
-                                    <BlockedSection title="Locked" message="Save the person first to enable Location." />
-                                ) : (
-                                    <div className="grid2">
-                                        <Field label="Region ID" hint="optional">
-                                            <Input
-                                                value={locationDraft.region_id ?? ""}
-                                                onChange={(e) => setLocationDraft({ ...locationDraft, region_id: e.target.value })}
-                                                placeholder="region_id"
-                                            />
-                                        </Field>
+                                    <BlockedBanner title="Locked" message="Save the person first to enable Location fields." />
+                                ) : null}
 
-                                        <Field label="Office ID" hint="optional">
-                                            <Input
-                                                value={locationDraft.office_id ?? ""}
-                                                onChange={(e) => setLocationDraft({ ...locationDraft, office_id: e.target.value })}
-                                                placeholder="office_id"
-                                            />
-                                        </Field>
-                                    </div>
-                                )}
+                                <div className={cx(styles.grid2, assignmentsLocked ? styles.lockedFields : "")}>
+                                    <Field label="Region ID" hint="optional">
+                                        <Input
+                                            value={locationDraft.region_id ?? ""}
+                                            onChange={(e) => setLocationDraft({ ...locationDraft, region_id: e.target.value })}
+                                            placeholder="region_id"
+                                            disabled={lockDisabled}
+                                        />
+                                    </Field>
+
+                                    <Field label="Office ID" hint="optional">
+                                        <Input
+                                            value={locationDraft.office_id ?? ""}
+                                            onChange={(e) => setLocationDraft({ ...locationDraft, office_id: e.target.value })}
+                                            placeholder="office_id"
+                                            disabled={lockDisabled}
+                                        />
+                                    </Field>
+                                </div>
                             </section>
 
-                            <section className={["sec", assignmentsLocked ? "secLocked" : ""].join(" ")}>
+                            <section className={lockableSectionClass}>
                                 <SectionHeader
                                     title="Activity"
                                     subtitle={assignmentsLocked ? "Locked until person is saved." : "Optional. Can be saved later."}
-                                    right={dirty.activity ? <span className="secDirty">Edited</span> : null}
+                                    right={dirty.activity ? <span className={styles.secDirty}>Edited</span> : null}
                                 />
 
                                 {assignmentsLocked ? (
-                                    <BlockedSection title="Locked" message="Save the person first to enable Activity." />
-                                ) : (
-                                    <div className="grid2 alignEnd">
-                                        <Field label="Active" hint="optional">
-                                            <Toggle
-                                                value={activityDraft.active_flag}
-                                                onChange={(v) => setActivityDraft({ ...activityDraft, active_flag: v })}
-                                            />
-                                        </Field>
+                                    <BlockedBanner title="Locked" message="Save the person first to enable Activity fields." />
+                                ) : null}
 
-                                        <Field label="Tech ID" hint="optional">
-                                            <Input
-                                                value={activityDraft.tech_id ?? ""}
-                                                onChange={(e) => setActivityDraft({ ...activityDraft, tech_id: e.target.value })}
-                                                placeholder="tech_id"
-                                            />
-                                        </Field>
-                                    </div>
-                                )}
+                                <div className={cx(styles.grid2, styles.alignEnd, assignmentsLocked ? styles.lockedFields : "")}>
+                                    <Field label="Active" hint="optional">
+                                        <Toggle
+                                            value={activityDraft.active_flag}
+                                            onChange={(v) => setActivityDraft({ ...activityDraft, active_flag: v })}
+                                            disabled={lockDisabled}
+                                        />
+                                    </Field>
+
+                                    <Field label="Tech ID" hint="optional">
+                                        <Input
+                                            value={activityDraft.tech_id ?? ""}
+                                            onChange={(e) => setActivityDraft({ ...activityDraft, tech_id: e.target.value })}
+                                            placeholder="tech_id"
+                                            disabled={lockDisabled}
+                                        />
+                                    </Field>
+                                </div>
                             </section>
 
-                            <section className="sec secFuture">
+                            <section className={cx(styles.sec, styles.secFuture)}>
                                 <SectionHeader title="Schedule" subtitle="Future (disabled)" />
-                                <BlockedSection title="Not enabled" message="Schedule module will be implemented later." />
+                                <BlockedBanner title="Not enabled" message="Schedule module will be implemented later." />
                             </section>
 
-                            <div className="ovBottomPad" />
+                            <div className={styles.ovBottomPad} />
                         </div>
                     )}
                 </div>
             </div>
-
-            <style>{`
-        /* Overlay */
-        .ovRoot {
-          position: fixed;
-          inset: 0;
-          z-index: 1000;
-          display: grid;
-          place-items: center;
-        }
-
-        .ovBackdrop {
-          position: absolute;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.42);
-        }
-
-        .ovPanel {
-          position: relative;
-          width: min(980px, calc(100vw - 24px));
-          height: min(760px, calc(100vh - 24px));
-          background: #fff;
-          border-radius: 16px;
-          border: 1px solid rgba(0, 0, 0, 0.10);
-          box-shadow: 0 20px 70px rgba(0, 0, 0, 0.28);
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-          min-width: 0;
-        }
-
-        .ovHeader {
-          display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
-          gap: 16px;
-          padding: 14px 16px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-          background: linear-gradient(to bottom, #ffffff, #fbfbfc);
-          min-width: 0;
-        }
-
-        .ovHeaderLeft,
-        .ovHeaderRight {
-          min-width: 0;
-        }
-
-        .ovTitleRow {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-          min-width: 0;
-        }
-
-        .ovTitle {
-          font-size: 15px;
-          font-weight: 850;
-          letter-spacing: -0.01em;
-        }
-
-        .ovSub {
-          margin-top: 5px;
-          font-size: 12px;
-          opacity: 0.78;
-          min-width: 0;
-        }
-
-        .ovGateMsg {
-          color: rgba(220, 38, 38, 0.95);
-          font-weight: 750;
-          opacity: 1;
-        }
-
-        .ovMono {
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-          font-size: 12px;
-          opacity: 0.9;
-        }
-
-        .ovBadge {
-          font-size: 11px;
-          font-weight: 850;
-          padding: 3px 8px;
-          border-radius: 999px;
-          border: 1px solid rgba(0, 0, 0, 0.10);
-          opacity: 0.92;
-        }
-
-        .ovBadgeCreate {
-          background: rgba(59, 130, 246, 0.10);
-          border-color: rgba(59, 130, 246, 0.22);
-        }
-
-        .ovBadgeEdit {
-          background: rgba(16, 185, 129, 0.10);
-          border-color: rgba(16, 185, 129, 0.22);
-        }
-
-        .ovDirtyPill {
-          font-size: 11px;
-          font-weight: 850;
-          padding: 3px 8px;
-          border-radius: 999px;
-          border: 1px solid rgba(0, 0, 0, 0.10);
-          background: rgba(0, 0, 0, 0.04);
-          opacity: 0.9;
-        }
-
-        .ovHeaderRight {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
-
-        .ovBtn {
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          padding: 8px 10px;
-          border-radius: 10px;
-          font-size: 13px;
-          cursor: pointer;
-          max-width: 100%;
-          box-sizing: border-box;
-        }
-
-        .ovBtn:disabled {
-          opacity: 0.55;
-          cursor: not-allowed;
-        }
-
-        .ovBtnPrimary {
-          background: #111;
-          color: #fff;
-          border-color: rgba(0, 0, 0, 0.20);
-        }
-
-        .ovBody {
-          padding: 12px 16px;
-          overflow: hidden;
-          flex: 1;
-          min-height: 0;
-          min-width: 0;
-        }
-
-        .ovScroll {
-          height: 100%;
-          overflow: auto;
-          padding-right: 4px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          min-width: 0;
-          overscroll-behavior: contain; /* prevent chaining to page */
-          -webkit-overflow-scrolling: touch;
-        }
-
-        .ovBottomPad {
-          height: 10px;
-        }
-
-        .ovError {
-          border: 1px solid rgba(239, 68, 68, 0.26);
-          background: rgba(239, 68, 68, 0.08);
-          color: #7f1d1d;
-          padding: 10px 12px;
-          border-radius: 12px;
-          font-size: 13px;
-          margin-bottom: 12px;
-          max-width: 100%;
-          overflow: hidden;
-          box-sizing: border-box;
-        }
-
-        .ovLoading {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-          padding: 8px 2px;
-          min-width: 0;
-        }
-
-        .ovSkeletonLine {
-          height: 14px;
-          border-radius: 10px;
-          background: rgba(0, 0, 0, 0.06);
-          max-width: 100%;
-        }
-
-        .ovSkeletonLine.short {
-          width: 55%;
-        }
-
-        /* Sections */
-        .sec {
-          border: 1px solid rgba(0, 0, 0, 0.08);
-          background: #fff;
-          border-radius: 16px;
-          padding: 14px;
-          box-sizing: border-box;
-          min-width: 0;
-          overflow-x: hidden;  /* keep bleed fix */
-          overflow-y: visible; /* allow Notes bottom to show */
-        }
-
-        .secLocked {
-          background: rgba(0, 0, 0, 0.02);
-        }
-
-        .secFuture {
-          opacity: 0.85;
-        }
-
-        .secHead {
-          display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
-          gap: 12px;
-          margin-bottom: 12px;
-          min-width: 0;
-        }
-
-        .secHeadLeft,
-        .secHeadRight {
-          min-width: 0;
-        }
-
-        .secTitle {
-          font-size: 14px;
-          font-weight: 850;
-          letter-spacing: -0.01em;
-        }
-
-        .secSub {
-          margin-top: 3px;
-          font-size: 12px;
-          opacity: 0.68;
-          max-width: 100%;
-          overflow-wrap: anywhere;
-        }
-
-        .secDirty {
-          font-size: 11px;
-          font-weight: 850;
-          padding: 4px 8px;
-          border-radius: 999px;
-          border: 1px solid rgba(0,0,0,0.12);
-          background: rgba(0,0,0,0.04);
-          opacity: 0.85;
-          white-space: nowrap;
-          max-width: 100%;
-        }
-
-        .blocked {
-          border: 1px dashed rgba(0,0,0,0.14);
-          background: rgba(0,0,0,0.03);
-          border-radius: 14px;
-          padding: 14px;
-          max-width: 100%;
-          overflow: hidden;
-          box-sizing: border-box;
-        }
-
-        .blockedTitle {
-          font-size: 13px;
-          font-weight: 850;
-          opacity: 0.85;
-        }
-
-        .blockedMsg {
-          margin-top: 6px;
-          font-size: 12px;
-          opacity: 0.72;
-        }
-
-        /* Fields */
-        .grid2 {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-          gap: 12px;
-          min-width: 0;
-        }
-
-        .alignEnd {
-          align-items: end;
-        }
-
-        .span2 {
-          grid-column: 1 / span 2;
-          min-width: 0;
-        }
-
-        .field {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-          min-width: 0;
-        }
-
-        .fieldTop {
-          display: flex;
-          align-items: baseline;
-          justify-content: space-between;
-          gap: 10px;
-          min-width: 0;
-        }
-
-        .fieldLabel {
-          font-size: 12px;
-          font-weight: 800;
-          opacity: 0.75;
-          min-width: 0;
-        }
-
-        .fieldHint {
-          font-size: 12px;
-          opacity: 0.60;
-          white-space: nowrap;
-        }
-
-        .fieldNote {
-          margin-top: 6px;
-          font-size: 12px;
-          opacity: 0.68;
-          max-width: 100%;
-          overflow-wrap: anywhere;
-        }
-
-        .input {
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          border-radius: 12px;
-          padding: 10px 12px;
-          font-size: 13px;
-          outline: none;
-          width: 100%;
-          max-width: 100%;
-          box-sizing: border-box;
-          background: #fff;
-          min-width: 0;
-        }
-
-        .textarea {
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          border-radius: 12px;
-          padding: 10px 12px;
-          font-size: 13px;
-          outline: none;
-          width: 100%;
-          max-width: 100%;
-          box-sizing: border-box;
-          background: #fff;
-          min-width: 0;
-          overflow: auto;
-          resize: vertical;
-        }
-
-        .notesTextarea {
-          height: 140px;
-          min-height: 140px;
-          max-height: 260px;
-          overflow: auto;
-          resize: vertical;
-        }
-
-        .toggle {
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          background: #fff;
-          color: #111;
-          padding: 10px 12px;
-          border-radius: 12px;
-          font-size: 13px;
-          cursor: pointer;
-          width: 100%;
-          max-width: 100%;
-          box-sizing: border-box;
-          text-align: left;
-          min-width: 0;
-        }
-
-        .toggleOn {
-          background: #111;
-          color: #fff;
-          border-color: rgba(0, 0, 0, 0.20);
-        }
-
-        @media (max-width: 900px) {
-          .grid2 {
-            grid-template-columns: minmax(0, 1fr);
-          }
-          .span2 {
-            grid-column: auto;
-          }
-        }
-      `}</style>
         </div>
     );
 }

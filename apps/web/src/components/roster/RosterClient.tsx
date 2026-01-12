@@ -1,93 +1,189 @@
 // apps/web/src/components/roster/RosterClient.tsx
-//
-// Wire-up: 2 overlay entry paths
-// 1) Add Person + assignments (existing)
-// 2) Click table row -> Edit overlay w/ hydrate from selected row (new)
-//
-// Note: persistence handlers are still optional; this wires the surface + hydration.
 
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { RosterFilters, RosterOption, RosterRow } from "@/lib/roster/types";
-import { RosterFiltersUI, RosterTable } from ".";
-import { RosterOverlay } from "./RosterOverlay";
+import { supabaseBrowser } from "@/lib/supabase/client";
+import { RosterOverlay } from "@/components/roster/RosterOverlay";
+import RosterTable from "@/components/roster/RosterTable";
+import RosterFiltersUI from "@/components/roster/RosterFilters";
+
+type OrgOption = {
+    org_type: "company" | "contractor" | string;
+    org_id: string;
+    org_name: string | null;
+    org_code: string | null;
+    active_flag: boolean | null;
+};
 
 type Props = {
-    initialRows?: RosterRow[];
+    initialRows: RosterRow[];
     initialCount: number;
     initialLimit: number;
     initialOffset: number;
-    initialFilters: RosterFilters;
     options: { msos: RosterOption[]; contractors: RosterOption[] };
+    initialFilters: RosterFilters;
 };
 
-function toQuery(filters: RosterFilters) {
-    const p = new URLSearchParams();
-
-    if (filters.q) p.set("q", filters.q);
-    if (filters.active) p.set("active", filters.active);
-    if (filters.hasTech) p.set("hasTech", filters.hasTech);
-    if (filters.mso) p.set("mso", filters.mso);
-    if (filters.contractor) p.set("contractor", filters.contractor);
-
-    p.set("limit", filters.limit ?? "50");
-    p.set("offset", filters.offset ?? "0");
-
-    return p.toString();
+function useDebouncedValue<T>(value: T, delayMs: number) {
+    const [debounced, setDebounced] = useState(value);
+    useEffect(() => {
+        const t = setTimeout(() => setDebounced(value), delayMs);
+        return () => clearTimeout(t);
+    }, [value, delayMs]);
+    return debounced;
 }
-
-type OverlayMode = "create" | "edit";
-type CreationStage = "pre_person" | "post_person";
-
-const OVERLAY_ENABLED = true;
 
 export default function RosterClient(props: Props) {
     const router = useRouter();
-
-    const rows = useMemo(() => (Array.isArray(props.initialRows) ? props.initialRows : []), [props.initialRows]);
+    const supabase = useMemo(() => supabaseBrowser(), []);
+    const firstRunRef = useRef(true);
 
     const [filters, setFilters] = useState<RosterFilters>(props.initialFilters);
 
-    const didAutoExpand = useRef(false);
-
-    useEffect(() => {
-        if (didAutoExpand.current) return;
-
-        const serverDeliveredAll = rows.length >= props.initialCount;
-        if (serverDeliveredAll) {
-            didAutoExpand.current = true;
-            return;
-        }
-
-        didAutoExpand.current = true;
-
-        const merged: RosterFilters = { ...filters, limit: String(props.initialCount), offset: "0" };
-        setFilters(merged);
-        router.push(`/roster?${toQuery(merged)}`);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    function apply(next: RosterFilters) {
-        const merged: RosterFilters = { ...filters, ...next };
-        setFilters(merged);
-        router.push(`/roster?${toQuery(merged)}`);
-    }
-
     const [overlayOpen, setOverlayOpen] = useState(false);
-    const [overlayMode, setOverlayMode] = useState<OverlayMode>("create");
-    const [creationStage, setCreationStage] = useState<CreationStage>("pre_person");
-
+    const [overlayMode, setOverlayMode] = useState<"create" | "edit">("create");
+    const [creationStage, setCreationStage] = useState<"pre_person" | "post_person">("pre_person");
     const [overlayPersonId, setOverlayPersonId] = useState<string | undefined>(undefined);
     const [selectedRow, setSelectedRow] = useState<RosterRow | null>(null);
 
+    // Prevent repeated replace() calls when params didn't materially change.
+    const lastAppliedQueryRef = useRef<string>("");
+
+    const listOrgOptions = useMemo(() => {
+        return async (): Promise<OrgOption[]> => {
+            const { data, error } = await supabase
+                .from("v_org_options")
+                .select("org_type,org_id,org_name,org_code,active_flag")
+                .order("org_name", { ascending: true, nullsFirst: false })
+                .limit(500);
+
+            if (error) throw error;
+            return (data ?? []) as OrgOption[];
+        };
+    }, [supabase]);
+
+    const createPerson = useMemo(() => {
+        return async (args: {
+            person: {
+                full_name: string;
+                email?: string;
+                mobile?: string;
+                notes?: string;
+                company_id?: string;
+                contractor_id?: string;
+            };
+        }): Promise<{ personId: string }> => {
+            const p = args.person;
+
+            const company_id = p.company_id ?? null;
+            const contractor_id = p.contractor_id ?? null;
+
+            if (company_id && contractor_id) {
+                throw new Error("Invalid org selection: both company_id and contractor_id are set.");
+            }
+
+            const payload = {
+                full_name: p.full_name,
+                email: p.email ?? null,
+                mobile: p.mobile ?? null,
+                notes: p.notes ?? null,
+                company_id,
+                contractor_id,
+            };
+
+            const { data, error } = await supabase.rpc("rpc_person_create", { p: payload });
+            if (error) throw error;
+
+            return { personId: String(data) };
+        };
+    }, [supabase]);
+
+    const updatePerson = useMemo(() => {
+        return async (args: {
+            personId: string;
+            person: {
+                full_name: string;
+                email?: string;
+                mobile?: string;
+                notes?: string;
+                company_id?: string;
+                contractor_id?: string;
+            };
+        }): Promise<void> => {
+            const p = args.person;
+
+            const company_id = p.company_id ?? null;
+            const contractor_id = p.contractor_id ?? null;
+
+            if (company_id && contractor_id) {
+                throw new Error("Invalid org selection: both company_id and contractor_id are set.");
+            }
+
+            const payload = {
+                full_name: p.full_name,
+                email: p.email ?? null,
+                mobile: p.mobile ?? null,
+                notes: p.notes ?? null,
+                company_id,
+                contractor_id,
+            };
+
+            const { error } = await supabase.rpc("rpc_person_update", { person_id: args.personId, p: payload });
+            if (error) throw error;
+        };
+    }, [supabase]);
+
+    const queryString = useMemo(() => {
+        const p = new URLSearchParams();
+
+        if (filters.q) p.set("q", filters.q);
+        if (filters.active) p.set("active", filters.active);
+        if (filters.hasTech) p.set("hasTech", filters.hasTech);
+        if (filters.mso) p.set("mso", filters.mso);
+        if (filters.contractor) p.set("contractor", filters.contractor);
+
+        p.set("limit", filters.limit ?? String(props.initialLimit));
+        p.set("offset", filters.offset ?? String(props.initialOffset));
+
+        return p.toString();
+    }, [filters, props.initialLimit, props.initialOffset]);
+
+    const debouncedQueryString = useDebouncedValue(queryString, 350);
+
+    useEffect(() => {
+        if (firstRunRef.current) {
+            firstRunRef.current = false;
+            // Prime lastApplied with whatever was initially rendered
+            lastAppliedQueryRef.current = debouncedQueryString;
+            return;
+        }
+
+        // Ignore-after-idle / stop constant updates:
+        // If nothing actually changed, don't touch the router.
+        if (debouncedQueryString === lastAppliedQueryRef.current) return;
+
+        lastAppliedQueryRef.current = debouncedQueryString;
+        router.replace(`/roster?${debouncedQueryString}`);
+    }, [debouncedQueryString, router]);
+
+    function applyFilters(next: Partial<RosterFilters>) {
+        setFilters((prev) => {
+            const merged: RosterFilters = { ...prev, ...next };
+
+            // Default: any filter change resets paging unless caller explicitly supplies offset.
+            if (!("offset" in next)) merged.offset = "0";
+
+            return merged;
+        });
+    }
+
     function closeOverlay() {
         setOverlayOpen(false);
-        setCreationStage("pre_person");
-        setOverlayMode("create");
-        setOverlayPersonId(undefined);
         setSelectedRow(null);
+        setOverlayPersonId(undefined);
     }
 
     function openCreateOverlay() {
@@ -100,26 +196,26 @@ export default function RosterClient(props: Props) {
 
     function openEditOverlay(row: RosterRow) {
         setSelectedRow(row);
-        setOverlayPersonId(String(row.person_id));
+        setOverlayPersonId(row.person_id);
         setOverlayMode("edit");
         setCreationStage("post_person");
         setOverlayOpen(true);
     }
 
     return (
-        <div style={{ display: "grid", gap: 14 }}>
+        <div className="space-y-4">
             <RosterFiltersUI
                 filters={filters}
                 options={props.options}
-                rows={rows}
+                onChange={applyFilters}
+                rows={props.initialRows}
                 totalCount={props.initialCount}
-                onChange={apply}
-                onAddNew={OVERLAY_ENABLED ? openCreateOverlay : undefined}
+                onAddNew={openCreateOverlay}
             />
 
-            <RosterTable rows={rows} onSelectRow={OVERLAY_ENABLED ? openEditOverlay : undefined} />
+            <RosterTable rows={props.initialRows} onSelectRow={openEditOverlay} />
 
-            {OVERLAY_ENABLED && (
+            {overlayOpen ? (
                 <RosterOverlay
                     open={overlayOpen}
                     mode={overlayMode}
@@ -128,38 +224,47 @@ export default function RosterClient(props: Props) {
                     initialPerson={
                         selectedRow
                             ? {
-                                  full_name: selectedRow.name ?? "",
-                                  email: selectedRow.email ?? undefined,
-                                  mobile: selectedRow.mobile ?? undefined,
-                              }
+                                full_name: selectedRow.name ?? "",
+                                email: selectedRow.email ?? undefined,
+                                mobile: selectedRow.mobile ?? undefined,
+                                company_id: selectedRow.company_id ?? undefined,
+                                contractor_id: selectedRow.contractor_id ?? undefined,
+                            }
                             : undefined
                     }
                     initialActivity={
                         selectedRow
                             ? {
-                                  active_flag: selectedRow.active_flag ?? undefined,
-                                  tech_id: selectedRow.tech_id ?? undefined,
-                              }
+                                active_flag: selectedRow.active_flag ?? undefined,
+                                tech_id: selectedRow.tech_id ?? undefined,
+                            }
                             : undefined
                     }
                     onHydrateBundle={
                         selectedRow
-                            ? async () => ({
-                                  person: {
-                                      full_name: selectedRow.name ?? "",
-                                      email: selectedRow.email ?? undefined,
-                                      mobile: selectedRow.mobile ?? undefined,
-                                  },
-                                  activity: {
-                                      active_flag: selectedRow.active_flag ?? undefined,
-                                      tech_id: selectedRow.tech_id ?? undefined,
-                                  },
-                              })
+                            ? async (_args: { personId: string }) => ({
+                                person: {
+                                    full_name: selectedRow.name ?? "",
+                                    email: selectedRow.email ?? undefined,
+                                    mobile: selectedRow.mobile ?? undefined,
+                                    company_id: selectedRow.company_id ?? undefined,
+                                    contractor_id: selectedRow.contractor_id ?? undefined,
+                                },
+                                location: undefined,
+                                activity: {
+                                    active_flag: selectedRow.active_flag ?? undefined,
+                                    tech_id: selectedRow.tech_id ?? undefined,
+                                },
+                                schedule: undefined,
+                            })
                             : undefined
                     }
+                    onListOrgOptions={listOrgOptions as any}
+                    onCreatePerson={createPerson as any}
+                    onUpdatePerson={updatePerson as any}
                     onClose={closeOverlay}
                 />
-            )}
+            ) : null}
         </div>
     );
 }

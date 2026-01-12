@@ -1,53 +1,66 @@
+// apps/web/src/lib/roster/query.ts
+
 import { supabaseServer } from "@/lib/supabase/server";
 import type { RosterFilters, RosterOption, RosterRow } from "./types";
 
 const VIEW = "v_roster_current";
 
-function toInt(v: string | undefined, d: number) {
-    const n = Number.parseInt(v ?? "", 10);
-    return Number.isFinite(n) ? n : d;
+const ROSTER_SELECT =
+    "person_id," +
+    "name,email,mobile,active_flag,last_updated," +
+    "tech_id,schedule_name," +
+    "presence_name,pc_name," +
+    "mso_id,mso_name," +
+    "company_id,company_name," +
+    "contractor_id,contractor_name," +
+    "division_id,division_name," +
+    "region_id,region_name";
+
+function norm(v: unknown) {
+    return (v === null || v === undefined ? "" : String(v)).trim();
 }
 
 export async function fetchRoster(filters: RosterFilters) {
     const supabase = await supabaseServer();
 
-    const limit = Math.min(Math.max(toInt(filters.limit, 50), 10), 200);
-    const offset = Math.max(toInt(filters.offset, 0), 0);
+    const limit = Math.max(1, Math.min(Number(filters.limit ?? 50), 250));
+    const offset = Math.max(0, Number(filters.offset ?? 0));
 
-    let q = supabase.from(VIEW).select("*", { count: "exact" });
+    // Avoid exact counts on views; exact counts can be brutal under frequent nav.
+    let q = supabase.from(VIEW).select(ROSTER_SELECT, { count: "estimated" });
 
-    // Defaults
-    const active = filters.active ?? "1";
-    if (active === "1") q = q.eq("active_flag", true);
+    if (filters.active === "1") q = q.eq("active_flag", true);
+    if (filters.active === "0") q = q.eq("active_flag", false);
 
-    const hasTech = filters.hasTech ?? "0";
-    if (hasTech === "1") q = q.not("tech_id", "is", null);
+    if (filters.hasTech === "1") q = q.not("tech_id", "is", null);
+    if (filters.hasTech === "0") q = q.is("tech_id", null);
 
     if (filters.mso) q = q.eq("mso_id", filters.mso);
     if (filters.contractor) q = q.eq("contractor_id", filters.contractor);
 
-    if (filters.q && filters.q.trim().length > 0) {
-        const needle = `%${filters.q.trim()}%`;
-        // broad human-friendly search
+    const search = norm(filters.q);
+
+    // Narrow search surface + ignore short prefixes (prevents expensive ilike scans)
+    if (search.length >= 3) {
+        const needle = `%${search}%`;
         q = q.or(
             [
                 `name.ilike.${needle}`,
-                `email.ilike.${needle}`,
-                `mobile.ilike.${needle}`,
                 `tech_id.ilike.${needle}`,
-                `presence_name.ilike.${needle}`,
-                `pc_name.ilike.${needle}`,
+                `email.ilike.${needle}`,
             ].join(",")
         );
     }
 
-    q = q.order("name", { ascending: true, nullsFirst: false }).range(offset, offset + limit - 1);
+    q = q
+        .order("name", { ascending: true, nullsFirst: false })
+        .range(offset, offset + limit - 1);
 
     const { data, count, error } = await q;
     if (error) throw error;
 
     return {
-        rows: (data ?? []) as RosterRow[],
+        rows: (data ?? []) as unknown as RosterRow[],
         count: count ?? 0,
         limit,
         offset,
@@ -57,7 +70,6 @@ export async function fetchRoster(filters: RosterFilters) {
 export async function fetchRosterFilterOptions() {
     const supabase = await supabaseServer();
 
-    // Pull small projection once; dedupe in app (MVP)
     const { data, error } = await supabase
         .from(VIEW)
         .select("mso_id,mso_name,contractor_id,contractor_name")
@@ -68,11 +80,13 @@ export async function fetchRosterFilterOptions() {
     const msoMap = new Map<string, string>();
     const contractorMap = new Map<string, string>();
 
-    for (const r of data ?? []) {
-        const row = r as any;
-        if (row.mso_id) msoMap.set(String(row.mso_id), String(row.mso_name ?? row.mso_id));
-        if (row.contractor_id)
-            contractorMap.set(String(row.contractor_id), String(row.contractor_name ?? row.contractor_id));
+    for (const row of data ?? []) {
+        if ((row as any).mso_id) msoMap.set(String((row as any).mso_id), String((row as any).mso_name ?? (row as any).mso_id));
+        if ((row as any).contractor_id)
+            contractorMap.set(
+                String((row as any).contractor_id),
+                String((row as any).contractor_name ?? (row as any).contractor_id)
+            );
     }
 
     const msos: RosterOption[] = Array.from(msoMap.entries())

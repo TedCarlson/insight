@@ -1,3 +1,5 @@
+// apps/web/src/app/(shell)/roster/page.tsx
+
 import { fetchRoster, fetchRosterFilterOptions } from "@/lib/roster/query";
 import type { RosterFilters } from "@/lib/roster/types";
 import RosterClient from "@/components/roster/RosterClient";
@@ -14,8 +16,8 @@ function getParam(p: Record<string, any>, key: string) {
   return v;
 }
 
-export default async function RosterPage({ searchParams }: Props) {
-  const sp = await searchParams;
+export default async function Page(props: Props) {
+  const sp = await props.searchParams;
 
   const filters: RosterFilters = {
     q: getParam(sp, "q"),
@@ -27,7 +29,10 @@ export default async function RosterPage({ searchParams }: Props) {
     offset: (getParam(sp, "offset") as any) ?? "0",
   };
 
-  const [data, options] = await Promise.all([fetchRoster(filters), fetchRosterFilterOptions()]);
+  const [data, options] = await Promise.all([
+    fetchRoster(filters),
+    fetchRosterFilterOptions(), // no unstable_cache (cookies() safe)
+  ]);
 
   return (
     <div className="p-4 space-y-4">

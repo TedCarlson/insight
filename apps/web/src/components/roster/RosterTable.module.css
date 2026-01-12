@@ -1,16 +1,17 @@
 /* apps/web/src/components/roster/RosterTable.module.css
  *
- * Modern roster table styling:
- * - Left-most status pill
- * - Clean spacing + subtle hover
- * - Responsive hide columns (md/lg)
+ * Roster table styling (tokenized):
+ * - Uses TeamOptix tokens (blue base, green/orange accents)
+ * - Preserves horizontal scroll via table min-width
+ * - Name/Company wrap for human-friendly reading
+ * - Other columns compact with ellipsis
  */
 
 .card {
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--to-border);
     border-radius: 16px;
-    background: #fff;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 10px 28px rgba(0, 0, 0, 0.06);
+    background: var(--to-surface);
+    box-shadow: var(--to-shadow-sm), var(--to-shadow-md);
     overflow: hidden;
 }
 
@@ -20,38 +21,46 @@
     justify-content: space-between;
     gap: 12px;
     padding: 16px 18px;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-    background: linear-gradient(to bottom, #ffffff, #fbfbfc);
+    border-bottom: 1px solid var(--to-grid);
+    background: var(--to-header-bg);
 }
 
 .title {
     font-weight: 750;
     font-size: 14px;
     letter-spacing: -0.01em;
+    color: var(--to-header-title);
 }
 
 .subtitle {
     margin-top: 3px;
     font-size: 12px;
-    opacity: 0.65;
+    opacity: 0.70;
+    color: var(--to-ink);
 }
 
 .count {
     font-size: 12px;
-    opacity: 0.7;
+    opacity: 0.70;
     white-space: nowrap;
+    color: var(--to-ink);
 }
 
 .wrap {
     width: 100%;
     overflow: auto;
+    /* horizontal scroll enabled */
 }
 
 .table {
     width: 100%;
+    min-width: 1180px;
+    /* preserves column feel + enables scroll when needed */
     border-collapse: separate;
     border-spacing: 0;
     font-size: 13px;
+    table-layout: auto;
+    /* content-driven */
 }
 
 .table th {
@@ -60,17 +69,21 @@
     font-weight: 750;
     letter-spacing: 0.02em;
     text-transform: uppercase;
-    opacity: 0.75;
+    opacity: 0.80;
     padding: 12px 14px;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    border-bottom: 1px solid var(--to-grid);
     white-space: nowrap;
+    color: var(--to-blue-900);
 }
 
 .table td {
     padding: 14px 14px;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    border-bottom: 1px solid rgba(27, 99, 182, 0.08);
     vertical-align: middle;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--to-ink);
 }
 
 .row {
@@ -78,21 +91,55 @@
 }
 
 .row:hover td {
-    background: rgba(0, 0, 0, 0.018);
+    background: var(--to-row-hover);
 }
 
+/* ---- Column sizing (per-column caps; near-uniform feel) ---- */
 .colPill {
-    width: 110px;
+    min-width: 96px;
+    max-width: 110px;
 }
 
 .colTech {
-    width: 120px;
+    min-width: 110px;
+    max-width: 140px;
 }
 
+/* Name: wrap after cap */
 .colName {
     min-width: 240px;
+    max-width: 380px;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
+/* Company: wrap after cap */
+.colCompany {
+    min-width: 220px;
+    max-width: 360px;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.colRegion {
+    min-width: 150px;
+    max-width: 220px;
+}
+
+.colPc {
+    min-width: 120px;
+    max-width: 180px;
+}
+
+/* ---- Status pill ---- */
 .pill {
     display: inline-flex;
     align-items: center;
@@ -100,24 +147,30 @@
     border-radius: 999px;
     padding: 6px 10px;
     font-size: 12px;
-    font-weight: 700;
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    border: 1px solid var(--to-pill-unknown-border);
 }
 
-.pillActive {
-    background: rgba(16, 185, 129, 0.12);
-    border-color: rgba(16, 185, 129, 0.22);
+/* Active (green) */
+.pill_active {
+    background: var(--to-pill-active-bg);
+    border-color: var(--to-pill-active-border);
+    color: var(--to-pill-active-text);
 }
 
-.pillInactive {
-    background: rgba(239, 68, 68, 0.10);
-    border-color: rgba(239, 68, 68, 0.22);
+/* Inactive (orange) */
+.pill_inactive {
+    background: var(--to-pill-inactive-bg);
+    border-color: var(--to-pill-inactive-border);
+    color: var(--to-pill-inactive-text);
 }
 
-.pillUnknown {
-    background: rgba(0, 0, 0, 0.04);
-    border-color: rgba(0, 0, 0, 0.10);
-    opacity: 0.8;
+/* Unknown (neutral) */
+.pill_unknown {
+    background: var(--to-pill-unknown-bg);
+    border-color: var(--to-pill-unknown-border);
+    color: var(--to-pill-unknown-text);
 }
 
 .primary {
@@ -134,7 +187,8 @@
 }
 
 .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+        "Courier New", monospace;
     font-size: 12px;
     opacity: 0.85;
 }
@@ -143,6 +197,7 @@
     padding: 18px 14px;
     font-size: 13px;
     opacity: 0.75;
+    color: var(--to-ink);
 }
 
 /* Responsive hiding */

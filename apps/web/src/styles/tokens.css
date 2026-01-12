@@ -1,0 +1,84 @@
+/* apps/web/src/styles/tokens.css
+ *
+ * TeamOptix Tokens v0.1
+ * - Blue base, green + orange accents
+ * - Namespace: --to-*
+ * - Keep tokens only (no component styling here)
+ */
+
+:root {
+    /* Core palette */
+    --to-ink: #0f172a;
+    --to-ink-muted: rgba(15, 23, 42, 0.62);
+
+    --to-surface: #ffffff;
+    --to-surface-soft: #f6f9ff;
+
+    /* Blues (base) */
+    --to-blue-950: #081a2f;
+    --to-blue-900: #0b2a4a;
+    --to-blue-800: #103b6a;
+    --to-blue-700: #134e8a;
+    --to-blue-600: #1b63b6;
+    --to-blue-500: #2a7be6;
+
+    --to-blue-100: #e8f1ff;
+    --to-blue-050: #f3f7ff;
+
+    /* Accents */
+    --to-green-700: #0f7a33;
+    --to-green-600: #16a34a;
+    --to-green-100: #dcfce7;
+
+    --to-orange-700: #b45309;
+    --to-orange-600: #f97316;
+    --to-orange-100: #ffedd5;
+
+    /* Borders + grid (light blue bias) */
+    --to-border: rgba(27, 99, 182, 0.18);
+    --to-grid: rgba(27, 99, 182, 0.12);
+
+    /* Elevation + subtle effects */
+    --to-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+    --to-shadow-md: 0 10px 28px rgba(0, 0, 0, 0.06);
+
+    /* Header */
+    --to-header-bg: linear-gradient(to bottom, #ffffff, var(--to-blue-050));
+    --to-header-title: var(--to-blue-700);
+
+    /* Row hover */
+    --to-row-hover: rgba(27, 99, 182, 0.04);
+
+    /* Buttons */
+    --to-btn-primary-bg: var(--to-blue-600);
+    --to-btn-primary-text: #ffffff;
+    --to-btn-primary-border: rgba(27, 99, 182, 0.25);
+    --to-btn-primary-hover: #1557a3;
+
+    --to-btn-neutral-bg: rgba(255, 255, 255, 0.92);
+    --to-btn-neutral-border: rgba(15, 23, 42, 0.12);
+    --to-btn-neutral-text: var(--to-ink);
+
+    /* Toggles */
+    --to-toggle-on-bg: var(--to-green-600);
+    --to-toggle-on-text: #ffffff;
+    --to-toggle-on-border: rgba(22, 163, 74, 0.28);
+
+    --to-toggle-off-bg: rgba(255, 255, 255, 0.96);
+    --to-toggle-off-text: var(--to-ink);
+    --to-toggle-off-border: rgba(15, 23, 42, 0.12);
+
+    /* Pills (status) */
+    --to-pill-active-bg: rgba(22, 163, 74, 0.12);
+    --to-pill-active-border: rgba(22, 163, 74, 0.22);
+    --to-pill-active-text: rgba(10, 90, 38, 0.95);
+
+    /* Inactive = ORANGE (preferred “non-alarm” inactive) */
+    --to-pill-inactive-bg: rgba(249, 115, 22, 0.12);
+    --to-pill-inactive-border: rgba(249, 115, 22, 0.22);
+    --to-pill-inactive-text: rgba(124, 45, 18, 0.95);
+
+    --to-pill-unknown-bg: rgba(15, 23, 42, 0.05);
+    --to-pill-unknown-border: rgba(15, 23, 42, 0.12);
+    --to-pill-unknown-text: rgba(15, 23, 42, 0.72);
+}

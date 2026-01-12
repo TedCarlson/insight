@@ -1,3 +1,5 @@
+//apps/web/src/lib/roster/types.ts
+
 export type RosterRow = {
     person_id: string;
 

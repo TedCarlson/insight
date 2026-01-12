@@ -15,11 +15,25 @@ import styles from "./RosterOverlay.module.css";
 export type OverlayMode = "create" | "edit";
 export type CreationStage = "pre_person" | "post_person";
 
+type OrgType = "company" | "contractor";
+
+export type OrgOption = {
+    org_type: OrgType;
+    org_id: string;
+    org_name: string;
+    org_code?: string;
+    active_flag?: boolean;
+};
+
 type PersonDraft = {
     full_name: string;
     email?: string;
     mobile?: string;
     notes?: string;
+
+    // DB-aligned (core.person)
+    company_id?: string;
+    contractor_id?: string;
 };
 
 type LocationDraft = {
@@ -70,6 +84,10 @@ export type RosterOverlayProps = {
     onUpsertLocation?: (args: { personId: string; location: LocationDraft }) => Promise<void>;
     onUpsertActivity?: (args: { personId: string; activity: ActivityDraft }) => Promise<void>;
     onUpsertSchedule?: (args: { personId: string; schedule: ScheduleDraft }) => Promise<void>;
+
+    // NEW (optional): dropdown feed for Company|Contractor unified list
+    // Expected to query something like public.v_org_options
+    onListOrgOptions?: () => Promise<OrgOption[]>;
 
     onClose: () => void;
 };
@@ -141,6 +159,10 @@ function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
     return <input {...props} className={cx(styles.input, props.className)} />;
 }
 
+function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+    return <select {...props} className={cx(styles.input, props.className)} />;
+}
+
 function Toggle(props: { value?: boolean; onChange: (vv: boolean) => void; disabled?: boolean }) {
     return (
         <button
@@ -200,6 +222,21 @@ function AutoGrowTextarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElemen
     );
 }
 
+function encodeOrgValue(t: OrgType, id: string) {
+    return `${t}:${id}`;
+}
+
+function decodeOrgValue(v: string): { org_type: OrgType; org_id: string } | null {
+    const s = normalizeString(v);
+    if (!s) return null;
+    const idx = s.indexOf(":");
+    if (idx <= 0) return null;
+    const t = s.slice(0, idx) as OrgType;
+    const id = s.slice(idx + 1);
+    if ((t !== "company" && t !== "contractor") || !normalizeString(id)) return null;
+    return { org_type: t, org_id: normalizeString(id) };
+}
+
 export function RosterOverlay(props: RosterOverlayProps) {
     const open = props.open;
     const mode: OverlayMode = coerceMode(props.mode);
@@ -218,10 +255,18 @@ export function RosterOverlay(props: RosterOverlayProps) {
         schedule: ScheduleDraft;
     } | null>(null);
 
+
+    const [baselineVersion, setBaselineVersion] = useState(0);
+
     const [personDraft, setPersonDraft] = useState<PersonDraft>({ full_name: "" });
     const [locationDraft, setLocationDraft] = useState<LocationDraft>({});
     const [activityDraft, setActivityDraft] = useState<ActivityDraft>({});
     const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>({});
+
+    // Org options (Company|Contractor union)
+    const [orgLoading, setOrgLoading] = useState(false);
+    const [orgError, setOrgError] = useState<string>("");
+    const [orgOptions, setOrgOptions] = useState<OrgOption[]>([]);
 
     const prevAssignmentsLockedRef = useRef<boolean>(false);
     const [unlockPulse, setUnlockPulse] = useState(false);
@@ -250,6 +295,11 @@ export function RosterOverlay(props: RosterOverlayProps) {
         setLoading(false);
         setSaving(false);
 
+        // reset org list state on open (keeps behavior deterministic)
+        setOrgLoading(false);
+        setOrgError("");
+        setOrgOptions([]);
+
         const resolvedPersonId = mode === "edit" ? props.personId : undefined;
         setPersonId(resolvedPersonId);
 
@@ -261,6 +311,9 @@ export function RosterOverlay(props: RosterOverlayProps) {
             email: props.initialPerson?.email ? normalizeString(props.initialPerson.email) : undefined,
             mobile: props.initialPerson?.mobile ? normalizeString(props.initialPerson.mobile) : undefined,
             notes: props.initialPerson?.notes ? String(props.initialPerson.notes) : undefined,
+
+            company_id: props.initialPerson?.company_id ? normalizeString(props.initialPerson.company_id) : undefined,
+            contractor_id: props.initialPerson?.contractor_id ? normalizeString(props.initialPerson.contractor_id) : undefined,
         };
 
         const initLocation: LocationDraft = {
@@ -288,43 +341,77 @@ export function RosterOverlay(props: RosterOverlayProps) {
         setScheduleDraft(initSchedule);
 
         (async () => {
-            if (mode !== "edit") return;
-            if (!resolvedPersonId) return;
-            if (!props.onHydrateBundle) return;
+            // hydrate record in edit mode
+            if (mode === "edit" && resolvedPersonId && props.onHydrateBundle) {
+                setLoading(true);
+                try {
+                    const bundle = await props.onHydrateBundle({ personId: resolvedPersonId });
 
-            setLoading(true);
-            try {
-                const bundle = await props.onHydrateBundle({ personId: resolvedPersonId });
+                    const bPerson: PersonDraft = {
+                        full_name: normalizeString(bundle.person?.full_name ?? initPerson.full_name ?? ""),
+                        email: bundle.person?.email ? normalizeString(bundle.person.email) : undefined,
+                        mobile: bundle.person?.mobile ? normalizeString(bundle.person.mobile) : undefined,
+                        notes: bundle.person?.notes ? String(bundle.person.notes) : undefined,
 
-                const bPerson: PersonDraft = {
-                    full_name: normalizeString(bundle.person?.full_name ?? initPerson.full_name ?? ""),
-                    email: bundle.person?.email ? normalizeString(bundle.person.email) : undefined,
-                    mobile: bundle.person?.mobile ? normalizeString(bundle.person.mobile) : undefined,
-                    notes: bundle.person?.notes ? String(bundle.person.notes) : undefined,
-                };
+                        company_id: bundle.person?.company_id ? normalizeString(bundle.person.company_id) : undefined,
+                        contractor_id: bundle.person?.contractor_id ? normalizeString(bundle.person.contractor_id) : undefined,
+                    };
 
-                const bLocation: LocationDraft = {
-                    region_id: bundle.location?.region_id ? normalizeString(bundle.location.region_id) : undefined,
-                    office_id: bundle.location?.office_id ? normalizeString(bundle.location.office_id) : undefined,
-                };
+                    const bLocation: LocationDraft = {
+                        region_id: bundle.location?.region_id ? normalizeString(bundle.location.region_id) : undefined,
+                        office_id: bundle.location?.office_id ? normalizeString(bundle.location.office_id) : undefined,
+                    };
 
-                const bActivity: ActivityDraft = {
-                    active_flag: bundle.activity?.active_flag,
-                    tech_id: bundle.activity?.tech_id ? normalizeString(bundle.activity.tech_id) : undefined,
-                };
+                    const bActivity: ActivityDraft = {
+                        active_flag: bundle.activity?.active_flag,
+                        tech_id: bundle.activity?.tech_id ? normalizeString(bundle.activity.tech_id) : undefined,
+                    };
 
-                const bSchedule: ScheduleDraft = { ...(bundle.schedule ?? initSchedule) };
+                    const bSchedule: ScheduleDraft = { ...(bundle.schedule ?? initSchedule) };
 
-                baselineRef.current = { person: bPerson, location: bLocation, activity: bActivity, schedule: bSchedule };
+                    baselineRef.current = { person: bPerson, location: bLocation, activity: bActivity, schedule: bSchedule };
 
-                setPersonDraft(bPerson);
-                setLocationDraft(bLocation);
-                setActivityDraft(bActivity);
-                setScheduleDraft(bSchedule);
-            } catch (e: any) {
-                setErrorMsg(e?.message ? String(e.message) : "Failed to load record.");
-            } finally {
-                setLoading(false);
+                    setPersonDraft(bPerson);
+                    setLocationDraft(bLocation);
+                    setActivityDraft(bActivity);
+                    setScheduleDraft(bSchedule);
+                } catch (e: any) {
+                    setErrorMsg(e?.message ? String(e.message) : "Failed to load record.");
+                } finally {
+                    setLoading(false);
+                }
+            }
+
+            // load org options (Company|Contractor) for dropdown
+            if (props.onListOrgOptions) {
+                setOrgLoading(true);
+                setOrgError("");
+                try {
+                    const rows = await props.onListOrgOptions();
+                    const cleaned = (rows ?? [])
+                        .map((r) => ({
+                            org_type: r.org_type,
+                            org_id: normalizeString(r.org_id),
+                            org_name: normalizeString(r.org_name),
+                            org_code: r.org_code ? normalizeString(r.org_code) : undefined,
+                            active_flag: r.active_flag,
+                        }))
+                        .filter((r) => (r.org_type === "company" || r.org_type === "contractor") && r.org_id && r.org_name);
+
+                    // keep stable ordering: active first, then name
+                    cleaned.sort((a, b) => {
+                        const aa = a.active_flag === false ? 1 : 0;
+                        const bb = b.active_flag === false ? 1 : 0;
+                        if (aa !== bb) return aa - bb;
+                        return a.org_name.localeCompare(b.org_name);
+                    });
+
+                    setOrgOptions(cleaned);
+                } catch (e: any) {
+                    setOrgError(e?.message ? String(e.message) : "Failed to load Company/Contractor list.");
+                } finally {
+                    setOrgLoading(false);
+                }
             }
         })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,7 +440,9 @@ export function RosterOverlay(props: RosterOverlayProps) {
             !eqNorm(personDraft.full_name, b.person.full_name) ||
             !eqNorm(personDraft.email ?? "", b.person.email ?? "") ||
             !eqNorm(personDraft.mobile ?? "", b.person.mobile ?? "") ||
-            !eqNorm(personDraft.notes ?? "", b.person.notes ?? "");
+            !eqNorm(personDraft.notes ?? "", b.person.notes ?? "") ||
+            !eqNorm(personDraft.company_id ?? "", b.person.company_id ?? "") ||
+            !eqNorm(personDraft.contractor_id ?? "", b.person.contractor_id ?? "");
 
         const locationDirty =
             !eqNorm(locationDraft.region_id ?? "", b.location.region_id ?? "") ||
@@ -407,6 +496,26 @@ export function RosterOverlay(props: RosterOverlayProps) {
         props.onClose();
     }
 
+    function currentOrgValue(d: PersonDraft) {
+        const cid = normalizeString(d.company_id ?? "");
+        if (cid) return encodeOrgValue("company", cid);
+        const kid = normalizeString(d.contractor_id ?? "");
+        if (kid) return encodeOrgValue("contractor", kid);
+        return "";
+    }
+
+    function applyOrgSelection(sel: { org_type: OrgType; org_id: string } | null) {
+        if (!sel) {
+            setPersonDraft({ ...personDraft, company_id: undefined, contractor_id: undefined });
+            return;
+        }
+        if (sel.org_type === "company") {
+            setPersonDraft({ ...personDraft, company_id: sel.org_id, contractor_id: undefined });
+            return;
+        }
+        setPersonDraft({ ...personDraft, contractor_id: sel.org_id, company_id: undefined });
+    }
+
     async function onSave() {
         if (!saveEnabled) return;
 
@@ -432,18 +541,18 @@ export function RosterOverlay(props: RosterOverlayProps) {
 
                 baselineRef.current = baselineRef.current
                     ? {
-                          ...baselineRef.current,
-                          person: { ...personDraft },
-                          location: { ...locationDraft },
-                          activity: { ...activityDraft },
-                          schedule: { ...scheduleDraft },
-                      }
+                        ...baselineRef.current,
+                        person: { ...personDraft },
+                        location: { ...locationDraft },
+                        activity: { ...activityDraft },
+                        schedule: { ...scheduleDraft },
+                    }
                     : {
-                          person: { ...personDraft },
-                          location: { ...locationDraft },
-                          activity: { ...activityDraft },
-                          schedule: { ...scheduleDraft },
-                      };
+                        person: { ...personDraft },
+                        location: { ...locationDraft },
+                        activity: { ...activityDraft },
+                        schedule: { ...scheduleDraft },
+                    };
 
                 return;
             }
@@ -472,18 +581,18 @@ export function RosterOverlay(props: RosterOverlayProps) {
 
             baselineRef.current = baselineRef.current
                 ? {
-                      ...baselineRef.current,
-                      person: { ...personDraft },
-                      location: { ...locationDraft },
-                      activity: { ...activityDraft },
-                      schedule: { ...scheduleDraft },
-                  }
+                    ...baselineRef.current,
+                    person: { ...personDraft },
+                    location: { ...locationDraft },
+                    activity: { ...activityDraft },
+                    schedule: { ...scheduleDraft },
+                }
                 : {
-                      person: { ...personDraft },
-                      location: { ...locationDraft },
-                      activity: { ...activityDraft },
-                      schedule: { ...scheduleDraft },
-                  };
+                    person: { ...personDraft },
+                    location: { ...locationDraft },
+                    activity: { ...activityDraft },
+                    schedule: { ...scheduleDraft },
+                };
         } catch (e: any) {
             setErrorMsg(e?.message ? String(e.message) : "Save failed.");
         } finally {
@@ -588,6 +697,33 @@ export function RosterOverlay(props: RosterOverlayProps) {
                                             onChange={(e) => setPersonDraft({ ...personDraft, mobile: e.target.value })}
                                             placeholder="Phone number"
                                         />
+                                    </Field>
+
+                                    <Field
+                                        label="Company / Contractor"
+                                        hint={props.onListOrgOptions ? "optional" : "feed not wired"}
+                                    >
+                                        <Select
+                                            value={currentOrgValue(personDraft)}
+                                            onChange={(e) => applyOrgSelection(decodeOrgValue(e.target.value))}
+                                            disabled={!props.onListOrgOptions || orgLoading}
+                                        >
+                                            <option value="">{orgLoading ? "Loading…" : "Select company or contractor…"}</option>
+                                            {orgOptions.map((o) => (
+                                                <option
+                                                    key={`${o.org_type}:${o.org_id}`}
+                                                    value={encodeOrgValue(o.org_type, o.org_id)}
+                                                    disabled={o.active_flag === false}
+                                                >
+                                                    {o.org_name}
+                                                </option>
+                                            ))}
+                                        </Select>
+
+                                        {orgError ? <div className={styles.fieldNote}>{orgError}</div> : null}
+                                        {!props.onListOrgOptions ? (
+                                            <div className={styles.fieldNote}>Provide onListOrgOptions() to populate this list.</div>
+                                        ) : null}
                                     </Field>
 
                                     <div className={styles.span2}>

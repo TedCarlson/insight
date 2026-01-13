@@ -1,45 +1,28 @@
-// apps/web/src/lib/supabase/server.ts
+import { cookies } from 'next/headers';
+import { createServerClient } from '@supabase/ssr';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/lib/supabase/types';
 
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-if (!url) throw new Error("Missing env: NEXT_PUBLIC_SUPABASE_URL");
-if (!anon) throw new Error("Missing env: NEXT_PUBLIC_SUPABASE_ANON_KEY");
+if (!SUPABASE_URL) throw new Error('Missing env: NEXT_PUBLIC_SUPABASE_URL');
+if (!SUPABASE_ANON_KEY) throw new Error('Missing env: NEXT_PUBLIC_SUPABASE_ANON_KEY');
 
-const SUPABASE_URL: string = url;
-const SUPABASE_ANON_KEY: string = anon;
-
-/**
- * Next 16.x:
- * - cookies() is async (returns Promise<ReadonlyRequestCookies>)
- * - ReadonlyRequestCookies cannot be mutated (.set not available)
- * - cookie mutation is disallowed during Server Component render anyway
- *
- * Therefore:
- * - getAll = read cookies for request context
- * - setAll = NO-OP (prevents runtime crash)
- * - auth persistence/refresh disabled (prevents internal cookie churn)
- */
-export async function supabaseServer() {
+export async function supabaseServer(): Promise<SupabaseClient<Database>> {
   const cookieStore = await cookies();
 
-  return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  return createServerClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     cookies: {
-      getAll() {
-        // ReadonlyRequestCookies supports getAll()
-        return cookieStore.getAll();
-      },
-      setAll() {
-        // NO-OP by design (render-safe)
-      },
+      get(name) {
+        return cookieStore.get(name)?.value;
+      }
     },
     auth: {
       autoRefreshToken: false,
       persistSession: false,
-      detectSessionInUrl: false,
-    },
+      detectSessionInUrl: false
+    }
   });
 }

@@ -1,3 +1,5 @@
+//apps/web/src/app/%28prod%29/person/PersonInspector.tsx
+
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -576,7 +578,7 @@ export default function PersonInspector(props: {
                             <div className="text-[11px] text-[var(--to-ink-muted)] truncate">
                               {m.co_ref_id
                                 ? companyLabelById.get(String(m.co_ref_id)) ??
-                                  '—'
+                                '—'
                                 : '—'}
                             </div>
                           </div>

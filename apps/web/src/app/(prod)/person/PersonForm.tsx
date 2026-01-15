@@ -157,13 +157,6 @@ export default function PersonForm({ person, onUpdated }: PersonFormProps) {
         onChange={(e) => updateField('person_csg_id', e.target.value)}
       />
 
-      {/* System Fields */}
-      <div className="text-xs text-gray-500">
-        Created: {new Date(person.created_at).toLocaleString()}
-        <br />
-        Updated: {new Date(person.updated_at).toLocaleString()}
-      </div>
-
       {loading && (
         <div className="text-xs text-gray-500">Saving…</div>
       )}

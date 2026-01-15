@@ -24,7 +24,7 @@ export async function fetchPersons(): Promise<PersonRow[]> {
 }
 
 /**
- * Update person admin-managed fields
+ * Update person employer / org–scoped fields
  *
  * Writes:
  * - base table: person
@@ -51,7 +51,51 @@ export async function updatePersonEmployer(
     throw error
   }
 
-  // return-loop: authoritative re-read
+  const { data, error: readError } = await supabase
+    .from('person_admin_v')
+    .select('*')
+    .eq('person_id', personId)
+    .single()
+
+  if (readError) {
+    console.error('post-update fetch error', readError)
+    throw readError
+  }
+
+  return data as PersonRow
+}
+
+/**
+ * Update core person fields (identity / contact / identifiers)
+ *
+ * Writes:
+ * - base table: person
+ *
+ * Reads:
+ * - admin view: person_admin_v (authoritative)
+ */
+export async function updatePersonCore(
+  personId: string,
+  payload: {
+    full_name?: string | null
+    emails?: string | null
+    mobile?: string | null
+    fuse_emp_id?: string | null
+    person_nt_login?: string | null
+    person_csg_id?: string | null
+    person_notes?: string | null
+  }
+): Promise<PersonRow> {
+  const { error } = await supabase
+    .from('person')
+    .update(payload)
+    .eq('person_id', personId)
+
+  if (error) {
+    console.error('updatePersonCore error', error)
+    throw error
+  }
+
   const { data, error: readError } = await supabase
     .from('person_admin_v')
     .select('*')
@@ -121,7 +165,6 @@ export async function createPerson(
 > {
   const fuse = (payload.fuse_emp_id ?? '').trim()
 
-  // advisory duplicate check
   if (fuse && !options?.allowDuplicateFuse) {
     const matches = await checkPersonDuplicatesByFuseId(fuse)
     if (matches.length > 0) {
@@ -131,7 +174,7 @@ export async function createPerson(
 
   const insertPayload = {
     ...payload,
-    active: payload.active ?? true, // default
+    active: payload.active ?? true,
   }
 
   const { data: inserted, error: insertError } = await supabase
@@ -145,7 +188,6 @@ export async function createPerson(
     throw insertError
   }
 
-  // authoritative re-read
   const { data: row, error: readError } = await supabase
     .from('person_admin_v')
     .select('*')

@@ -98,8 +98,8 @@ export default function PersonTable() {
         statusFilter === 'all'
           ? true
           : statusFilter === 'active'
-          ? r.active === true
-          : r.active === false
+            ? r.active === true
+            : r.active === false
 
       return matchesSearch && matchesStatus
     })
@@ -222,8 +222,8 @@ export default function PersonTable() {
                     {k === 'all'
                       ? 'All'
                       : k === 'active'
-                      ? 'Active'
-                      : 'Inactive'}
+                        ? 'Active'
+                        : 'Inactive'}
                   </button>
                 )
               )}
@@ -342,8 +342,8 @@ export default function PersonTable() {
                       style={{ borderColor: 'var(--to-border)' }}
                       value={r.emails ?? ''}
                       onChange={(e) =>
-                        updateField(r.person_id,'emails',e.target.value)
-                      }/>
+                        updateField(r.person_id, 'emails', e.target.value)
+                      } />
                   ) : r.emails}</td>
 
                   <td className={td}>{inlineEdit ? (
@@ -351,8 +351,8 @@ export default function PersonTable() {
                       style={{ borderColor: 'var(--to-border)' }}
                       value={r.mobile ?? ''}
                       onChange={(e) =>
-                        updateField(r.person_id,'mobile',e.target.value)
-                      }/>
+                        updateField(r.person_id, 'mobile', e.target.value)
+                      } />
                   ) : r.mobile}</td>
 
                   <td className={td}>{inlineEdit ? (
@@ -360,10 +360,10 @@ export default function PersonTable() {
                       style={{ borderColor: 'var(--to-border)' }}
                       value={r.co_ref_id ?? ''}
                       onChange={(e) =>
-                        updateField(r.person_id,'co_ref_id',e.target.value||null)
+                        updateField(r.person_id, 'co_ref_id', e.target.value || null)
                       }>
                       <option value="">— Unassigned —</option>
-                      {companyOptions.map(o=>(
+                      {companyOptions.map(o => (
                         <option key={o.id} value={o.id}>{o.label}</option>
                       ))}
                     </select>
@@ -374,13 +374,14 @@ export default function PersonTable() {
                   <td className={td}>
                     {inlineEdit ? (
                       <button
-                        className="rounded-full border px-2 py-0.5 text-xs"
+                        className={cx(
+                          pillBase,
+                          r.active === true
+                            ? 'bg-[var(--to-pill-active-bg)] text-[var(--to-pill-active-text)] border-[var(--to-pill-active-border)]'
+                            : 'bg-[var(--to-pill-inactive-bg)] text-[var(--to-pill-inactive-text)] border-[var(--to-pill-inactive-border)]'
+                        )}
                         onClick={() =>
-                          updateField(
-                            r.person_id,
-                            'active',
-                            r.active === true ? false : true
-                          )
+                          updateField(r.person_id, 'active', r.active === true ? false : true)
                         }
                       >
                         {r.active ? 'Active' : 'Inactive'}
@@ -390,13 +391,14 @@ export default function PersonTable() {
                     )}
                   </td>
 
+
                   <td className={td}>{inlineEdit ? (
                     <input className="w-full rounded border px-2 py-1"
                       style={{ borderColor: 'var(--to-border)' }}
                       value={r.role ?? ''}
                       onChange={(e) =>
-                        updateField(r.person_id,'role',e.target.value)
-                      }/>
+                        updateField(r.person_id, 'role', e.target.value)
+                      } />
                   ) : r.role}</td>
 
                   <td className={td}>{inlineEdit ? (
@@ -404,8 +406,8 @@ export default function PersonTable() {
                       style={{ borderColor: 'var(--to-border)' }}
                       value={r.fuse_emp_id ?? ''}
                       onChange={(e) =>
-                        updateField(r.person_id,'fuse_emp_id',e.target.value)
-                      }/>
+                        updateField(r.person_id, 'fuse_emp_id', e.target.value)
+                      } />
                   ) : r.fuse_emp_id}</td>
 
                   <td className={td}>{inlineEdit ? (
@@ -413,8 +415,8 @@ export default function PersonTable() {
                       style={{ borderColor: 'var(--to-border)' }}
                       value={r.person_nt_login ?? ''}
                       onChange={(e) =>
-                        updateField(r.person_id,'person_nt_login',e.target.value)
-                      }/>
+                        updateField(r.person_id, 'person_nt_login', e.target.value)
+                      } />
                   ) : r.person_nt_login}</td>
 
                   <td className={td}>{inlineEdit ? (
@@ -422,8 +424,8 @@ export default function PersonTable() {
                       style={{ borderColor: 'var(--to-border)' }}
                       value={r.person_csg_id ?? ''}
                       onChange={(e) =>
-                        updateField(r.person_id,'person_csg_id',e.target.value)
-                      }/>
+                        updateField(r.person_id, 'person_csg_id', e.target.value)
+                      } />
                   ) : r.person_csg_id}</td>
 
                   <td className={td}>{inlineEdit ? (
@@ -432,8 +434,8 @@ export default function PersonTable() {
                       style={{ borderColor: 'var(--to-border)' }}
                       value={r.person_notes ?? ''}
                       onChange={(e) =>
-                        updateField(r.person_id,'person_notes',e.target.value)
-                      }/>
+                        updateField(r.person_id, 'person_notes', e.target.value)
+                      } />
                   ) : r.person_notes}</td>
                 </tr>
               )

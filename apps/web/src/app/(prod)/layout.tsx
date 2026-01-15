@@ -1,8 +1,8 @@
-// src/app/(shell)/layout.tsx
+// src/app/(prod)/layout.tsx
 
 import type { ReactNode } from 'react'
 
-export default function ShellLayout({
+export default function ProdLayout({
   children,
 }: {
   children: ReactNode

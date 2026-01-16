@@ -14,6 +14,10 @@
     --to-surface: #ffffff;
     --to-surface-soft: #f6f9ff;
 
+    /* Compatibility / semantic aliases used by components */
+    --to-surface-2: var(--to-surface-soft);
+    --to-primary: var(--to-blue-600);
+
     /* Blues (base) */
     --to-blue-950: #081a2f;
     --to-blue-900: #0b2a4a;

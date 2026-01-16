@@ -31,7 +31,7 @@ export type UpdateAssignmentInput = Partial<CreateAssignmentInput>
 export type PositionTitleOption = { id: string; label: string }
 export type AssignmentInspectorMode = 'create' | 'edit'
 
-/** Authoritative read shape from public.assignment_reporting_admin_v */
+/** Authoritative read shape from public.assignment_leadership_admin_v */
 export type AssignmentReportingRow = {
   assignment_leadership_id: string | null
   child_assignment_id: string | null

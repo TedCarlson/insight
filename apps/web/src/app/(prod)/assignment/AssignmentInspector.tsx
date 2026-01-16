@@ -475,10 +475,10 @@ export default function AssignmentInspector({
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-[var(--to-ink)]">
-                Reporting (read-only, v1)
+                Org Chart Detail
               </div>
               <div className="mt-1 text-sm text-[var(--to-ink-muted)]">
-                Source: <code>assignment_reporting_admin_v</code>
+                Source: <code>Leadership</code>
               </div>
             </div>
 
@@ -503,7 +503,7 @@ export default function AssignmentInspector({
             {/* Parents */}
             <div>
               <div className="text-xs font-semibold text-[var(--to-ink-muted)]">
-                Reports To (parents)
+                Reports To
               </div>
 
               <div className="mt-2 space-y-2">
@@ -535,7 +535,7 @@ export default function AssignmentInspector({
             {/* Children */}
             <div>
               <div className="text-xs font-semibold text-[var(--to-ink-muted)]">
-                Direct Reports (children)
+                Direct Reports
               </div>
 
               <div className="mt-2 space-y-2">

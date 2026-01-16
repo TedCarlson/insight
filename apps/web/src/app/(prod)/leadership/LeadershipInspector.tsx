@@ -138,7 +138,7 @@ export default function LeadershipInspector(props: Props) {
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           <div className="text-xs text-[var(--to-ink-muted)]">
-            Rule: one active leader per child. Saving will close any active edge for the child.
+            Change leader option will close any active tie to prior leader to begin reporting to new leader.
           </div>
 
           <div className="flex items-center gap-2">
@@ -166,7 +166,10 @@ export default function LeadershipInspector(props: Props) {
               onClick={onSave}
               disabled={!canSave || saving}
               className="rounded px-3 py-2 text-sm font-semibold disabled:opacity-60"
-              style={{ background: 'var(--to-primary)', color: 'white' }}
+              style={{
+                background: 'var(--to-btn-primary-bg)',
+                color: 'var(--to-btn-primary-text)',
+              }}
             >
               {saving ? 'Saving…' : mode === 'create' ? 'Create' : 'Change leader'}
             </button>
@@ -191,7 +194,7 @@ export default function LeadershipInspector(props: Props) {
             style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}
           >
             <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-              Child (who reports)
+              Direct Report
             </div>
 
             <select
@@ -209,9 +212,7 @@ export default function LeadershipInspector(props: Props) {
               ))}
             </select>
 
-            <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
-              {child ? displayAssignment(child) : '—'}
-            </div>
+            <div className="mt-2 text-xs text-[var(--to-ink-muted)]">{child ? displayAssignment(child) : '—'}</div>
           </div>
 
           <div
@@ -219,7 +220,7 @@ export default function LeadershipInspector(props: Props) {
             style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}
           >
             <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-              Leader (parent)
+              Reports To
             </div>
 
             <select
@@ -271,9 +272,7 @@ export default function LeadershipInspector(props: Props) {
               className="rounded border p-3 md:col-span-2"
               style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}
             >
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                Current edge
-              </div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Current edge</div>
               <div className="mt-2 text-sm text-[var(--to-ink)]">
                 {displayAssignment(edge?.child ?? null)} → {displayAssignment(edge?.parent ?? null)}
               </div>

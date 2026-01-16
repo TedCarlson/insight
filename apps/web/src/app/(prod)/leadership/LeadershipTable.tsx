@@ -26,6 +26,7 @@ export default function LeadershipTable() {
 
   const [rows, setRows] = useState<LeadershipEdge[]>([])
   const [search, setSearch] = useState('')
+  const [activeOnly, setActiveOnly] = useState(true)
 
   const [assignments, setAssignments] = useState<AssignmentRow[]>([])
 
@@ -38,25 +39,28 @@ export default function LeadershipTable() {
     setError(null)
 
     try {
-      const [edges, assignmentRows] = await Promise.all([fetchLeadership(), fetchAssignments()])
+      const [assignmentRows, leadershipRows] = await Promise.all([
+        fetchAssignments(),
+        fetchLeadership(),
+      ])
 
       setAssignments(assignmentRows)
 
+      // hydrate child/parent labels from assignment_admin_v
       const byId = new Map<string, AssignmentRow>()
       for (const a of assignmentRows) {
         if (a.assignment_id) byId.set(a.assignment_id, a)
       }
 
-      const hydrated: LeadershipEdge[] = (edges ?? []).map((e) => ({
-        ...(e as LeadershipRow),
-        child: e.child_assignment_id ? byId.get(e.child_assignment_id) ?? null : null,
-        parent: e.parent_assignment_id ? byId.get(e.parent_assignment_id) ?? null : null,
+      const edges: LeadershipEdge[] = (leadershipRows ?? []).map((r: LeadershipRow) => ({
+        ...r,
+        child: r.child_assignment_id ? byId.get(r.child_assignment_id) ?? null : null,
+        parent: r.parent_assignment_id ? byId.get(r.parent_assignment_id) ?? null : null,
       }))
 
-      setRows(hydrated)
+      setRows(edges)
     } catch (e: any) {
-      setError(e?.message ?? 'Failed to load leadership edges')
-      setRows([])
+      setError(e?.message ?? 'Failed to load leadership edges.')
     } finally {
       setLoading(false)
     }
@@ -67,9 +71,15 @@ export default function LeadershipTable() {
   }, [])
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return rows
+    let out = rows
+
+    if (activeOnly) {
+      out = out.filter((r) => !!r.active)
+    }
+
+    if (!search.trim()) return out
     const q = search.toLowerCase()
-    return rows.filter((r) => {
+    return out.filter((r) => {
       const blob = [
         r.assignment_reporting_id,
         r.child_assignment_id,
@@ -89,7 +99,7 @@ export default function LeadershipTable() {
 
       return blob.includes(q)
     })
-  }, [rows, search])
+  }, [rows, search, activeOnly])
 
   const onNew = () => {
     setSelected(null)
@@ -111,6 +121,39 @@ export default function LeadershipTable() {
             Rows: <span className="font-mono">{loading ? '…' : filtered.length}</span>
           </div>
 
+          {/* Pill toggle (small, uniform) */}
+          <div
+            className="inline-flex overflow-hidden rounded-full border"
+            style={{ borderColor: 'var(--to-border)' }}
+          >
+            <button
+              type="button"
+              onClick={() => setActiveOnly(true)}
+              className="px-3 py-1 text-xs font-semibold"
+              style={{
+                background: activeOnly ? 'var(--to-blue-100)' : 'var(--to-surface)',
+                color: 'var(--to-ink)',
+              }}
+              disabled={loading}
+            >
+              Active
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveOnly(false)}
+              className="px-3 py-1 text-xs font-semibold"
+              style={{
+                background: !activeOnly ? 'var(--to-blue-100)' : 'var(--to-surface)',
+                color: 'var(--to-ink)',
+                borderLeft: '1px solid var(--to-border)',
+              }}
+              disabled={loading}
+            >
+              All
+            </button>
+          </div>
+
           <button
             onClick={load}
             className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)]"
@@ -127,6 +170,7 @@ export default function LeadershipTable() {
             New
           </button>
         </div>
+
 
         <input
           value={search}
@@ -147,44 +191,28 @@ export default function LeadershipTable() {
         </div>
       )}
 
-      <div
-        className="overflow-auto rounded border"
-        style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}
-      >
-        <table className="min-w-full border-collapse text-sm">
-          <thead
-            className="sticky top-0"
-            style={{ background: 'var(--to-surface)', borderBottom: '1px solid var(--to-border)' }}
-          >
-            <tr>
-              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                Active
-              </th>
-              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                Child (Reports)
-              </th>
-              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                Leader (Parent)
-              </th>
-              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                Start
-              </th>
-              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                End
-              </th>
+      <div className="rounded border" style={{ borderColor: 'var(--to-border)', overflow: 'hidden' }}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr style={{ background: 'var(--to-header-bg)' }}>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--to-ink-muted)]">Active</th>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--to-ink-muted)]">Report</th>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--to-ink-muted)]">Leader</th>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--to-ink-muted)]">Start</th>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-[var(--to-ink-muted)]">End</th>
             </tr>
           </thead>
 
           <tbody>
             {loading ? (
               <tr>
-                <td className="px-3 py-3 text-[var(--to-ink-muted)]" colSpan={5}>
+                <td className="px-3 py-4 text-sm text-[var(--to-ink-muted)]" colSpan={5}>
                   Loading…
                 </td>
               </tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td className="px-3 py-3 text-[var(--to-ink-muted)]" colSpan={5}>
+                <td className="px-3 py-4 text-sm text-[var(--to-ink-muted)]" colSpan={5}>
                   No leadership edges found.
                 </td>
               </tr>

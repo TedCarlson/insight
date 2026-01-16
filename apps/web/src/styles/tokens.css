@@ -19,7 +19,7 @@
     --to-blue-900: #0b2a4a;
     --to-blue-800: #103b6a;
     --to-blue-700: #134e8a;
-    --to-blue-600: #1b63b6;
+    --to-blue-600: #0f1821;
     --to-blue-500: #2a7be6;
 
     --to-blue-100: #e8f1ff;
@@ -45,8 +45,8 @@
     /* Header */
     --to-header-bg: linear-gradient(to bottom, #ffffff, var(--to-blue-050));
     --to-header-title: var(--to-blue-700);
-    --to-surface-create: var(--to-blue-100);
-    --to-surface-edit: var(--to-green-100);
+    --to-surface-create: var(--to-green-600);
+    --to-surface-edit: var(--to-blue-800);
 
     /* Row hover */
     --to-row-hover: rgba(27, 99, 182, 0.04);

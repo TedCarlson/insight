@@ -1,7 +1,7 @@
 /* apps/web/src/styles/globals.css
  *
  * Global base styles (Tailwind v3 compatible)
- * - Imports tokens
+ * - Imports tokens first (critical for var availability)
  * - Applies only safe base defaults
  * - No global component class styling
  */
@@ -20,17 +20,6 @@ body {
   margin: 0;
 }
 
-body {
-  color: var(--to-ink);
-  background: var(--to-surface-soft);
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
-    "Apple Color Emoji", "Segoe UI Emoji";
-}
-
-a {
-  color: inherit;
-}
-
 * {
   box-sizing: border-box;
 }
@@ -41,7 +30,21 @@ html {
   -moz-osx-font-smoothing: grayscale;
 }
 
+body {
+  /* Insight tokens (your system) */
+  color: var(--to-ink);
+  background: var(--to-surface-soft);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+    "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
 /* --- CSS CUSTOM PROPERTIES --- */
+/* These support any shadcn-ish utilities you may use. Keep as-is. */
 :root {
   --radius: 0.625rem;
 
@@ -133,12 +136,35 @@ html {
 }
 
 /* --- APPLIED BASE STYLES --- */
+/* Keep these minimal and predictable. */
 @layer base {
+  /* Normalize border color utilities without adding rings globally */
   * {
-    @apply border-border ring-1 ring-ring ring-opacity-50;
+    @apply border-border;
   }
 
+  /* Use the design-system background/text by default */
   body {
     @apply bg-background text-foreground;
+  }
+
+  /* Make form text inherit the correct ink color (still "base") */
+  input,
+  select,
+  textarea {
+    color: var(--to-ink);
+  }
+
+  /* Accessible focus ring only when it should appear (keyboard focus) */
+  :where(
+      a,
+      button,
+      input,
+      select,
+      textarea,
+      [tabindex]:not([tabindex="-1"])
+    ):focus-visible {
+    outline: none;
+    @apply ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 }

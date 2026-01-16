@@ -83,16 +83,19 @@ export default function AssignmentInspector({
     setSubmitError(null)
 
     if (isCreate) {
+      const defaultTitle = positionTitles?.[0]?.label ?? null
+
       setDraft({
         person_id: null,
         pc_org_id: null,
         tech_id: null,
-        position_title: null,
+        // REQUIRED: default to first governed option to prevent null/orphan workflows
+        position_title: defaultTitle,
         start_date: null,
         end_date: null,
       })
     }
-  }, [open, isCreate])
+  }, [open, isCreate, positionTitles])
 
   // Load reporting edges when editing
   useEffect(() => {
@@ -101,20 +104,20 @@ export default function AssignmentInspector({
     if (!assignmentId) return
 
     let alive = true
-    ;(async () => {
-      try {
-        setRepLoading(true)
-        setRepError(null)
-        const data = await fetchAssignmentReportingEdges(assignmentId)
-        if (!alive) return
-        setEdges(data)
-      } catch (e: any) {
-        if (!alive) return
-        setRepError(e?.message ?? 'Failed to load reporting.')
-      } finally {
-        if (alive) setRepLoading(false)
-      }
-    })()
+      ; (async () => {
+        try {
+          setRepLoading(true)
+          setRepError(null)
+          const data = await fetchAssignmentReportingEdges(assignmentId)
+          if (!alive) return
+          setEdges(data)
+        } catch (e: any) {
+          if (!alive) return
+          setRepError(e?.message ?? 'Failed to load reporting.')
+        } finally {
+          if (alive) setRepLoading(false)
+        }
+      })()
 
     return () => {
       alive = false
@@ -133,6 +136,13 @@ export default function AssignmentInspector({
     return edges.filter((e) => e.parent_assignment_id === id)
   }, [edges, assignmentId])
 
+  const canCreate =
+    !!draft.person_id &&
+    !!draft.pc_org_id &&
+    !!draft.position_title &&
+    !!draft.start_date &&
+    !saving
+
   async function handleCreate() {
     setSubmitError(null)
 
@@ -144,6 +154,11 @@ export default function AssignmentInspector({
       setSubmitError('PC Org is required.')
       return
     }
+    if (!draft.position_title) {
+      // REQUIRED: position_title must be set now that DB integrity is enforced
+      setSubmitError('Position Title is required.')
+      return
+    }
 
     setSaving(true)
     try {
@@ -151,7 +166,7 @@ export default function AssignmentInspector({
         person_id: draft.person_id,
         pc_org_id: draft.pc_org_id,
         tech_id: draft.tech_id ?? null,
-        position_title: draft.position_title ?? null,
+        position_title: draft.position_title,
         start_date: draft.start_date || null,
         end_date: draft.end_date || null,
       })
@@ -189,7 +204,7 @@ export default function AssignmentInspector({
 
             <button
               className="rounded px-3 py-1.5 text-sm bg-[var(--to-blue-600)] text-white disabled:opacity-60"
-              disabled={saving}
+              disabled={!canCreate}
               onClick={handleCreate}
             >
               {saving ? 'Saving…' : 'Save'}
@@ -308,7 +323,7 @@ export default function AssignmentInspector({
           )}
         </div>
 
-        {/* Position Title (STANDARDIZED DROPDOWN) */}
+        {/* Position Title (REQUIRED, GOVERNED) */}
         <div>
           <label className="block text-xs font-semibold mb-1 text-[var(--to-ink-muted)]">
             Position Title
@@ -322,11 +337,16 @@ export default function AssignmentInspector({
               onChange={(e) =>
                 setDraft({
                   ...draft,
-                  position_title: e.target.value ? e.target.value : null,
+                  position_title: e.target.value || null,
                 })
               }
             >
-              <option value="">— Optional —</option>
+              {positionTitles.length === 0 ? (
+                <option value="" disabled>
+                  No position titles available…
+                </option>
+              ) : null}
+
               {positionTitles.map((t) => (
                 <option key={t.id} value={t.label}>
                   {t.label}
@@ -340,14 +360,15 @@ export default function AssignmentInspector({
               value={assignment?.position_title ?? ''}
               onChange={(e) => {
                 if (!assignmentId) return
-                onChange(
-                  assignmentId,
-                  'position_title',
-                  e.target.value ? e.target.value : null
-                )
+                // Prevent clearing to blank; only allow valid governed values.
+                const next = e.target.value || null
+                if (!next) return
+                onChange(assignmentId, 'position_title', next)
               }}
             >
-              <option value="">— Optional —</option>
+              <option value="" disabled>
+                Select a title…
+              </option>
               {positionTitles.map((t) => (
                 <option key={t.id} value={t.label}>
                   {t.label}

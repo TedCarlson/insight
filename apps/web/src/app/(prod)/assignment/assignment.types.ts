@@ -33,7 +33,7 @@ export type AssignmentInspectorMode = 'create' | 'edit'
 
 /** Authoritative read shape from public.assignment_reporting_admin_v */
 export type AssignmentReportingRow = {
-  assignment_reporting_id: string | null
+  assignment_leadership_id: string | null
   child_assignment_id: string | null
   parent_assignment_id: string | null
   start_date: string | null

@@ -147,7 +147,7 @@ export async function fetchAssignmentReportingEdges(
   assignmentId: string
 ): Promise<AssignmentReportingEdge[]> {
   const { data, error } = await supabase
-    .from('assignment_reporting_admin_v')
+    .from('leadership_reporting_admin_v')
     .select('*')
     .or(
       `child_assignment_id.eq.${assignmentId},parent_assignment_id.eq.${assignmentId}`

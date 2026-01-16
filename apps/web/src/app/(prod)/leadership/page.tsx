@@ -1,6 +1,8 @@
-import AdminViewSurface from '../_shared/AdminViewSurface';
+///apps/web/src/app/(prod)/leadership/page.tsx
 
-export default function SchedulePage() {
+import LeadershipTable from './LeadershipTable'
+
+export default function LeadershipPage() {
     return (
         <main className="flex h-full flex-col">
             <header
@@ -8,16 +10,16 @@ export default function SchedulePage() {
                 style={{ borderColor: 'var(--to-border)', background: 'var(--to-header-bg)' }}
             >
                 <h1 className="text-xl font-semibold" style={{ color: 'var(--to-header-title)' }}>
-                    Schedule
+                    Leadership
                 </h1>
                 <p className="mt-1 text-sm" style={{ color: 'var(--to-ink-muted)' }}>
-                    Backed by <span className="font-mono">public.schedule_admin_v</span>
+                    Read surface backed by <span className="font-mono">public.assignment_leadership_admin_v</span>
                 </p>
             </header>
 
             <section className="flex-1 overflow-auto p-6">
-                <AdminViewSurface title="Schedule" viewName="schedule_admin_v" />
+                <LeadershipTable />
             </section>
         </main>
-    );
+    )
 }

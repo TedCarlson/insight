@@ -18,8 +18,20 @@ const DEV_NAV: NavItem[] = [
 ];
 
 const PROD_NAV: NavItem[] = [
-    { href: '/prod', label: 'Prod Home' },
-    { href: '/person', label: 'People' }, // ✅ fixed path
+    //{ href: '/prod', label: 'Home Placeholder' },
+    { href: '/person', label: 'People' },
+    { href: '/assignment', label: 'Assignments' },
+    { href: '/leadership', label: 'Leadership' },
+    { href: '/company', label: 'Companies' },
+    { href: '/contractor', label: 'Contractors' },
+    { href: '/division', label: 'Divisions' },
+    { href: '/mso', label: 'MSOs' },
+    { href: '/pc', label: 'PCs' },
+    { href: '/pc_org', label: 'PC Orgs' },
+    { href: '/quota', label: 'Quotas' },
+    { href: '/region', label: 'Regions' },
+    { href: '/route', label: 'Routes' },
+    { href: '/schedule', label: 'Schedules' },
 ];
 
 export default function Nav() {
@@ -28,8 +40,6 @@ export default function Nav() {
     const supabase = createClientComponentClient();
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
-
-    const envLabel = process.env.NODE_ENV === 'production' ? 'PROD' : 'DEV';
 
     useEffect(() => {
         const onEscape = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
@@ -49,8 +59,14 @@ export default function Nav() {
         router.push('/login');
     };
 
+    const isActive = (href: string) => {
+        if (pathname === href) return true;
+        if (href !== '/' && pathname?.startsWith(href + '/')) return true;
+        return false;
+    };
+
     const renderItem = ({ href, label }: NavItem) => {
-        const active = pathname === href;
+        const active = isActive(href);
 
         return (
             <Link
@@ -72,7 +88,6 @@ export default function Nav() {
 
     return (
         <>
-            {/* Floating hamburger button */}
             <button
                 onClick={() => setOpen(!open)}
                 className="fixed top-1 left-4 z-50 text-xl font-bold text-[var(--to-header-title)]"
@@ -81,38 +96,29 @@ export default function Nav() {
                 ≡
             </button>
 
-            {/* Drawer */}
             {open && (
                 <aside
                     ref={ref}
                     className="fixed top-16 left-4 z-40 w-56 rounded bg-[var(--to-surface)] p-4 shadow-lg"
                 >
-                    {/* ENV tag */}
                     <div className="mb-4 text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                        {'Menu'}
+                        Insight
                     </div>
 
-                    {/* DEV section */}
                     <div className="mb-4">
                         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                            Dev
+                            Developer Menu
                         </div>
-                        <div className="flex flex-col gap-1">
-                            {DEV_NAV.map(renderItem)}
-                        </div>
+                        <div className="flex flex-col gap-1">{DEV_NAV.map(renderItem)}</div>
                     </div>
 
-                    {/* PROD section */}
                     <div className="mb-4">
                         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                            Prod
+                            Admin Menu
                         </div>
-                        <div className="flex flex-col gap-1">
-                            {PROD_NAV.map(renderItem)}
-                        </div>
+                        <div className="flex flex-col gap-1">{PROD_NAV.map(renderItem)}</div>
                     </div>
 
-                    {/* Logout */}
                     <div className="mt-6 border-t pt-3">
                         <button
                             onClick={logout}

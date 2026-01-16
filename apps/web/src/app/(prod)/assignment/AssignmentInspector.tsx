@@ -513,7 +513,7 @@ export default function AssignmentInspector({
                   parents.map((e) => (
                     <div
                       key={
-                        e.assignment_reporting_id ??
+                        e.assignment_leadership_id ??
                         `${e.parent_assignment_id}:${e.child_assignment_id}:${e.start_date}`
                       }
                       className="rounded border px-3 py-2 bg-white"
@@ -545,7 +545,7 @@ export default function AssignmentInspector({
                   children.map((e) => (
                     <div
                       key={
-                        e.assignment_reporting_id ??
+                        e.assignment_leadership_id ??
                         `${e.parent_assignment_id}:${e.child_assignment_id}:${e.start_date}`
                       }
                       className="rounded border px-3 py-2 bg-white"

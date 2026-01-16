@@ -1,3 +1,5 @@
+//apps/web/src/app/page.tsx
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase/server";

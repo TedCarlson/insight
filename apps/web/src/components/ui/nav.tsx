@@ -18,7 +18,6 @@ const DEV_NAV: NavItem[] = [
 ];
 
 const PROD_NAV: NavItem[] = [
-    //{ href: '/prod', label: 'Home Placeholder' },
     { href: '/person', label: 'People' },
     { href: '/assignment', label: 'Assignments' },
     { href: '/leadership', label: 'Leadership' },
@@ -34,12 +33,21 @@ const PROD_NAV: NavItem[] = [
     { href: '/schedule', label: 'Schedules' },
 ];
 
+type ProfileStatus = 'unknown' | 'active' | 'inactive' | 'pending';
+
 export default function Nav() {
     const pathname = usePathname();
     const router = useRouter();
     const supabase = createClientComponentClient();
+
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
+
+    // UI-only gating:
+    // - show Developer Menu only to owners
+    // - show Admin Menu only to active users (owners can see it as well)
+    const [profileStatus, setProfileStatus] = useState<ProfileStatus>('unknown');
+    const [isOwner, setIsOwner] = useState(false);
 
     useEffect(() => {
         const onEscape = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
@@ -53,6 +61,63 @@ export default function Nav() {
             document.removeEventListener('mousedown', onClickOutside);
         };
     }, []);
+
+    useEffect(() => {
+        let mounted = true;
+
+        async function loadGateState() {
+            try {
+                const { data: userData } = await supabase.auth.getUser();
+                const user = userData?.user ?? null;
+
+                if (!mounted) return;
+
+                if (!user) {
+                    setIsOwner(false);
+                    setProfileStatus('unknown');
+                    return;
+                }
+
+                // owner check (RLS-protected by app_owners policies)
+                try {
+                    const { data: ownerBool } = await supabase.rpc('is_owner');
+                    if (mounted) setIsOwner(!!ownerBool);
+                } catch {
+                    if (mounted) setIsOwner(false);
+                }
+
+                // profile status (RLS: user can read only their own row)
+                try {
+                    const { data: profile } = await supabase
+                        .from('user_profile')
+                        .select('status')
+                        .eq('auth_user_id', user.id)
+                        .maybeSingle();
+
+                    const status = (profile as any)?.status as ProfileStatus | undefined;
+                    if (mounted) setProfileStatus(status ?? 'pending');
+                } catch {
+                    if (mounted) setProfileStatus('pending');
+                }
+            } catch {
+                if (mounted) {
+                    setIsOwner(false);
+                    setProfileStatus('unknown');
+                }
+            }
+        }
+
+        loadGateState();
+
+        const { data: sub } = supabase.auth.onAuthStateChange(() => {
+            loadGateState();
+        });
+
+        return () => {
+            mounted = false;
+            sub?.subscription?.unsubscribe();
+        };
+    }, [supabase]);
 
     const logout = async () => {
         await supabase.auth.signOut();
@@ -76,15 +141,18 @@ export default function Nav() {
                 className={`
           block rounded px-3 py-2 text-sm font-medium transition
           ${active
-                        ? 'bg-green-200 text-[var(--to-ink)]'
-                        : 'text-[var(--to-ink-muted)] hover:bg-blue-100 hover:text-[var(--to-ink)]'
-                    }
+                    ? 'bg-green-200 text-[var(--to-ink)]'
+                    : 'text-[var(--to-ink-muted)] hover:bg-blue-100 hover:text-[var(--to-ink)]'
+                }
         `}
             >
                 {label}
             </Link>
         );
     };
+
+    const canSeeAdmin = isOwner || profileStatus === 'active';
+    const adminItems: NavItem[] = canSeeAdmin ? PROD_NAV : [{ href: '/access', label: 'Access' }];
 
     return (
         <>
@@ -105,18 +173,33 @@ export default function Nav() {
                         Insight
                     </div>
 
-                    <div className="mb-4">
-                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-                            Developer Menu
+                    {/* Small status hint (only when not active and not owner) */}
+                    {!canSeeAdmin && profileStatus !== 'unknown' && (
+                        <div
+                            className="mb-4 rounded border px-3 py-2 text-xs"
+                            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface-soft)' }}
+                        >
+                            <div className="font-semibold text-[var(--to-ink)]">Access required</div>
+                            <div className="mt-1 text-[var(--to-ink-muted)]">
+                                Your account is <span className="font-mono">{profileStatus}</span>.
+                            </div>
                         </div>
-                        <div className="flex flex-col gap-1">{DEV_NAV.map(renderItem)}</div>
-                    </div>
+                    )}
+
+                    {isOwner && (
+                        <div className="mb-4">
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                                Developer Menu
+                            </div>
+                            <div className="flex flex-col gap-1">{DEV_NAV.map(renderItem)}</div>
+                        </div>
+                    )}
 
                     <div className="mb-4">
                         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
                             Admin Menu
                         </div>
-                        <div className="flex flex-col gap-1">{PROD_NAV.map(renderItem)}</div>
+                        <div className="flex flex-col gap-1">{adminItems.map(renderItem)}</div>
                     </div>
 
                     <div className="mt-6 border-t pt-3">

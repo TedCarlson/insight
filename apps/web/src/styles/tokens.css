@@ -45,6 +45,8 @@
     /* Header */
     --to-header-bg: linear-gradient(to bottom, #ffffff, var(--to-blue-050));
     --to-header-title: var(--to-blue-700);
+    --to-surface-create: var(--to-blue-100);
+    --to-surface-edit: var(--to-green-100);
 
     /* Row hover */
     --to-row-hover: rgba(27, 99, 182, 0.04);

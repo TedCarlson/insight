@@ -1,4 +1,5 @@
-// apps/web/src/app/(prod)/person/person.api.ts
+
+//apps/web/src/app/(prod)/person/person.api.ts
 
 import { createClient } from '@/app/(prod)/_shared/supabase'
 import { PersonRow } from './person.types'

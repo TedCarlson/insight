@@ -3,39 +3,23 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPc, deletePc, fetchPcs, updatePc } from './pc.api'
+import { createPc, fetchPcs, updatePc } from './pc.api'
 import type { CreatePcInput, EditableField, PcInspectorMode, PcRow } from './pc.types'
 import PcInspector from './PcInspector'
 
 const WRITE_DELAY_MS = 450
 
 function getId(row: PcRow): string {
-  const id = row.pc_id ?? row.id
-  return id ? String(id) : ''
+  return String(row.pc_id)
 }
 
-function getName(row: PcRow): string {
-  return String(row.pc_name ?? row.name ?? '')
-}
-
-function getCode(row: PcRow): string {
-  return String(row.pc_code ?? row.code ?? '')
-}
-
-function getPcNumber(row: PcRow): string {
-  const v = row.pc_number ?? row.number ?? row.pc_no
-  return v === null || v === undefined ? '' : String(v)
-}
-
-function getActive(row: PcRow): boolean {
-  const v = row.is_active ?? row.active
-  return v === null || v === undefined ? true : Boolean(v)
+function getNumber(row: PcRow): string {
+  return String(row.pc_number ?? '')
 }
 
 export default function PcTable() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
   const [rows, setRows] = useState<PcRow[]>([])
   const [search, setSearch] = useState('')
 
@@ -74,10 +58,7 @@ export default function PcTable() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return rows
-    return rows.filter((r) => {
-      const hay = `${getName(r)} ${getCode(r)} ${getPcNumber(r)} ${getId(r)}`.toLowerCase()
-      return hay.includes(q)
-    })
+    return rows.filter((r) => `${getNumber(r)} ${getId(r)}`.toLowerCase().includes(q))
   }, [rows, search])
 
   const selectedPc = useMemo(() => {
@@ -92,10 +73,8 @@ export default function PcTable() {
   }
 
   function openEdit(row: PcRow) {
-    const id = getId(row)
-    if (!id) return
     setInspectorMode('edit')
-    setSelectedPcId(id)
+    setSelectedPcId(getId(row))
     setInspectorOpen(true)
   }
 
@@ -108,40 +87,17 @@ export default function PcTable() {
     setRows((prev) => [created, ...prev])
   }
 
-  async function onDelete(pcId: string) {
-    await deletePc(pcId)
-    setRows((prev) => prev.filter((r) => getId(r) !== pcId))
-  }
-
   function updateField(pcId: string, field: EditableField, value: any) {
-    // 1) optimistic
+    // optimistic update
     setRows((prev) =>
       prev.map((r) => {
         if (getId(r) !== pcId) return r
         const next: PcRow = { ...(r as any) }
-
-        if (field === 'name') {
-          next.pc_name = String(value ?? '')
-          next.name = String(value ?? '')
-        } else if (field === 'code') {
-          const v = value === '' ? null : String(value ?? '')
-          next.pc_code = v
-          next.code = v
-        } else if (field === 'pc_number') {
-          const v = value === '' ? null : String(value ?? '')
-          next.pc_number = v
-          next.number = v
-          next.pc_no = v
-        } else if (field === 'active') {
-          next.is_active = Boolean(value)
-          next.active = Boolean(value)
-        }
-
+        if (field === 'pc_number') next.pc_number = String(value ?? '')
         return next
       })
     )
 
-    // 2) debounce write
     const key = `${pcId}:${field}`
     const prior = writeTimers.current.get(key)
     if (prior) clearTimeout(prior)
@@ -150,19 +106,14 @@ export default function PcTable() {
     writeSeq.current.set(key, seq)
 
     const timer = setTimeout(async () => {
+      if ((writeSeq.current.get(key) ?? 0) !== seq) return
       try {
-        if ((writeSeq.current.get(key) ?? 0) !== seq) return
-
-        const patch: any = {}
-        if (field === 'name') patch.name = String(value ?? '')
-        if (field === 'code') patch.code = value === '' ? null : String(value ?? '')
-        if (field === 'pc_number') patch.pc_number = value === '' ? null : String(value ?? '')
-        if (field === 'active') patch.active = Boolean(value)
-
+        setError(null)
+        const patch = field === 'pc_number' ? { pc_number: String(value ?? '').trim() } : {}
         const updated = await updatePc(pcId, patch)
         setRows((prev) => prev.map((r) => (getId(r) === pcId ? updated : r)))
       } catch (err: any) {
-        console.error('Debounced PC update error', err)
+        console.error('PC update error', err)
         setError(err?.message ?? 'Update failed.')
       } finally {
         writeTimers.current.delete(key)
@@ -175,15 +126,20 @@ export default function PcTable() {
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between gap-3 px-6 py-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="text-lg font-semibold text-[var(--to-ink)] whitespace-nowrap">PC</div>
+
           <input
-            placeholder="Search by name, code, pc#, id…"
-            className="w-96 rounded border px-2 py-1 text-sm bg-white"
-            style={{ borderColor: 'var(--to-border)' }}
+            className="w-72 max-w-[60vw] rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            placeholder="Search by PC number or id…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <div className="text-sm text-[var(--to-ink-muted)]">{loading ? 'Loading…' : `${filtered.length} rows`}</div>
+
+          <div className="text-sm text-[var(--to-ink-muted)]">
+            {loading ? 'Loading…' : `${filtered.length} rows`}
+          </div>
         </div>
 
         <button
@@ -195,56 +151,46 @@ export default function PcTable() {
         </button>
       </div>
 
-      {error && (
-        <div className="px-6 pb-3">
-          <div
-            className="rounded border px-3 py-2 text-sm"
-            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
-          >
-            <span className="font-semibold">Error:</span> {error}
-          </div>
+      {error ? (
+        <div className="px-6 pb-3 text-sm" style={{ color: 'var(--to-danger)' }}>
+          {error}
         </div>
-      )}
+      ) : null}
 
       <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
-        <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}>
+        <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--to-border)' }}>
           <table className="w-full text-sm">
-            <thead className="border-b" style={{ borderColor: 'var(--to-border)', background: 'var(--to-header-bg)' }}>
+            <thead className="border-b" style={{ borderColor: 'var(--to-border)' }}>
               <tr className="text-left">
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Code</th>
-                <th className="px-3 py-2">PC #</th>
-                <th className="px-3 py-2">Active</th>
+                <th className="px-3 py-2">PC Number</th>
                 <th className="px-3 py-2">ID</th>
               </tr>
             </thead>
+
             <tbody>
+              {!loading && filtered.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-[var(--to-ink-muted)]" colSpan={2}>
+                    No rows
+                  </td>
+                </tr>
+              ) : null}
+
               {filtered.map((r) => {
                 const id = getId(r)
                 return (
                   <tr
-                    key={id || JSON.stringify(r)}
-                    className="border-b hover:bg-black/5 cursor-pointer"
+                    key={id}
+                    className="border-b last:border-b-0 cursor-pointer hover:opacity-90"
                     style={{ borderColor: 'var(--to-border)' }}
                     onClick={() => openEdit(r)}
                     title="Click to edit"
                   >
-                    <td className="px-3 py-2">{getName(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getCode(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getPcNumber(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getActive(r) ? 'Yes' : 'No'}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-[var(--to-ink-muted)]">{id || '—'}</td>
+                    <td className="px-3 py-2 font-medium text-[var(--to-ink)]">{getNumber(r)}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{id}</td>
                   </tr>
                 )
               })}
-
-              {!loading && filtered.length === 0 && (
-                <tr>
-                  <td className="px-3 py-6 text-[var(--to-ink-muted)]" colSpan={5}>
-                    No rows match your search.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
@@ -256,8 +202,7 @@ export default function PcTable() {
         pc={inspectorMode === 'edit' ? selectedPc : null}
         onChange={updateField}
         onCreate={onCreate}
-        onDelete={onDelete}
-        onClose={onCloseInspector}
+        onClose={() => setInspectorOpen(false)}
       />
     </div>
   )

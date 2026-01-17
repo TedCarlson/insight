@@ -2,29 +2,22 @@
 
 export type MsoInspectorMode = 'create' | 'edit'
 
+/**
+ * READ shape (view): public.mso_admin_v
+ * Columns: mso_id, mso_name
+ */
 export type MsoRow = {
-  mso_id?: string | null
-  id?: string | null
-
-  mso_name?: string | null
-  name?: string | null
-
-  mso_code?: string | null
-  code?: string | null
-
-  is_active?: boolean | null
-  active?: boolean | null
-
-  created_at?: string | null
-  updated_at?: string | null
-
-  [key: string]: any
+  mso_id: string
+  mso_name: string
 }
 
+/**
+ * WRITE shape (base): public.mso
+ * Required: mso_id, mso_name
+ */
 export type CreateMsoInput = {
-  name: string
-  code?: string | null
-  active?: boolean
+  mso_id?: string
+  mso_name: string
 }
 
-export type EditableField = 'name' | 'code' | 'active'
+export type EditableField = 'mso_name'

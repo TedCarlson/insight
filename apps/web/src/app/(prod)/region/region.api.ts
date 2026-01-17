@@ -5,112 +5,82 @@ import type { CreateRegionInput, RegionRow } from './region.types'
 
 const supabase = createClient()
 
-function pickId(row: any): string {
-  const id = row?.region_id ?? row?.id
-  if (!id) throw new Error('Could not determine region id from insert/update result.')
-  return String(id)
-}
-
-async function tryInsertRegion(base: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    { region_name: base.name, region_code: base.code ?? null, is_active: base.active ?? true },
-    { name: base.name, code: base.code ?? null, active: base.active ?? true },
-    { region_name: base.name, code: base.code ?? null, active: base.active ?? true },
-  ]
-
-  let lastErr: any = null
-  for (const payload of candidates) {
-    const { data, error } = await supabase.from('region').insert(payload).select('*').single()
-    if (!error) return data
-    lastErr = error
+function newUuid(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUIDUUID' in crypto) {
+    // (typo-proof guard not needed, but keep simple)
   }
-
-  console.error('tryInsertRegion failed', lastErr)
-  throw lastErr
-}
-
-async function tryUpdateRegion(regionId: string, patch: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    {
-      ...(patch.name !== undefined ? { region_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { region_code: patch.code } : {}),
-      ...(patch.active !== undefined ? { is_active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { region_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-  ]
-
-  let lastErr: any = null
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('region').update(payload).eq('region_id', regionId)
-    if (!error) return
-    lastErr = error
-  }
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('region').update(payload).eq('id', regionId)
-    if (!error) return
-    lastErr = error
-  }
-
-  console.error('tryUpdateRegion failed', lastErr)
-  throw lastErr
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `reg_${Date.now()}_${Math.random().toString(16).slice(2)}`
 }
 
 async function fetchFromViewById(regionId: string): Promise<RegionRow> {
-  let { data, error } = await supabase.from('region_admin_v').select('*').eq('region_id', regionId).single()
-  if (!error && data) return data as RegionRow
-
-  const res2 = await supabase.from('region_admin_v').select('*').eq('id', regionId).single()
-  data = res2.data
-  error = res2.error
+  const { data, error } = await supabase
+    .from('region_admin_v')
+    .select('region_id, region_name, region_code')
+    .eq('region_id', regionId)
+    .single()
 
   if (error) {
     console.error('fetchFromViewById error', error)
     throw error
   }
 
-  return (data ?? {}) as RegionRow
+  return data as RegionRow
 }
 
-/* READ */
+/** READ: view */
 export async function fetchRegions(): Promise<RegionRow[]> {
-  const { data, error } = await supabase.from('region_admin_v').select('*').limit(500)
+  const { data, error } = await supabase
+    .from('region_admin_v')
+    .select('region_id, region_name, region_code')
+    .order('region_name')
+
   if (error) {
     console.error('fetchRegions error', error)
     throw error
   }
+
   return (data ?? []) as RegionRow[]
 }
 
-/* WRITE */
-export async function createRegion(payload: CreateRegionInput): Promise<RegionRow> {
-  const inserted = await tryInsertRegion(payload)
-  const id = pickId(inserted)
-  return await fetchFromViewById(id)
-}
+/** CREATE: base, then re-read view */
+export async function createRegion(input: CreateRegionInput): Promise<RegionRow> {
+  const region_id = input.region_id?.trim() || newUuid()
+  const region_name = input.region_name.trim()
+  const region_code = input.region_code.trim()
 
-export async function updateRegion(regionId: string, patch: Partial<CreateRegionInput>): Promise<RegionRow> {
-  await tryUpdateRegion(regionId, patch)
-  return await fetchFromViewById(regionId)
-}
+  if (!region_name) throw new Error('Region name is required.')
+  if (!region_code) throw new Error('Region code is required.')
 
-export async function deleteRegion(regionId: string): Promise<void> {
-  let { error } = await supabase.from('region').delete().eq('region_id', regionId)
-  if (!error) return
+  const { error } = await supabase.from('region').insert({
+    region_id,
+    region_name,
+    region_code,
+  })
 
-  const res2 = await supabase.from('region').delete().eq('id', regionId)
-  if (res2.error) {
-    console.error('deleteRegion error', res2.error)
-    throw res2.error
+  if (error) {
+    console.error('createRegion insert error', error)
+    throw error
   }
+
+  return await fetchFromViewById(region_id)
+}
+
+/** UPDATE: base, then re-read view */
+export async function updateRegion(
+  regionId: string,
+  patch: Partial<Pick<RegionRow, 'region_name' | 'region_code'>>
+): Promise<RegionRow> {
+  const payload: Record<string, any> = {}
+  if (patch.region_name !== undefined) payload.region_name = String(patch.region_name ?? '').trim()
+  if (patch.region_code !== undefined) payload.region_code = String(patch.region_code ?? '').trim()
+
+  const { error } = await supabase.from('region').update(payload).eq('region_id', regionId)
+
+  if (error) {
+    console.error('updateRegion error', error)
+    throw error
+  }
+
+  return await fetchFromViewById(regionId)
 }

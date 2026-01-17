@@ -3,34 +3,25 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createRoute, deleteRoute, fetchRoutes, updateRoute } from './route.api'
+import { createRoute, fetchRoutes, updateRoute } from './route.api'
 import type { CreateRouteInput, EditableField, RouteInspectorMode, RouteRow } from './route.types'
 import RouteInspector from './RouteInspector'
 
 const WRITE_DELAY_MS = 450
 
 function getId(row: RouteRow): string {
-  const id = row.route_id ?? row.id
-  return id ? String(id) : ''
+  return String(row.route_id)
 }
-
 function getName(row: RouteRow): string {
-  return String(row.route_name ?? row.name ?? '')
+  return String(row.route_name ?? '')
 }
-
-function getCode(row: RouteRow): string {
-  return String(row.route_code ?? row.code ?? '')
-}
-
-function getActive(row: RouteRow): boolean {
-  const v = row.is_active ?? row.active
-  return v === null || v === undefined ? true : Boolean(v)
+function getMsoName(row: RouteRow): string {
+  return String(row.mso_name ?? '')
 }
 
 export default function RouteTable() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
   const [rows, setRows] = useState<RouteRow[]>([])
   const [search, setSearch] = useState('')
 
@@ -69,13 +60,10 @@ export default function RouteTable() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return rows
-    return rows.filter((r) => {
-      const hay = `${getName(r)} ${getCode(r)} ${getId(r)}`.toLowerCase()
-      return hay.includes(q)
-    })
+    return rows.filter((r) => `${getName(r)} ${getMsoName(r)} ${getId(r)}`.toLowerCase().includes(q))
   }, [rows, search])
 
-  const selectedRoute = useMemo(() => {
+  const selected = useMemo(() => {
     if (!selectedRouteId) return null
     return rows.find((r) => getId(r) === selectedRouteId) ?? null
   }, [rows, selectedRouteId])
@@ -87,10 +75,8 @@ export default function RouteTable() {
   }
 
   function openEdit(row: RouteRow) {
-    const id = getId(row)
-    if (!id) return
     setInspectorMode('edit')
-    setSelectedRouteId(id)
+    setSelectedRouteId(getId(row))
     setInspectorOpen(true)
   }
 
@@ -103,35 +89,17 @@ export default function RouteTable() {
     setRows((prev) => [created, ...prev])
   }
 
-  async function onDelete(routeId: string) {
-    await deleteRoute(routeId)
-    setRows((prev) => prev.filter((r) => getId(r) !== routeId))
-  }
-
   function updateField(routeId: string, field: EditableField, value: any) {
-    // 1) optimistic
     setRows((prev) =>
       prev.map((r) => {
         if (getId(r) !== routeId) return r
         const next: RouteRow = { ...(r as any) }
-
-        if (field === 'name') {
-          next.route_name = String(value ?? '')
-          next.name = String(value ?? '')
-        } else if (field === 'code') {
-          const v = value === '' ? null : String(value ?? '')
-          next.route_code = v
-          next.code = v
-        } else if (field === 'active') {
-          next.is_active = Boolean(value)
-          next.active = Boolean(value)
-        }
-
+        if (field === 'route_name') next.route_name = String(value ?? '')
+        if (field === 'mso_id') next.mso_id = String(value ?? '')
         return next
       })
     )
 
-    // 2) debounce write
     const key = `${routeId}:${field}`
     const prior = writeTimers.current.get(key)
     if (prior) clearTimeout(prior)
@@ -140,18 +108,17 @@ export default function RouteTable() {
     writeSeq.current.set(key, seq)
 
     const timer = setTimeout(async () => {
+      if ((writeSeq.current.get(key) ?? 0) !== seq) return
       try {
-        if ((writeSeq.current.get(key) ?? 0) !== seq) return
-
+        setError(null)
         const patch: any = {}
-        if (field === 'name') patch.name = String(value ?? '')
-        if (field === 'code') patch.code = value === '' ? null : String(value ?? '')
-        if (field === 'active') patch.active = Boolean(value)
+        if (field === 'route_name') patch.route_name = String(value ?? '').trim()
+        if (field === 'mso_id') patch.mso_id = String(value ?? '').trim()
 
         const updated = await updateRoute(routeId, patch)
         setRows((prev) => prev.map((r) => (getId(r) === routeId ? updated : r)))
       } catch (err: any) {
-        console.error('Debounced route update error', err)
+        console.error('Route update error', err)
         setError(err?.message ?? 'Update failed.')
       } finally {
         writeTimers.current.delete(key)
@@ -164,15 +131,20 @@ export default function RouteTable() {
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between gap-3 px-6 py-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="text-lg font-semibold text-[var(--to-ink)] whitespace-nowrap">Route</div>
+
           <input
-            placeholder="Search by name, code, id…"
-            className="w-96 rounded border px-2 py-1 text-sm bg-white"
-            style={{ borderColor: 'var(--to-border)' }}
+            className="w-72 max-w-[60vw] rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            placeholder="Search by route, MSO, or id…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <div className="text-sm text-[var(--to-ink-muted)]">{loading ? 'Loading…' : `${filtered.length} rows`}</div>
+
+          <div className="text-sm text-[var(--to-ink-muted)]">
+            {loading ? 'Loading…' : `${filtered.length} rows`}
+          </div>
         </div>
 
         <button
@@ -184,54 +156,48 @@ export default function RouteTable() {
         </button>
       </div>
 
-      {error && (
-        <div className="px-6 pb-3">
-          <div
-            className="rounded border px-3 py-2 text-sm"
-            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
-          >
-            <span className="font-semibold">Error:</span> {error}
-          </div>
+      {error ? (
+        <div className="px-6 pb-3 text-sm" style={{ color: 'var(--to-danger)' }}>
+          {error}
         </div>
-      )}
+      ) : null}
 
       <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
-        <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}>
+        <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--to-border)' }}>
           <table className="w-full text-sm">
-            <thead className="border-b" style={{ borderColor: 'var(--to-border)', background: 'var(--to-header-bg)' }}>
+            <thead className="border-b" style={{ borderColor: 'var(--to-border)' }}>
               <tr className="text-left">
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Code</th>
-                <th className="px-3 py-2">Active</th>
+                <th className="px-3 py-2">Route Name</th>
+                <th className="px-3 py-2">MSO</th>
                 <th className="px-3 py-2">ID</th>
               </tr>
             </thead>
+
             <tbody>
+              {!loading && filtered.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-[var(--to-ink-muted)]" colSpan={3}>
+                    No rows
+                  </td>
+                </tr>
+              ) : null}
+
               {filtered.map((r) => {
                 const id = getId(r)
                 return (
                   <tr
-                    key={id || JSON.stringify(r)}
-                    className="border-b hover:bg-black/5 cursor-pointer"
+                    key={id}
+                    className="border-b last:border-b-0 cursor-pointer hover:opacity-90"
                     style={{ borderColor: 'var(--to-border)' }}
                     onClick={() => openEdit(r)}
                     title="Click to edit"
                   >
-                    <td className="px-3 py-2">{getName(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getCode(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getActive(r) ? 'Yes' : 'No'}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-[var(--to-ink-muted)]">{id || '—'}</td>
+                    <td className="px-3 py-2 font-medium text-[var(--to-ink)]">{getName(r)}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{getMsoName(r)}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{id}</td>
                   </tr>
                 )
               })}
-
-              {!loading && filtered.length === 0 && (
-                <tr>
-                  <td className="px-3 py-6 text-[var(--to-ink-muted)]" colSpan={4}>
-                    No rows match your search.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
@@ -240,10 +206,9 @@ export default function RouteTable() {
       <RouteInspector
         open={inspectorOpen}
         mode={inspectorMode}
-        route={inspectorMode === 'edit' ? selectedRoute : null}
+        route={inspectorMode === 'edit' ? selected : null}
         onChange={updateField}
         onCreate={onCreate}
-        onDelete={onDelete}
         onClose={onCloseInspector}
       />
     </div>

@@ -2,29 +2,27 @@
 
 export type DivisionInspectorMode = 'create' | 'edit'
 
+/**
+ * READ shape (view): public.division_admin_v
+ * Columns: division_id, division_name, division_code
+ */
 export type DivisionRow = {
-  division_id?: string | null
-  id?: string | null
-
-  division_name?: string | null
-  name?: string | null
-
-  division_code?: string | null
-  code?: string | null
-
-  is_active?: boolean | null
-  active?: boolean | null
-
-  created_at?: string | null
-  updated_at?: string | null
-
-  [key: string]: any
+  division_id: string
+  division_name: string
+  division_code: string
 }
 
+/**
+ * WRITE shape (base): public.division
+ * Required: division_id, division_name, division_code
+ */
 export type CreateDivisionInput = {
-  name: string
-  code?: string | null
-  active?: boolean
+  division_id?: string
+  division_name: string
+  division_code: string
 }
 
-export type EditableField = 'name' | 'code' | 'active'
+/**
+ * Editable fields (base)
+ */
+export type EditableField = 'division_name' | 'division_code'

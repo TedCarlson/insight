@@ -5,112 +5,99 @@ import type { CreateRouteInput, RouteRow } from './route.types'
 
 const supabase = createClient()
 
-function pickId(row: any): string {
-  const id = row?.route_id ?? row?.id
-  if (!id) throw new Error('Could not determine route id from insert/update result.')
-  return String(id)
-}
-
-async function tryInsertRoute(base: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    { route_name: base.name, route_code: base.code ?? null, is_active: base.active ?? true },
-    { name: base.name, code: base.code ?? null, active: base.active ?? true },
-    { route_name: base.name, code: base.code ?? null, active: base.active ?? true },
-  ]
-
-  let lastErr: any = null
-  for (const payload of candidates) {
-    const { data, error } = await supabase.from('route').insert(payload).select('*').single()
-    if (!error) return data
-    lastErr = error
-  }
-
-  console.error('tryInsertRoute failed', lastErr)
-  throw lastErr
-}
-
-async function tryUpdateRoute(routeId: string, patch: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    {
-      ...(patch.name !== undefined ? { route_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { route_code: patch.code } : {}),
-      ...(patch.active !== undefined ? { is_active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { route_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-  ]
-
-  let lastErr: any = null
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('route').update(payload).eq('route_id', routeId)
-    if (!error) return
-    lastErr = error
-  }
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('route').update(payload).eq('id', routeId)
-    if (!error) return
-    lastErr = error
-  }
-
-  console.error('tryUpdateRoute failed', lastErr)
-  throw lastErr
+function newUuid(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `route_${Date.now()}_${Math.random().toString(16).slice(2)}`
 }
 
 async function fetchFromViewById(routeId: string): Promise<RouteRow> {
-  let { data, error } = await supabase.from('route_admin_v').select('*').eq('route_id', routeId).single()
-  if (!error && data) return data as RouteRow
-
-  const res2 = await supabase.from('route_admin_v').select('*').eq('id', routeId).single()
-  data = res2.data
-  error = res2.error
+  const { data, error } = await supabase
+    .from('route_admin_v')
+    .select('route_id, route_name, mso_id, mso_name')
+    .eq('route_id', routeId)
+    .single()
 
   if (error) {
-    console.error('fetchFromViewById error', error)
-    throw error
+    console.error('fetchFromViewById route error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Failed to fetch route.')
   }
 
-  return (data ?? {}) as RouteRow
+  return data as RouteRow
 }
 
-/* READ */
+/** READ: view */
 export async function fetchRoutes(): Promise<RouteRow[]> {
-  const { data, error } = await supabase.from('route_admin_v').select('*').limit(500)
+  const { data, error } = await supabase
+    .from('route_admin_v')
+    .select('route_id, route_name, mso_id, mso_name')
+    .order('route_name')
+
   if (error) {
-    console.error('fetchRoutes error', error)
-    throw error
+    console.error('fetchRoutes error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Failed to load routes.')
   }
+
   return (data ?? []) as RouteRow[]
 }
 
-/* WRITE */
-export async function createRoute(payload: CreateRouteInput): Promise<RouteRow> {
-  const inserted = await tryInsertRoute(payload)
-  const id = pickId(inserted)
-  return await fetchFromViewById(id)
-}
+/** CREATE: base table, then re-read view */
+export async function createRoute(input: CreateRouteInput): Promise<RouteRow> {
+  const route_id = input.route_id?.trim() || newUuid()
+  const route_name = input.route_name.trim()
+  const mso_id = input.mso_id.trim()
 
-export async function updateRoute(routeId: string, patch: Partial<CreateRouteInput>): Promise<RouteRow> {
-  await tryUpdateRoute(routeId, patch)
-  return await fetchFromViewById(routeId)
-}
+  if (!route_name) throw new Error('Route name is required.')
+  if (!mso_id) throw new Error('MSO is required.')
 
-export async function deleteRoute(routeId: string): Promise<void> {
-  let { error } = await supabase.from('route').delete().eq('route_id', routeId)
-  if (!error) return
+  const { error } = await supabase.from('route').insert({
+    route_id,
+    route_name,
+    mso_id,
+  })
 
-  const res2 = await supabase.from('route').delete().eq('id', routeId)
-  if (res2.error) {
-    console.error('deleteRoute error', res2.error)
-    throw res2.error
+  if (error) {
+    console.error('createRoute insert error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Create route failed.')
   }
+
+  return await fetchFromViewById(route_id)
+}
+
+/** UPDATE: base table, then re-read view */
+export async function updateRoute(
+  routeId: string,
+  patch: Partial<Pick<RouteRow, 'route_name' | 'mso_id'>>
+): Promise<RouteRow> {
+  const payload: Record<string, any> = {}
+  if (patch.route_name !== undefined) payload.route_name = String(patch.route_name ?? '').trim()
+  if (patch.mso_id !== undefined) payload.mso_id = String(patch.mso_id ?? '').trim()
+
+  const { error } = await supabase.from('route').update(payload).eq('route_id', routeId)
+
+  if (error) {
+    console.error('updateRoute error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Update route failed.')
+  }
+
+  return await fetchFromViewById(routeId)
 }

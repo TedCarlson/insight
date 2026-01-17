@@ -2,29 +2,25 @@
 
 export type RouteInspectorMode = 'create' | 'edit'
 
+/**
+ * READ shape (view): public.route_admin_v
+ * Columns: route_id, route_name, mso_id, mso_name
+ */
 export type RouteRow = {
-  route_id?: string | null
-  id?: string | null
-
-  route_name?: string | null
-  name?: string | null
-
-  route_code?: string | null
-  code?: string | null
-
-  is_active?: boolean | null
-  active?: boolean | null
-
-  created_at?: string | null
-  updated_at?: string | null
-
-  [key: string]: any
+  route_id: string
+  route_name: string
+  mso_id: string
+  mso_name: string
 }
 
+/**
+ * WRITE shape (base): public.route
+ * Required: route_id, route_name, mso_id
+ */
 export type CreateRouteInput = {
-  name: string
-  code?: string | null
-  active?: boolean
+  route_id?: string
+  route_name: string
+  mso_id: string
 }
 
-export type EditableField = 'name' | 'code' | 'active'
+export type EditableField = 'route_name' | 'mso_id'

@@ -7,21 +7,14 @@ import AdminOverlay from '../_shared/AdminOverlay'
 import type { CreateRegionInput, EditableField, RegionInspectorMode, RegionRow } from './region.types'
 
 function getId(row: RegionRow | null | undefined): string | null {
-  const id = row?.region_id ?? row?.id
+  const id = row?.region_id
   return id ? String(id) : null
 }
-
 function getName(row: RegionRow | null | undefined): string {
-  return String(row?.region_name ?? row?.name ?? '')
+  return String(row?.region_name ?? '')
 }
-
 function getCode(row: RegionRow | null | undefined): string {
-  return String(row?.region_code ?? row?.code ?? '')
-}
-
-function getActive(row: RegionRow | null | undefined): boolean {
-  const v = row?.is_active ?? row?.active
-  return v === null || v === undefined ? true : Boolean(v)
+  return String(row?.region_code ?? '')
 }
 
 export default function RegionInspector(props: {
@@ -30,54 +23,40 @@ export default function RegionInspector(props: {
   region: RegionRow | null
   onChange: (regionId: string, field: EditableField, value: any) => void
   onCreate: (payload: CreateRegionInput) => Promise<void>
-  onDelete: (regionId: string) => Promise<void>
   onClose: () => void
 }) {
-  const { open, mode, region, onChange, onCreate, onDelete, onClose } = props
+  const { open, mode, region, onChange, onCreate, onClose } = props
   const isCreate = mode === 'create'
 
   const [draftName, setDraftName] = useState('')
   const [draftCode, setDraftCode] = useState('')
-  const [draftActive, setDraftActive] = useState(true)
-
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const regionId = useMemo(() => getId(region), [region])
 
   useEffect(() => {
     if (!open) return
     setSubmitError(null)
     setSaving(false)
-    if (isCreate) {
-      setDraftName('')
-      setDraftCode('')
-      setDraftActive(true)
-    }
-  }, [open, isCreate])
+    setDraftName(isCreate ? '' : getName(region))
+    setDraftCode(isCreate ? '' : getCode(region))
+  }, [open, isCreate, region])
 
-  const regionId = useMemo(() => getId(region), [region])
   const title = isCreate ? 'Create Region' : 'Edit Region'
   const subtitle = !isCreate && regionId ? `id: ${regionId}` : undefined
-
-  const nameValue = isCreate ? draftName : getName(region)
-  const codeValue = isCreate ? draftCode : getCode(region)
-  const activeValue = isCreate ? draftActive : getActive(region)
-
-  const canSaveCreate = useMemo(() => draftName.trim().length > 0, [draftName])
+  const canCreate = draftName.trim().length > 0 && draftCode.trim().length > 0
 
   async function handleCreate() {
     setSubmitError(null)
-    if (!canSaveCreate) {
-      setSubmitError('Name is required.')
+    if (!canCreate) {
+      setSubmitError('Region name and code are required.')
       return
     }
 
     try {
       setSaving(true)
-      await onCreate({
-        name: draftName.trim(),
-        code: draftCode.trim() ? draftCode.trim() : null,
-        active: draftActive,
-      })
+      await onCreate({ region_name: draftName.trim(), region_code: draftCode.trim() })
       onClose()
     } catch (err: any) {
       console.error('Region create error', err)
@@ -87,135 +66,71 @@ export default function RegionInspector(props: {
     }
   }
 
-  async function handleDelete() {
+  function handleEditName(next: string) {
     if (!regionId) return
-    const ok = window.confirm('Delete this region? This cannot be undone.')
-    if (!ok) return
-
-    try {
-      setSaving(true)
-      setSubmitError(null)
-      await onDelete(regionId)
-      onClose()
-    } catch (err: any) {
-      console.error('Region delete error', err)
-      setSubmitError(err?.message ?? 'Delete failed.')
-    } finally {
-      setSaving(false)
-    }
+    setDraftName(next)
+    onChange(regionId, 'region_name', next)
   }
 
+  function handleEditCode(next: string) {
+    if (!regionId) return
+    setDraftCode(next)
+    onChange(regionId, 'region_code', next)
+  }
+
+  const footer = (
+    <div className="flex items-center justify-between gap-3 w-full">
+      <div className="min-h-[20px] text-sm" style={{ color: 'var(--to-danger)' }}>
+        {submitError ?? ''}
+      </div>
+
+      {isCreate ? (
+        <button
+          onClick={handleCreate}
+          disabled={saving || !canCreate}
+          className="rounded px-3 py-2 text-sm font-semibold"
+          style={{
+            background: 'var(--to-cta)',
+            color: 'var(--to-cta-ink)',
+            opacity: saving || !canCreate ? 0.6 : 1,
+          }}
+        >
+          {saving ? 'Saving…' : 'Create'}
+        </button>
+      ) : (
+        <div className="text-sm text-[var(--to-ink-muted)]">Delete disabled.</div>
+      )}
+    </div>
+  )
+
   return (
-    <AdminOverlay
-      open={open}
-      mode={isCreate ? 'create' : 'edit'}
-      title={title}
-      subtitle={subtitle}
-      onClose={onClose}
-      widthClassName="w-[860px] max-w-[94vw]"
-      footer={
-        <div className="flex w-full items-center justify-between gap-3">
-          <div className="min-h-[20px] text-sm text-[var(--to-ink-muted)]">
-            {submitError ? <span className="text-[var(--to-danger)]">{submitError}</span> : null}
+    <AdminOverlay open={open} mode={mode as any} title={title} subtitle={subtitle} onClose={onClose} footer={footer}>
+      <div className="space-y-4">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+            Region Name
           </div>
-
-          <div className="flex items-center gap-2">
-            {!isCreate && (
-              <button
-                onClick={handleDelete}
-                disabled={saving}
-                className="rounded border px-3 py-2 text-sm"
-                style={{ borderColor: 'var(--to-border)', color: 'var(--to-danger)', opacity: saving ? 0.7 : 1 }}
-              >
-                Delete
-              </button>
-            )}
-
-            <button
-              onClick={onClose}
-              disabled={saving}
-              className="rounded border px-3 py-2 text-sm"
-              style={{ borderColor: 'var(--to-border)', color: 'var(--to-ink)', opacity: saving ? 0.7 : 1 }}
-            >
-              Close
-            </button>
-
-            {isCreate && (
-              <button
-                onClick={handleCreate}
-                disabled={saving || !canSaveCreate}
-                className="rounded px-3 py-2 text-sm font-semibold"
-                style={{
-                  background: 'var(--to-cta)',
-                  color: 'var(--to-cta-ink)',
-                  opacity: saving || !canSaveCreate ? 0.7 : 1,
-                }}
-              >
-                {saving ? 'Creating…' : 'Create'}
-              </button>
-            )}
-          </div>
-        </div>
-      }
-    >
-      <div className="p-4">
-        <div className="grid grid-cols-12 gap-3">
-          <div className="col-span-12">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Name</label>
-            <input
-              className="mt-1 w-full rounded border px-3 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
-              value={nameValue}
-              onChange={(e) => {
-                const v = e.target.value
-                if (isCreate) setDraftName(v)
-                else if (regionId) onChange(regionId, 'name', v)
-              }}
-              placeholder="Region name"
-            />
-          </div>
-
-          <div className="col-span-12 sm:col-span-6">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Code</label>
-            <input
-              className="mt-1 w-full rounded border px-3 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
-              value={codeValue}
-              onChange={(e) => {
-                const v = e.target.value
-                if (isCreate) setDraftCode(v)
-                else if (regionId) onChange(regionId, 'code', v)
-              }}
-              placeholder="Optional"
-            />
-          </div>
-
-          <div className="col-span-12 sm:col-span-6">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Active</label>
-            <div className="mt-2 flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={activeValue}
-                onChange={(e) => {
-                  const v = e.target.checked
-                  if (isCreate) setDraftActive(v)
-                  else if (regionId) onChange(regionId, 'active', v)
-                }}
-              />
-              <span className="text-sm text-[var(--to-ink)]">{activeValue ? 'Active' : 'Inactive'}</span>
-            </div>
-          </div>
+          <input
+            value={draftName}
+            onChange={(e) => (isCreate ? setDraftName(e.target.value) : handleEditName(e.target.value))}
+            placeholder="e.g. Mid-Atlantic"
+            className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+          />
         </div>
 
-        {!isCreate && (
-          <div
-            className="mt-4 rounded border p-3 text-xs text-[var(--to-ink-muted)]"
-            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}
-          >
-            <div className="font-semibold uppercase tracking-wide mb-1">Edit behavior</div>
-            <div>Changes write optimistically and are committed with a small debounce.</div>
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+            Region Code
           </div>
-        )}
+          <input
+            value={draftCode}
+            onChange={(e) => (isCreate ? setDraftCode(e.target.value) : handleEditCode(e.target.value))}
+            placeholder="e.g. MA"
+            className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+          />
+        </div>
       </div>
     </AdminOverlay>
   )

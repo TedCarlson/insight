@@ -5,112 +5,67 @@ import type { CreateMsoInput, MsoRow } from './mso.types'
 
 const supabase = createClient()
 
-function pickId(row: any): string {
-  const id = row?.mso_id ?? row?.id
-  if (!id) throw new Error('Could not determine mso id from insert/update result.')
-  return String(id)
-}
-
-async function tryInsertMso(basePayload: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    { mso_name: basePayload.name, mso_code: basePayload.code ?? null, is_active: basePayload.active ?? true },
-    { name: basePayload.name, code: basePayload.code ?? null, active: basePayload.active ?? true },
-    { mso_name: basePayload.name, code: basePayload.code ?? null, active: basePayload.active ?? true },
-  ]
-
-  let lastErr: any = null
-  for (const payload of candidates) {
-    const { data, error } = await supabase.from('mso').insert(payload).select('*').single()
-    if (!error) return data
-    lastErr = error
-  }
-
-  console.error('tryInsertMso failed', lastErr)
-  throw lastErr
-}
-
-async function tryUpdateMso(msoId: string, patch: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    {
-      ...(patch.name !== undefined ? { mso_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { mso_code: patch.code } : {}),
-      ...(patch.active !== undefined ? { is_active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { mso_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-  ]
-
-  let lastErr: any = null
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('mso').update(payload).eq('mso_id', msoId)
-    if (!error) return
-    lastErr = error
-  }
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('mso').update(payload).eq('id', msoId)
-    if (!error) return
-    lastErr = error
-  }
-
-  console.error('tryUpdateMso failed', lastErr)
-  throw lastErr
+function newUuid(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `mso_${Date.now()}_${Math.random().toString(16).slice(2)}`
 }
 
 async function fetchFromViewById(msoId: string): Promise<MsoRow> {
-  let { data, error } = await supabase.from('mso_admin_v').select('*').eq('mso_id', msoId).single()
-  if (!error && data) return data as MsoRow
-
-  const res2 = await supabase.from('mso_admin_v').select('*').eq('id', msoId).single()
-  data = res2.data
-  error = res2.error
+  const { data, error } = await supabase
+    .from('mso_admin_v')
+    .select('mso_id, mso_name')
+    .eq('mso_id', msoId)
+    .single()
 
   if (error) {
     console.error('fetchFromViewById error', error)
     throw error
   }
 
-  return (data ?? {}) as MsoRow
+  return data as MsoRow
 }
 
-/* READ */
 export async function fetchMsos(): Promise<MsoRow[]> {
-  const { data, error } = await supabase.from('mso_admin_v').select('*').limit(500)
+  const { data, error } = await supabase
+    .from('mso_admin_v')
+    .select('mso_id, mso_name')
+    .order('mso_name')
+
   if (error) {
     console.error('fetchMsos error', error)
     throw error
   }
+
   return (data ?? []) as MsoRow[]
 }
 
-/* WRITE */
-export async function createMso(payload: CreateMsoInput): Promise<MsoRow> {
-  const inserted = await tryInsertMso(payload)
-  const id = pickId(inserted)
-  return await fetchFromViewById(id)
-}
+export async function createMso(input: CreateMsoInput): Promise<MsoRow> {
+  const mso_id = input.mso_id?.trim() || newUuid()
+  const mso_name = input.mso_name.trim()
 
-export async function updateMso(msoId: string, patch: Partial<CreateMsoInput>): Promise<MsoRow> {
-  await tryUpdateMso(msoId, patch)
-  return await fetchFromViewById(msoId)
-}
+  if (!mso_name) throw new Error('MSO name is required.')
 
-export async function deleteMso(msoId: string): Promise<void> {
-  let { error } = await supabase.from('mso').delete().eq('mso_id', msoId)
-  if (!error) return
-
-  const res2 = await supabase.from('mso').delete().eq('id', msoId)
-  if (res2.error) {
-    console.error('deleteMso error', res2.error)
-    throw res2.error
+  const { error } = await supabase.from('mso').insert({ mso_id, mso_name })
+  if (error) {
+    console.error('createMso insert error', error)
+    throw error
   }
+
+  return await fetchFromViewById(mso_id)
+}
+
+export async function updateMso(
+  msoId: string,
+  patch: Partial<Pick<MsoRow, 'mso_name'>>
+): Promise<MsoRow> {
+  const payload: Record<string, any> = {}
+  if (patch.mso_name !== undefined) payload.mso_name = String(patch.mso_name ?? '').trim()
+
+  const { error } = await supabase.from('mso').update(payload).eq('mso_id', msoId)
+  if (error) {
+    console.error('updateMso error', error)
+    throw error
+  }
+
+  return await fetchFromViewById(msoId)
 }

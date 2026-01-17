@@ -2,34 +2,22 @@
 
 export type PcInspectorMode = 'create' | 'edit'
 
+/**
+ * READ shape (view): public.pc_admin_v
+ * Columns: pc_id, pc_number
+ */
 export type PcRow = {
-  pc_id?: string | null
-  id?: string | null
-
-  pc_name?: string | null
-  name?: string | null
-
-  pc_code?: string | null
-  code?: string | null
-
-  pc_number?: string | number | null
-  number?: string | number | null
-  pc_no?: string | number | null
-
-  is_active?: boolean | null
-  active?: boolean | null
-
-  created_at?: string | null
-  updated_at?: string | null
-
-  [key: string]: any
+  pc_id: string
+  pc_number: string
 }
 
+/**
+ * WRITE shape (base): public.pc
+ * Required: pc_id, pc_number
+ */
 export type CreatePcInput = {
-  name: string
-  code?: string | null
-  pc_number?: string | null
-  active?: boolean
+  pc_id?: string
+  pc_number: string
 }
 
-export type EditableField = 'name' | 'code' | 'pc_number' | 'active'
+export type EditableField = 'pc_number'

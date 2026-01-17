@@ -2,29 +2,24 @@
 
 export type RegionInspectorMode = 'create' | 'edit'
 
+/**
+ * READ shape (view): public.region_admin_v
+ * Columns: region_id, region_name, region_code
+ */
 export type RegionRow = {
-  region_id?: string | null
-  id?: string | null
-
-  region_name?: string | null
-  name?: string | null
-
-  region_code?: string | null
-  code?: string | null
-
-  is_active?: boolean | null
-  active?: boolean | null
-
-  created_at?: string | null
-  updated_at?: string | null
-
-  [key: string]: any
+  region_id: string
+  region_name: string
+  region_code: string
 }
 
+/**
+ * WRITE shape (base): public.region
+ * Required: region_id, region_name, region_code
+ */
 export type CreateRegionInput = {
-  name: string
-  code?: string | null
-  active?: boolean
+  region_id?: string
+  region_name: string
+  region_code: string
 }
 
-export type EditableField = 'name' | 'code' | 'active'
+export type EditableField = 'region_name' | 'region_code'

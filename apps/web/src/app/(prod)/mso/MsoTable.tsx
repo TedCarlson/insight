@@ -3,34 +3,23 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createMso, deleteMso, fetchMsos, updateMso } from './mso.api'
+import { createMso, fetchMsos, updateMso } from './mso.api'
 import type { CreateMsoInput, EditableField, MsoInspectorMode, MsoRow } from './mso.types'
 import MsoInspector from './MsoInspector'
 
 const WRITE_DELAY_MS = 450
 
 function getId(row: MsoRow): string {
-  const id = row.mso_id ?? row.id
-  return id ? String(id) : ''
+  return String(row.mso_id)
 }
 
 function getName(row: MsoRow): string {
-  return String(row.mso_name ?? row.name ?? '')
-}
-
-function getCode(row: MsoRow): string {
-  return String(row.mso_code ?? row.code ?? '')
-}
-
-function getActive(row: MsoRow): boolean {
-  const v = row.is_active ?? row.active
-  return v === null || v === undefined ? true : Boolean(v)
+  return String(row.mso_name ?? '')
 }
 
 export default function MsoTable() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
   const [rows, setRows] = useState<MsoRow[]>([])
   const [search, setSearch] = useState('')
 
@@ -69,13 +58,7 @@ export default function MsoTable() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return rows
-
-    return rows.filter((r) => {
-      const name = getName(r).toLowerCase()
-      const code = getCode(r).toLowerCase()
-      const id = getId(r).toLowerCase()
-      return name.includes(q) || code.includes(q) || id.includes(q)
-    })
+    return rows.filter((r) => `${getName(r)} ${getId(r)}`.toLowerCase().includes(q))
   }, [rows, search])
 
   const selectedMso = useMemo(() => {
@@ -90,10 +73,8 @@ export default function MsoTable() {
   }
 
   function openEdit(row: MsoRow) {
-    const id = getId(row)
-    if (!id) return
     setInspectorMode('edit')
-    setSelectedMsoId(id)
+    setSelectedMsoId(getId(row))
     setInspectorOpen(true)
   }
 
@@ -106,33 +87,17 @@ export default function MsoTable() {
     setRows((prev) => [created, ...prev])
   }
 
-  async function onDelete(msoId: string) {
-    await deleteMso(msoId)
-    setRows((prev) => prev.filter((r) => getId(r) !== msoId))
-  }
-
   function updateField(msoId: string, field: EditableField, value: any) {
-    // 1) optimistic update
+    // optimistic update
     setRows((prev) =>
       prev.map((r) => {
         if (getId(r) !== msoId) return r
-
         const next: MsoRow = { ...(r as any) }
-        if (field === 'name') {
-          next.mso_name = String(value ?? '')
-          next.name = String(value ?? '')
-        } else if (field === 'code') {
-          next.mso_code = value === '' ? null : String(value ?? '')
-          next.code = value === '' ? null : String(value ?? '')
-        } else if (field === 'active') {
-          next.is_active = Boolean(value)
-          next.active = Boolean(value)
-        }
+        if (field === 'mso_name') next.mso_name = String(value ?? '')
         return next
       })
     )
 
-    // 2) debounce DB write
     const key = `${msoId}:${field}`
     const prior = writeTimers.current.get(key)
     if (prior) clearTimeout(prior)
@@ -141,18 +106,14 @@ export default function MsoTable() {
     writeSeq.current.set(key, seq)
 
     const timer = setTimeout(async () => {
+      if ((writeSeq.current.get(key) ?? 0) !== seq) return
       try {
-        if ((writeSeq.current.get(key) ?? 0) !== seq) return
-
-        const patch: any = {}
-        if (field === 'name') patch.name = String(value ?? '')
-        if (field === 'code') patch.code = value === '' ? null : String(value ?? '')
-        if (field === 'active') patch.active = Boolean(value)
-
+        setError(null)
+        const patch = field === 'mso_name' ? { mso_name: String(value ?? '').trim() } : {}
         const updated = await updateMso(msoId, patch)
         setRows((prev) => prev.map((r) => (getId(r) === msoId ? updated : r)))
       } catch (err: any) {
-        console.error('Debounced MSO update error', err)
+        console.error('MSO update error', err)
         setError(err?.message ?? 'Update failed.')
       } finally {
         writeTimers.current.delete(key)
@@ -165,15 +126,20 @@ export default function MsoTable() {
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between gap-3 px-6 py-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="text-lg font-semibold text-[var(--to-ink)] whitespace-nowrap">MSO</div>
+
           <input
-            placeholder="Search by name, code, id…"
-            className="w-96 rounded border px-2 py-1 text-sm bg-white"
-            style={{ borderColor: 'var(--to-border)' }}
+            className="w-72 max-w-[60vw] rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            placeholder="Search by name or id…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <div className="text-sm text-[var(--to-ink-muted)]">{loading ? 'Loading…' : `${filtered.length} rows`}</div>
+
+          <div className="text-sm text-[var(--to-ink-muted)]">
+            {loading ? 'Loading…' : `${filtered.length} rows`}
+          </div>
         </div>
 
         <button
@@ -185,54 +151,46 @@ export default function MsoTable() {
         </button>
       </div>
 
-      {error && (
-        <div className="px-6 pb-3">
-          <div
-            className="rounded border px-3 py-2 text-sm"
-            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
-          >
-            <span className="font-semibold">Error:</span> {error}
-          </div>
+      {error ? (
+        <div className="px-6 pb-3 text-sm" style={{ color: 'var(--to-danger)' }}>
+          {error}
         </div>
-      )}
+      ) : null}
 
       <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
-        <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}>
+        <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--to-border)' }}>
           <table className="w-full text-sm">
-            <thead className="border-b" style={{ borderColor: 'var(--to-border)', background: 'var(--to-header-bg)' }}>
+            <thead className="border-b" style={{ borderColor: 'var(--to-border)' }}>
               <tr className="text-left">
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Code</th>
-                <th className="px-3 py-2">Active</th>
+                <th className="px-3 py-2">MSO Name</th>
                 <th className="px-3 py-2">ID</th>
               </tr>
             </thead>
+
             <tbody>
+              {!loading && filtered.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-[var(--to-ink-muted)]" colSpan={2}>
+                    No rows
+                  </td>
+                </tr>
+              ) : null}
+
               {filtered.map((r) => {
                 const id = getId(r)
                 return (
                   <tr
-                    key={id || JSON.stringify(r)}
-                    className="border-b hover:bg-black/5 cursor-pointer"
+                    key={id}
+                    className="border-b last:border-b-0 cursor-pointer hover:opacity-90"
                     style={{ borderColor: 'var(--to-border)' }}
                     onClick={() => openEdit(r)}
                     title="Click to edit"
                   >
-                    <td className="px-3 py-2">{getName(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getCode(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getActive(r) ? 'Yes' : 'No'}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-[var(--to-ink-muted)]">{id || '—'}</td>
+                    <td className="px-3 py-2 font-medium text-[var(--to-ink)]">{getName(r)}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{id}</td>
                   </tr>
                 )
               })}
-
-              {!loading && filtered.length === 0 && (
-                <tr>
-                  <td className="px-3 py-6 text-[var(--to-ink-muted)]" colSpan={4}>
-                    No rows match your search.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
@@ -244,7 +202,6 @@ export default function MsoTable() {
         mso={inspectorMode === 'edit' ? selectedMso : null}
         onChange={updateField}
         onCreate={onCreate}
-        onDelete={onDelete}
         onClose={onCloseInspector}
       />
     </div>

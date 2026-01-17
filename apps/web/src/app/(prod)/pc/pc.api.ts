@@ -5,133 +5,70 @@ import type { CreatePcInput, PcRow } from './pc.types'
 
 const supabase = createClient()
 
-function pickId(row: any): string {
-  const id = row?.pc_id ?? row?.id
-  if (!id) throw new Error('Could not determine pc id from insert/update result.')
-  return String(id)
-}
-
-async function tryInsertPc(base: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    // likely canonical
-    {
-      pc_name: base.name,
-      pc_code: base.code ?? null,
-      pc_number: base.pc_number ?? null,
-      is_active: base.active ?? true,
-    },
-    // common alternates
-    {
-      name: base.name,
-      code: base.code ?? null,
-      number: base.pc_number ?? null,
-      active: base.active ?? true,
-    },
-    // mixed
-    {
-      pc_name: base.name,
-      code: base.code ?? null,
-      pc_no: base.pc_number ?? null,
-      active: base.active ?? true,
-    },
-  ]
-
-  let lastErr: any = null
-  for (const payload of candidates) {
-    const { data, error } = await supabase.from('pc').insert(payload).select('*').single()
-    if (!error) return data
-    lastErr = error
-  }
-
-  console.error('tryInsertPc failed', lastErr)
-  throw lastErr
-}
-
-async function tryUpdatePc(pcId: string, patch: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    {
-      ...(patch.name !== undefined ? { pc_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { pc_code: patch.code } : {}),
-      ...(patch.pc_number !== undefined ? { pc_number: patch.pc_number } : {}),
-      ...(patch.active !== undefined ? { is_active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.pc_number !== undefined ? { number: patch.pc_number } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { pc_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.pc_number !== undefined ? { pc_no: patch.pc_number } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-  ]
-
-  let lastErr: any = null
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('pc').update(payload).eq('pc_id', pcId)
-    if (!error) return
-    lastErr = error
-  }
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('pc').update(payload).eq('id', pcId)
-    if (!error) return
-    lastErr = error
-  }
-
-  console.error('tryUpdatePc failed', lastErr)
-  throw lastErr
+function newUuid(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `pc_${Date.now()}_${Math.random().toString(16).slice(2)}`
 }
 
 async function fetchFromViewById(pcId: string): Promise<PcRow> {
-  let { data, error } = await supabase.from('pc_admin_v').select('*').eq('pc_id', pcId).single()
-  if (!error && data) return data as PcRow
-
-  const res2 = await supabase.from('pc_admin_v').select('*').eq('id', pcId).single()
-  data = res2.data
-  error = res2.error
+  const { data, error } = await supabase
+    .from('pc_admin_v')
+    .select('pc_id, pc_number')
+    .eq('pc_id', pcId)
+    .single()
 
   if (error) {
     console.error('fetchFromViewById error', error)
     throw error
   }
 
-  return (data ?? {}) as PcRow
+  return data as PcRow
 }
 
-/* READ */
+/** READ: view */
 export async function fetchPcs(): Promise<PcRow[]> {
-  const { data, error } = await supabase.from('pc_admin_v').select('*').limit(500)
+  const { data, error } = await supabase
+    .from('pc_admin_v')
+    .select('pc_id, pc_number')
+    .order('pc_number')
+
   if (error) {
     console.error('fetchPcs error', error)
     throw error
   }
+
   return (data ?? []) as PcRow[]
 }
 
-/* WRITE */
-export async function createPc(payload: CreatePcInput): Promise<PcRow> {
-  const inserted = await tryInsertPc(payload)
-  const id = pickId(inserted)
-  return await fetchFromViewById(id)
-}
+/** CREATE: base table, then re-read view */
+export async function createPc(input: CreatePcInput): Promise<PcRow> {
+  const pc_id = input.pc_id?.trim() || newUuid()
+  const pc_number = input.pc_number.trim()
 
-export async function updatePc(pcId: string, patch: Partial<CreatePcInput>): Promise<PcRow> {
-  await tryUpdatePc(pcId, patch)
-  return await fetchFromViewById(pcId)
-}
+  if (!pc_number) throw new Error('PC number is required.')
 
-export async function deletePc(pcId: string): Promise<void> {
-  let { error } = await supabase.from('pc').delete().eq('pc_id', pcId)
-  if (!error) return
-
-  const res2 = await supabase.from('pc').delete().eq('id', pcId)
-  if (res2.error) {
-    console.error('deletePc error', res2.error)
-    throw res2.error
+  const { error } = await supabase.from('pc').insert({ pc_id, pc_number })
+  if (error) {
+    console.error('createPc insert error', error)
+    throw error
   }
+
+  return await fetchFromViewById(pc_id)
+}
+
+/** UPDATE: base table, then re-read view */
+export async function updatePc(
+  pcId: string,
+  patch: Partial<Pick<PcRow, 'pc_number'>>
+): Promise<PcRow> {
+  const payload: Record<string, any> = {}
+  if (patch.pc_number !== undefined) payload.pc_number = String(patch.pc_number ?? '').trim()
+
+  const { error } = await supabase.from('pc').update(payload).eq('pc_id', pcId)
+  if (error) {
+    console.error('updatePc error', error)
+    throw error
+  }
+
+  return await fetchFromViewById(pcId)
 }

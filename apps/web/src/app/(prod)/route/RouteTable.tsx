@@ -12,11 +12,13 @@ const WRITE_DELAY_MS = 450
 function getId(row: RouteRow): string {
   return String(row.route_id)
 }
-function getName(row: RouteRow): string {
+
+function getRouteName(row: RouteRow): string {
   return String(row.route_name ?? '')
 }
-function getMsoName(row: RouteRow): string {
-  return String(row.mso_name ?? '')
+
+function safeText(v: any): string {
+  return v === null || v === undefined ? '' : String(v)
 }
 
 export default function RouteTable() {
@@ -27,7 +29,7 @@ export default function RouteTable() {
 
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [inspectorMode, setInspectorMode] = useState<RouteInspectorMode>('create')
-  const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const writeTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const writeSeq = useRef(new Map<string, number>())
@@ -44,43 +46,46 @@ export default function RouteTable() {
       } catch (err: any) {
         console.error('Route load error', err)
         if (!alive) return
-        setError(err?.message ?? 'Failed to load.')
+        setError(err?.message ?? 'Failed to load routes.')
       } finally {
-        if (alive) setLoading(false)
+        if (!alive) return
+        setLoading(false)
       }
     })()
-
     return () => {
       alive = false
-      for (const t of writeTimers.current.values()) clearTimeout(t)
-      writeTimers.current.clear()
     }
   }, [])
+
+  const selected = useMemo(() => {
+    if (!selectedId) return null
+    return rows.find((r) => getId(r) === selectedId) ?? null
+  }, [rows, selectedId])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     if (!q) return rows
-    return rows.filter((r) => `${getName(r)} ${getMsoName(r)} ${getId(r)}`.toLowerCase().includes(q))
+    return rows.filter((r) => {
+      const name = safeText(r.route_name).toLowerCase()
+      const pcOrg = safeText(r.pc_org_name).toLowerCase()
+      const division = safeText(r.division_name).toLowerCase()
+      const region = safeText(r.region_name).toLowerCase()
+      return name.includes(q) || pcOrg.includes(q) || division.includes(q) || region.includes(q)
+    })
   }, [rows, search])
-
-  const selected = useMemo(() => {
-    if (!selectedRouteId) return null
-    return rows.find((r) => getId(r) === selectedRouteId) ?? null
-  }, [rows, selectedRouteId])
 
   function openCreate() {
     setInspectorMode('create')
-    setSelectedRouteId(null)
     setInspectorOpen(true)
   }
 
   function openEdit(row: RouteRow) {
+    setSelectedId(getId(row))
     setInspectorMode('edit')
-    setSelectedRouteId(getId(row))
     setInspectorOpen(true)
   }
 
-  function onCloseInspector() {
+  function closeInspector() {
     setInspectorOpen(false)
   }
 
@@ -90,12 +95,13 @@ export default function RouteTable() {
   }
 
   function updateField(routeId: string, field: EditableField, value: any) {
+    // optimistic update
     setRows((prev) =>
       prev.map((r) => {
         if (getId(r) !== routeId) return r
         const next: RouteRow = { ...(r as any) }
         if (field === 'route_name') next.route_name = String(value ?? '')
-        if (field === 'mso_id') next.mso_id = String(value ?? '')
+        if (field === 'pc_org_id') next.pc_org_id = value ? String(value) : null
         return next
       })
     )
@@ -112,8 +118,9 @@ export default function RouteTable() {
       try {
         setError(null)
         const patch: any = {}
+
         if (field === 'route_name') patch.route_name = String(value ?? '').trim()
-        if (field === 'mso_id') patch.mso_id = String(value ?? '').trim()
+        if (field === 'pc_org_id') patch.pc_org_id = value ? String(value).trim() : null
 
         const updated = await updateRoute(routeId, patch)
         setRows((prev) => prev.map((r) => (getId(r) === routeId ? updated : r)))
@@ -137,7 +144,7 @@ export default function RouteTable() {
           <input
             className="w-72 max-w-[60vw] rounded border px-3 py-2 text-sm outline-none"
             style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
-            placeholder="Search by route, MSO, or id…"
+            placeholder="Search route, PC org, division, region…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -167,16 +174,17 @@ export default function RouteTable() {
           <table className="w-full text-sm">
             <thead className="border-b" style={{ borderColor: 'var(--to-border)' }}>
               <tr className="text-left">
-                <th className="px-3 py-2">Route Name</th>
-                <th className="px-3 py-2">MSO</th>
-                <th className="px-3 py-2">ID</th>
+                <th className="px-3 py-2">Route</th>
+                <th className="px-3 py-2">PC Org</th>
+                <th className="px-3 py-2">Division</th>
+                <th className="px-3 py-2">Region</th>
               </tr>
             </thead>
 
             <tbody>
               {!loading && filtered.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-4 text-[var(--to-ink-muted)]" colSpan={3}>
+                  <td className="px-3 py-4 text-[var(--to-ink-muted)]" colSpan={4}>
                     No rows
                   </td>
                 </tr>
@@ -192,9 +200,10 @@ export default function RouteTable() {
                     onClick={() => openEdit(r)}
                     title="Click to edit"
                   >
-                    <td className="px-3 py-2 font-medium text-[var(--to-ink)]">{getName(r)}</td>
-                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{getMsoName(r)}</td>
-                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{id}</td>
+                    <td className="px-3 py-2 font-medium text-[var(--to-ink)]">{getRouteName(r)}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{safeText(r.pc_org_name) || '—'}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{safeText(r.division_name) || '—'}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{safeText(r.region_name) || '—'}</td>
                   </tr>
                 )
               })}
@@ -209,7 +218,7 @@ export default function RouteTable() {
         route={inspectorMode === 'edit' ? selected : null}
         onChange={updateField}
         onCreate={onCreate}
-        onClose={onCloseInspector}
+        onClose={closeInspector}
       />
     </div>
   )

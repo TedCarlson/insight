@@ -5,15 +5,33 @@ import type { CreateRouteInput, RouteRow } from './route.types'
 
 const supabase = createClient()
 
-function newUuid(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
-  return `route_${Date.now()}_${Math.random().toString(16).slice(2)}`
-}
+/**
+ * View reads are "un-typed" via (supabase as any) to avoid GenericStringError issues
+ * when views are not present in generated Supabase Database types.
+ */
+
+const ROUTE_ADMIN_SELECT = [
+  'route_id',
+  'route_name',
+  'pc_org_id',
+  'pc_org_name',
+  'mso_id',
+  'mso_name',
+  // optional context (safe if present in view; ignored if not used by UI)
+  'division_id',
+  'division_name',
+  'division_code',
+  'region_id',
+  'region_name',
+  'region_code',
+  'pc_id',
+  'pc_number',
+].join(', ')
 
 async function fetchFromViewById(routeId: string): Promise<RouteRow> {
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('route_admin_v')
-    .select('route_id, route_name, mso_id, mso_name')
+    .select(ROUTE_ADMIN_SELECT)
     .eq('route_id', routeId)
     .single()
 
@@ -27,15 +45,15 @@ async function fetchFromViewById(routeId: string): Promise<RouteRow> {
     throw new Error((error as any)?.message ?? 'Failed to fetch route.')
   }
 
-  return data as RouteRow
+  return data as unknown as RouteRow
 }
 
 /** READ: view */
 export async function fetchRoutes(): Promise<RouteRow[]> {
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('route_admin_v')
-    .select('route_id, route_name, mso_id, mso_name')
-    .order('route_name')
+    .select(ROUTE_ADMIN_SELECT)
+    .order('route_name', { ascending: true })
 
   if (error) {
     console.error('fetchRoutes error', {
@@ -47,23 +65,25 @@ export async function fetchRoutes(): Promise<RouteRow[]> {
     throw new Error((error as any)?.message ?? 'Failed to load routes.')
   }
 
-  return (data ?? []) as RouteRow[]
+  return (data ?? []) as unknown as RouteRow[]
 }
 
 /** CREATE: base table, then re-read view */
 export async function createRoute(input: CreateRouteInput): Promise<RouteRow> {
-  const route_id = input.route_id?.trim() || newUuid()
-  const route_name = input.route_name.trim()
-  const mso_id = input.mso_id.trim()
+  const route_name = String(input.route_name ?? '').trim()
+  const pc_org_id = input.pc_org_id ? String(input.pc_org_id).trim() : null
 
   if (!route_name) throw new Error('Route name is required.')
-  if (!mso_id) throw new Error('MSO is required.')
 
-  const { error } = await supabase.from('route').insert({
-    route_id,
+  const insertPayload: any = {
     route_name,
-    mso_id,
-  })
+    pc_org_id,
+  }
+
+  // If caller provided route_id, include it (otherwise rely on DB default/uuid)
+  if (input.route_id) insertPayload.route_id = String(input.route_id).trim()
+
+  const { data, error } = await supabase.from('route').insert(insertPayload).select('route_id').single()
 
   if (error) {
     console.error('createRoute insert error', {
@@ -75,17 +95,21 @@ export async function createRoute(input: CreateRouteInput): Promise<RouteRow> {
     throw new Error((error as any)?.message ?? 'Create route failed.')
   }
 
-  return await fetchFromViewById(route_id)
+  const createdId = String((data as any)?.route_id ?? input.route_id ?? '')
+  if (!createdId) throw new Error('Create route succeeded but no route_id returned.')
+
+  return await fetchFromViewById(createdId)
 }
 
 /** UPDATE: base table, then re-read view */
 export async function updateRoute(
   routeId: string,
-  patch: Partial<Pick<RouteRow, 'route_name' | 'mso_id'>>
+  patch: Partial<Pick<RouteRow, 'route_name' | 'pc_org_id'>>
 ): Promise<RouteRow> {
   const payload: Record<string, any> = {}
+
   if (patch.route_name !== undefined) payload.route_name = String(patch.route_name ?? '').trim()
-  if (patch.mso_id !== undefined) payload.mso_id = String(patch.mso_id ?? '').trim()
+  if (patch.pc_org_id !== undefined) payload.pc_org_id = patch.pc_org_id ? String(patch.pc_org_id).trim() : null
 
   const { error } = await supabase.from('route').update(payload).eq('route_id', routeId)
 

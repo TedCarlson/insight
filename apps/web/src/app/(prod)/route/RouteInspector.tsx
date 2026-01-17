@@ -4,18 +4,12 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import AdminOverlay from '../_shared/AdminOverlay'
-import { fetchMsoOptions, type DropdownOption } from '../_shared/dropdowns'
+import { fetchPcOrgOptions, type DropdownOption } from '../_shared/dropdowns'
 import type { CreateRouteInput, EditableField, RouteInspectorMode, RouteRow } from './route.types'
 
 function getId(row: RouteRow | null | undefined): string | null {
   const id = row?.route_id
   return id ? String(id) : null
-}
-function getName(row: RouteRow | null | undefined): string {
-  return String(row?.route_name ?? '')
-}
-function getMsoId(row: RouteRow | null | undefined): string {
-  return String(row?.mso_id ?? '')
 }
 
 export default function RouteInspector(props: {
@@ -27,18 +21,18 @@ export default function RouteInspector(props: {
   onClose: () => void
 }) {
   const { open, mode, route, onChange, onCreate, onClose } = props
-  const isCreate = mode === 'create'
 
-  const [draftName, setDraftName] = useState('')
-  const [draftMsoId, setDraftMsoId] = useState('')
+  const isCreate = mode === 'create'
+  const routeId = useMemo(() => getId(route), [route])
 
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  const [msoOptions, setMsoOptions] = useState<DropdownOption[]>([])
-  const [loadingMsos, setLoadingMsos] = useState(false)
+  const [pcOrgOptions, setPcOrgOptions] = useState<DropdownOption[]>([])
+  const [loadingPcOrg, setLoadingPcOrg] = useState(false)
 
-  const routeId = useMemo(() => getId(route), [route])
+  const [draftName, setDraftName] = useState('')
+  const [draftPcOrgId, setDraftPcOrgId] = useState<string>('')
 
   useEffect(() => {
     if (!open) return
@@ -48,34 +42,39 @@ export default function RouteInspector(props: {
 
     if (isCreate) {
       setDraftName('')
-      setDraftMsoId('')
+      setDraftPcOrgId('')
     } else {
-      setDraftName(getName(route))
-      setDraftMsoId(getMsoId(route))
+      setDraftName(String(route?.route_name ?? ''))
+      setDraftPcOrgId(String(route?.pc_org_id ?? ''))
     }
-
-    ;(async () => {
-      try {
-        setLoadingMsos(true)
-        const opts = await fetchMsoOptions()
-        setMsoOptions(opts)
-      } catch (e) {
-        console.error('Failed to load MSO options', e)
-      } finally {
-        setLoadingMsos(false)
-      }
-    })()
   }, [open, isCreate, route])
 
-  const title = isCreate ? 'Create Route' : 'Edit Route'
-  const subtitle = !isCreate && routeId ? `id: ${routeId}` : undefined
+  useEffect(() => {
+    if (!open) return
+    ;(async () => {
+      try {
+        setLoadingPcOrg(true)
+        const opts = await fetchPcOrgOptions()
+        setPcOrgOptions(opts)
+      } catch (e) {
+        console.error('Failed to load PC Org options for Route', e)
+      } finally {
+        setLoadingPcOrg(false)
+      }
+    })()
+  }, [open])
 
-  const canCreate = draftName.trim().length > 0 && draftMsoId.trim().length > 0
+  function handleEdit(field: EditableField, value: any) {
+    if (!routeId) return
+    onChange(routeId, field, value)
+  }
+
+  const canCreate = draftName.trim().length > 0
 
   async function handleCreate() {
     setSubmitError(null)
     if (!canCreate) {
-      setSubmitError('Route name and MSO are required.')
+      setSubmitError('Route name is required.')
       return
     }
 
@@ -83,7 +82,7 @@ export default function RouteInspector(props: {
       setSaving(true)
       await onCreate({
         route_name: draftName.trim(),
-        mso_id: draftMsoId.trim(),
+        pc_org_id: draftPcOrgId.trim() ? draftPcOrgId.trim() : null,
       })
       onClose()
     } catch (err: any) {
@@ -94,20 +93,8 @@ export default function RouteInspector(props: {
     }
   }
 
-  function handleEditName(next: string) {
-    if (!routeId) return
-    setDraftName(next)
-    onChange(routeId, 'route_name', next)
-  }
-
-  function handleEditMsoId(next: string) {
-    if (!routeId) return
-    setDraftMsoId(next)
-    onChange(routeId, 'mso_id', next)
-  }
-
   const footer = (
-    <div className="flex items-center justify-between gap-3 w-full">
+    <div className="flex w-full items-center justify-between gap-3">
       <div className="min-h-[20px] text-sm" style={{ color: 'var(--to-danger)' }}>
         {submitError ?? ''}
       </div>
@@ -116,7 +103,7 @@ export default function RouteInspector(props: {
         <button
           onClick={handleCreate}
           disabled={saving || !canCreate}
-          className="rounded px-3 py-2 text-sm font-semibold"
+          className="rounded px-3 py-2 text-sm font-medium"
           style={{
             background: 'var(--to-cta)',
             color: 'var(--to-cta-ink)',
@@ -131,42 +118,79 @@ export default function RouteInspector(props: {
     </div>
   )
 
+  const legacyMsoText =
+    !isCreate && (route?.mso_name || route?.mso_id)
+      ? `${route?.mso_name ?? ''}${route?.mso_name && route?.mso_id ? ' · ' : ''}${route?.mso_id ?? ''}`
+      : null
+
   return (
-    <AdminOverlay open={open} mode={mode as any} title={title} subtitle={subtitle} onClose={onClose} footer={footer}>
-      <div className="space-y-4">
+    <AdminOverlay
+      open={open}
+      mode={mode as any}
+      title={isCreate ? 'Create Route' : 'Edit Route'}
+      subtitle={!isCreate && routeId ? `id: ${routeId}` : undefined}
+      onClose={onClose}
+      footer={footer}
+    >
+      <div className="space-y-6">
+        {/* Route Name */}
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-            Route Name
-          </div>
+          <div className="text-sm font-medium">Route Name</div>
           <input
             value={draftName}
-            onChange={(e) => (isCreate ? setDraftName(e.target.value) : handleEditName(e.target.value))}
-            placeholder="e.g. Downtown"
+            onChange={(e) => {
+              const v = e.target.value
+              setDraftName(v)
+              if (!isCreate) handleEdit('route_name', v)
+            }}
+            placeholder="e.g., Route 12"
             className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
-            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            style={{
+              borderColor: 'var(--to-border)',
+              background: 'var(--to-surface)',
+              color: 'var(--to-ink)',
+            }}
           />
         </div>
 
+        {/* PC Org selector (new anchor) */}
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-            MSO
-          </div>
-
+          <div className="text-sm font-medium">PC Org</div>
           <select
-            value={draftMsoId}
-            onChange={(e) => (isCreate ? setDraftMsoId(e.target.value) : handleEditMsoId(e.target.value))}
+            value={draftPcOrgId}
+            onChange={(e) => {
+              const v = e.target.value
+              setDraftPcOrgId(v)
+              if (!isCreate) handleEdit('pc_org_id', v || null)
+            }}
             className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
-            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
-            disabled={loadingMsos}
+            style={{
+              borderColor: 'var(--to-border)',
+              background: 'var(--to-surface)',
+              color: 'var(--to-ink)',
+            }}
+            disabled={loadingPcOrg}
           >
-            <option value="">{loadingMsos ? 'Loading…' : 'Select MSO'}</option>
-            {msoOptions.map((o) => (
+            <option value="">{loadingPcOrg ? 'Loading…' : 'Select PC Org (recommended)'}</option>
+            {pcOrgOptions.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.label}
               </option>
             ))}
           </select>
+
+          <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
+            PC Org will become required once existing routes are backfilled.
+          </div>
         </div>
+
+        {/* Legacy MSO (read-only, transition context) */}
+        {legacyMsoText ? (
+          <div className="rounded border px-3 py-2" style={{ borderColor: 'var(--to-border)' }}>
+            <div className="text-xs font-medium text-[var(--to-ink-muted)]">Legacy MSO (transition)</div>
+            <div className="mt-1 text-sm text-[var(--to-ink)]">{legacyMsoText}</div>
+          </div>
+        ) : null}
       </div>
     </AdminOverlay>
   )

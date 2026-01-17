@@ -1,0 +1,270 @@
+// apps/web/src/app/(prod)/division/DivisionTable.tsx
+
+'use client'
+
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createDivision, deleteDivision, fetchDivisions, updateDivision } from './division.api'
+import type { CreateDivisionInput, DivisionInspectorMode, DivisionRow, EditableField } from './division.types'
+import DivisionInspector from './DivisionInspector'
+
+const WRITE_DELAY_MS = 450
+
+function getId(row: DivisionRow): string {
+  const id = row.division_id ?? row.id
+  return id ? String(id) : ''
+}
+
+function getName(row: DivisionRow): string {
+  return String(row.division_name ?? row.name ?? '')
+}
+
+function getCode(row: DivisionRow): string {
+  return String(row.division_code ?? row.code ?? '')
+}
+
+function getActive(row: DivisionRow): boolean {
+  const v = row.is_active ?? row.active
+  return v === null || v === undefined ? true : Boolean(v)
+}
+
+export default function DivisionTable() {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const [rows, setRows] = useState<DivisionRow[]>([])
+  const [search, setSearch] = useState('')
+
+  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [inspectorMode, setInspectorMode] = useState<DivisionInspectorMode>('create')
+  const [selectedDivisionId, setSelectedDivisionId] = useState<string | null>(null)
+
+  const writeTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const writeSeq = useRef(new Map<string, number>())
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        setLoading(true)
+        setError(null)
+        const data = await fetchDivisions()
+        if (!alive) return
+        setRows(data)
+      } catch (err: any) {
+        console.error('Division load error', err)
+        if (!alive) return
+        setError(err?.message ?? 'Failed to load.')
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+
+    return () => {
+      alive = false
+      for (const t of writeTimers.current.values()) clearTimeout(t)
+      writeTimers.current.clear()
+    }
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return rows
+
+    return rows.filter((r) => {
+      const name = getName(r).toLowerCase()
+      const code = getCode(r).toLowerCase()
+      const id = getId(r).toLowerCase()
+      return name.includes(q) || code.includes(q) || id.includes(q)
+    })
+  }, [rows, search])
+
+  const selectedDivision = useMemo(() => {
+    if (!selectedDivisionId) return null
+    return rows.find((r) => getId(r) === selectedDivisionId) ?? null
+  }, [rows, selectedDivisionId])
+
+  function openCreate() {
+    setInspectorMode('create')
+    setSelectedDivisionId(null)
+    setInspectorOpen(true)
+  }
+
+  function openEdit(row: DivisionRow) {
+    const id = getId(row)
+    if (!id) return
+    setInspectorMode('edit')
+    setSelectedDivisionId(id)
+    setInspectorOpen(true)
+  }
+
+  function onCloseInspector() {
+    setInspectorOpen(false)
+  }
+
+  async function onCreate(payload: CreateDivisionInput) {
+    const created = await createDivision(payload)
+    setRows((prev) => [created, ...prev])
+  }
+
+  async function onDelete(divisionId: string) {
+    await deleteDivision(divisionId)
+    setRows((prev) => prev.filter((r) => getId(r) !== divisionId))
+  }
+
+  function updateField(divisionId: string, field: EditableField, value: any) {
+    // 1) optimistic update
+    setRows((prev) =>
+      prev.map((r) => {
+        if (getId(r) !== divisionId) return r
+
+        const next: DivisionRow = { ...(r as any) }
+
+        if (field === 'name') {
+          next.division_name = String(value ?? '')
+          next.name = String(value ?? '')
+        } else if (field === 'code') {
+          next.division_code = value === '' ? null : String(value ?? '')
+          next.code = value === '' ? null : String(value ?? '')
+        } else if (field === 'active') {
+          next.is_active = Boolean(value)
+          next.active = Boolean(value)
+        }
+
+        return next
+      })
+    )
+
+    // 2) debounce DB write
+    const key = `${divisionId}:${field}`
+    const prior = writeTimers.current.get(key)
+    if (prior) clearTimeout(prior)
+
+    const seq = (writeSeq.current.get(key) ?? 0) + 1
+    writeSeq.current.set(key, seq)
+
+    const timer = setTimeout(async () => {
+      try {
+        if ((writeSeq.current.get(key) ?? 0) !== seq) return
+
+        const patch: any = {}
+        if (field === 'name') patch.name = String(value ?? '')
+        if (field === 'code') patch.code = value === '' ? null : String(value ?? '')
+        if (field === 'active') patch.active = Boolean(value)
+
+        const updated = await updateDivision(divisionId, patch)
+        setRows((prev) => prev.map((r) => (getId(r) === divisionId ? updated : r)))
+      } catch (err: any) {
+        console.error('Debounced division update error', err)
+        setError(err?.message ?? 'Update failed.')
+      } finally {
+        writeTimers.current.delete(key)
+      }
+    }, WRITE_DELAY_MS)
+
+    writeTimers.current.set(key, timer)
+  }
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center justify-between gap-3 px-6 py-4">
+        <div className="flex items-center gap-3">
+          <input
+            placeholder="Search by name, code, id…"
+            className="w-96 rounded border px-2 py-1 text-sm bg-white"
+            style={{ borderColor: 'var(--to-border)' }}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <div className="text-sm text-[var(--to-ink-muted)]">
+            {loading ? 'Loading…' : `${filtered.length} rows`}
+          </div>
+        </div>
+
+        <button
+          onClick={openCreate}
+          className="rounded px-3 py-2 text-sm font-semibold"
+          style={{ background: 'var(--to-cta)', color: 'var(--to-cta-ink)' }}
+        >
+          + Add Division
+        </button>
+      </div>
+
+      {error && (
+        <div className="px-6 pb-3">
+          <div
+            className="rounded border px-3 py-2 text-sm"
+            style={{
+              borderColor: 'var(--to-border)',
+              background: 'var(--to-surface)',
+              color: 'var(--to-ink)',
+            }}
+          >
+            <span className="font-semibold">Error:</span> {error}
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
+        <div
+          className="rounded border overflow-hidden"
+          style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}
+        >
+          <table className="w-full text-sm">
+            <thead
+              className="border-b"
+              style={{ borderColor: 'var(--to-border)', background: 'var(--to-header-bg)' }}
+            >
+              <tr className="text-left">
+                <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">Code</th>
+                <th className="px-3 py-2">Active</th>
+                <th className="px-3 py-2">ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => {
+                const id = getId(r)
+                return (
+                  <tr
+                    key={id || JSON.stringify(r)}
+                    className="border-b hover:bg-black/5 cursor-pointer"
+                    style={{ borderColor: 'var(--to-border)' }}
+                    onClick={() => openEdit(r)}
+                    title="Click to edit"
+                  >
+                    <td className="px-3 py-2">
+                      {getName(r) || <span className="text-[var(--to-ink-muted)]">—</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      {getCode(r) || <span className="text-[var(--to-ink-muted)]">—</span>}
+                    </td>
+                    <td className="px-3 py-2">{getActive(r) ? 'Yes' : 'No'}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-[var(--to-ink-muted)]">{id || '—'}</td>
+                  </tr>
+                )
+              })}
+
+              {!loading && filtered.length === 0 && (
+                <tr>
+                  <td className="px-3 py-6 text-[var(--to-ink-muted)]" colSpan={4}>
+                    No rows match your search.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <DivisionInspector
+        open={inspectorOpen}
+        mode={inspectorMode}
+        division={inspectorMode === 'edit' ? selectedDivision : null}
+        onChange={updateField}
+        onCreate={onCreate}
+        onDelete={onDelete}
+        onClose={onCloseInspector}
+      />
+    </div>
+  )
+}

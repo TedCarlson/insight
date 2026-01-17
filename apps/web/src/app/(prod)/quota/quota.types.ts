@@ -2,34 +2,28 @@
 
 export type QuotaInspectorMode = 'create' | 'edit'
 
+/**
+ * READ shape (view): public.quota_admin_v
+ * Columns: quota_id, route_id, route_name, q_units, q_hours
+ */
 export type QuotaRow = {
-  quota_id?: string | null
-  id?: string | null
-
-  quota_name?: string | null
-  name?: string | null
-
-  quota_code?: string | null
-  code?: string | null
-
-  quota_value?: number | string | null
-  value?: number | string | null
-  target?: number | string | null
-
-  is_active?: boolean | null
-  active?: boolean | null
-
-  created_at?: string | null
-  updated_at?: string | null
-
-  [key: string]: any
+  quota_id: string
+  route_id: string
+  route_name: string | null
+  q_units: number | null
+  q_hours: number | null
 }
 
+/**
+ * WRITE shape (base): public.quota
+ * Required: quota_id, route_id
+ * q_units, q_hours can be null or numbers (depending on DB constraints)
+ */
 export type CreateQuotaInput = {
-  name: string
-  code?: string | null
-  quota_value?: number | null
-  active?: boolean
+  quota_id?: string
+  route_id: string
+  q_units: number | null
+  q_hours: number | null
 }
 
-export type EditableField = 'name' | 'code' | 'quota_value' | 'active'
+export type EditableField = 'route_id' | 'q_units' | 'q_hours'

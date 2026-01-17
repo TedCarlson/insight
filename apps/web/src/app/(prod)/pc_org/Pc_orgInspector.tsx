@@ -4,29 +4,18 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import AdminOverlay from '../_shared/AdminOverlay'
+import {
+  fetchDivisionOptions,
+  fetchMsoOptions,
+  fetchPcOptions,
+  fetchRegionOptions,
+  type DropdownOption,
+} from '../_shared/dropdowns'
 import type { CreatePcOrgInput, EditableField, PcOrgInspectorMode, PcOrgRow } from './pc_org.types'
 
 function getId(row: PcOrgRow | null | undefined): string | null {
-  const id = row?.pc_org_id ?? row?.id
+  const id = row?.pc_org_id
   return id ? String(id) : null
-}
-
-function getName(row: PcOrgRow | null | undefined): string {
-  return String(row?.pc_org_name ?? row?.name ?? '')
-}
-
-function getCode(row: PcOrgRow | null | undefined): string {
-  return String(row?.pc_org_code ?? row?.code ?? '')
-}
-
-function getPcNumber(row: PcOrgRow | null | undefined): string {
-  const v = row?.pc_number ?? row?.pc_no ?? row?.number
-  return v === null || v === undefined ? '' : String(v)
-}
-
-function getActive(row: PcOrgRow | null | undefined): boolean {
-  const v = row?.is_active ?? row?.active
-  return v === null || v === undefined ? true : Boolean(v)
 }
 
 export default function Pc_orgInspector(props: {
@@ -35,57 +24,94 @@ export default function Pc_orgInspector(props: {
   pcOrg: PcOrgRow | null
   onChange: (pcOrgId: string, field: EditableField, value: any) => void
   onCreate: (payload: CreatePcOrgInput) => Promise<void>
-  onDelete: (pcOrgId: string) => Promise<void>
   onClose: () => void
 }) {
-  const { open, mode, pcOrg, onChange, onCreate, onDelete, onClose } = props
+  const { open, mode, pcOrg, onChange, onCreate, onClose } = props
   const isCreate = mode === 'create'
 
   const [draftName, setDraftName] = useState('')
-  const [draftCode, setDraftCode] = useState('')
-  const [draftPcNumber, setDraftPcNumber] = useState('')
-  const [draftActive, setDraftActive] = useState(true)
+  const [draftPcId, setDraftPcId] = useState('')
+  const [draftDivisionId, setDraftDivisionId] = useState('')
+  const [draftRegionId, setDraftRegionId] = useState('')
+  const [draftMsoId, setDraftMsoId] = useState('')
+
+  const [pcOptions, setPcOptions] = useState<DropdownOption[]>([])
+  const [divisionOptions, setDivisionOptions] = useState<DropdownOption[]>([])
+  const [regionOptions, setRegionOptions] = useState<DropdownOption[]>([])
+  const [msoOptions, setMsoOptions] = useState<DropdownOption[]>([])
+  const [loadingOpts, setLoadingOpts] = useState(false)
 
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
+  const pcOrgId = useMemo(() => getId(pcOrg), [pcOrg])
+
   useEffect(() => {
     if (!open) return
+
     setSubmitError(null)
     setSaving(false)
+
     if (isCreate) {
       setDraftName('')
-      setDraftCode('')
-      setDraftPcNumber('')
-      setDraftActive(true)
+      setDraftPcId('')
+      setDraftDivisionId('')
+      setDraftRegionId('')
+      setDraftMsoId('')
+    } else {
+      setDraftName(String(pcOrg?.pc_org_name ?? ''))
+      setDraftPcId(String(pcOrg?.pc_id ?? ''))
+      setDraftDivisionId(String(pcOrg?.division_id ?? ''))
+      setDraftRegionId(String(pcOrg?.region_id ?? ''))
+      setDraftMsoId(String(pcOrg?.mso_id ?? ''))
     }
-  }, [open, isCreate])
 
-  const pcOrgId = useMemo(() => getId(pcOrg), [pcOrg])
+    ;(async () => {
+      try {
+        setLoadingOpts(true)
+        const [pcs, divs, regs, msos] = await Promise.all([
+          fetchPcOptions(),
+          fetchDivisionOptions(),
+          fetchRegionOptions(),
+          fetchMsoOptions(),
+        ])
+        setPcOptions(pcs)
+        setDivisionOptions(divs)
+        setRegionOptions(regs)
+        setMsoOptions(msos)
+      } catch (e) {
+        console.error('Failed to load PC Org dropdown options', e)
+      } finally {
+        setLoadingOpts(false)
+      }
+    })()
+  }, [open, isCreate, pcOrg])
+
   const title = isCreate ? 'Create PC Org' : 'Edit PC Org'
   const subtitle = !isCreate && pcOrgId ? `id: ${pcOrgId}` : undefined
 
-  const nameValue = isCreate ? draftName : getName(pcOrg)
-  const codeValue = isCreate ? draftCode : getCode(pcOrg)
-  const pcNumberValue = isCreate ? draftPcNumber : getPcNumber(pcOrg)
-  const activeValue = isCreate ? draftActive : getActive(pcOrg)
-
-  const canSaveCreate = useMemo(() => draftName.trim().length > 0, [draftName])
+  const canCreate =
+    draftName.trim().length > 0 &&
+    draftPcId.trim().length > 0 &&
+    draftDivisionId.trim().length > 0 &&
+    draftRegionId.trim().length > 0 &&
+    draftMsoId.trim().length > 0
 
   async function handleCreate() {
     setSubmitError(null)
-    if (!canSaveCreate) {
-      setSubmitError('Name is required.')
+    if (!canCreate) {
+      setSubmitError('PC Org name, PC, Division, Region, and MSO are required.')
       return
     }
 
     try {
       setSaving(true)
       await onCreate({
-        name: draftName.trim(),
-        code: draftCode.trim() ? draftCode.trim() : null,
-        pc_number: draftPcNumber.trim() ? draftPcNumber.trim() : null,
-        active: draftActive,
+        pc_org_name: draftName.trim(),
+        pc_id: draftPcId.trim(),
+        division_id: draftDivisionId.trim(),
+        region_id: draftRegionId.trim(),
+        mso_id: draftMsoId.trim(),
       })
       onClose()
     } catch (err: any) {
@@ -96,150 +122,143 @@ export default function Pc_orgInspector(props: {
     }
   }
 
-  async function handleDelete() {
+  function handleEdit(field: EditableField, next: string) {
     if (!pcOrgId) return
-    const ok = window.confirm('Delete this PC Org? This cannot be undone.')
-    if (!ok) return
-
-    try {
-      setSaving(true)
-      setSubmitError(null)
-      await onDelete(pcOrgId)
-      onClose()
-    } catch (err: any) {
-      console.error('PC Org delete error', err)
-      setSubmitError(err?.message ?? 'Delete failed.')
-    } finally {
-      setSaving(false)
-    }
+    onChange(pcOrgId, field, next)
   }
 
+  const footer = (
+    <div className="flex items-center justify-between gap-3 w-full">
+      <div className="min-h-[20px] text-sm" style={{ color: 'var(--to-danger)' }}>
+        {submitError ?? ''}
+      </div>
+
+      {isCreate ? (
+        <button
+          onClick={handleCreate}
+          disabled={saving || !canCreate}
+          className="rounded px-3 py-2 text-sm font-semibold"
+          style={{
+            background: 'var(--to-cta)',
+            color: 'var(--to-cta-ink)',
+            opacity: saving || !canCreate ? 0.6 : 1,
+          }}
+        >
+          {saving ? 'Saving…' : 'Create'}
+        </button>
+      ) : (
+        <div className="text-sm text-[var(--to-ink-muted)]">Delete disabled.</div>
+      )}
+    </div>
+  )
+
   return (
-    <AdminOverlay
-      open={open}
-      mode={isCreate ? 'create' : 'edit'}
-      title={title}
-      subtitle={subtitle}
-      onClose={onClose}
-      widthClassName="w-[900px] max-w-[94vw]"
-      footer={
-        <div className="flex w-full items-center justify-between gap-3">
-          <div className="min-h-[20px] text-sm text-[var(--to-ink-muted)]">
-            {submitError ? <span className="text-[var(--to-danger)]">{submitError}</span> : null}
+    <AdminOverlay open={open} mode={mode as any} title={title} subtitle={subtitle} onClose={onClose} footer={footer}>
+      <div className="space-y-4">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+            PC Org Name
           </div>
-
-          <div className="flex items-center gap-2">
-            {!isCreate && (
-              <button
-                onClick={handleDelete}
-                disabled={saving}
-                className="rounded border px-3 py-2 text-sm"
-                style={{ borderColor: 'var(--to-border)', color: 'var(--to-danger)', opacity: saving ? 0.7 : 1 }}
-              >
-                Delete
-              </button>
-            )}
-
-            <button
-              onClick={onClose}
-              disabled={saving}
-              className="rounded border px-3 py-2 text-sm"
-              style={{ borderColor: 'var(--to-border)', color: 'var(--to-ink)', opacity: saving ? 0.7 : 1 }}
-            >
-              Close
-            </button>
-
-            {isCreate && (
-              <button
-                onClick={handleCreate}
-                disabled={saving || !canSaveCreate}
-                className="rounded px-3 py-2 text-sm font-semibold"
-                style={{
-                  background: 'var(--to-cta)',
-                  color: 'var(--to-cta-ink)',
-                  opacity: saving || !canSaveCreate ? 0.7 : 1,
-                }}
-              >
-                {saving ? 'Creating…' : 'Create'}
-              </button>
-            )}
-          </div>
-        </div>
-      }
-    >
-      <div className="p-4">
-        <div className="grid grid-cols-12 gap-3">
-          <div className="col-span-12">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Name</label>
-            <input
-              className="mt-1 w-full rounded border px-3 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
-              value={nameValue}
-              onChange={(e) => {
-                const v = e.target.value
-                if (isCreate) setDraftName(v)
-                else if (pcOrgId) onChange(pcOrgId, 'name', v)
-              }}
-              placeholder="PC Org name"
-            />
-          </div>
-
-          <div className="col-span-12 sm:col-span-6">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Code</label>
-            <input
-              className="mt-1 w-full rounded border px-3 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
-              value={codeValue}
-              onChange={(e) => {
-                const v = e.target.value
-                if (isCreate) setDraftCode(v)
-                else if (pcOrgId) onChange(pcOrgId, 'code', v)
-              }}
-              placeholder="Optional"
-            />
-          </div>
-
-          <div className="col-span-12 sm:col-span-6">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">PC Number</label>
-            <input
-              className="mt-1 w-full rounded border px-3 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
-              value={pcNumberValue}
-              onChange={(e) => {
-                const v = e.target.value
-                if (isCreate) setDraftPcNumber(v)
-                else if (pcOrgId) onChange(pcOrgId, 'pc_number', v)
-              }}
-              placeholder="Optional"
-            />
-          </div>
-
-          <div className="col-span-12">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Active</label>
-            <div className="mt-2 flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={activeValue}
-                onChange={(e) => {
-                  const v = e.target.checked
-                  if (isCreate) setDraftActive(v)
-                  else if (pcOrgId) onChange(pcOrgId, 'active', v)
-                }}
-              />
-              <span className="text-sm text-[var(--to-ink)]">{activeValue ? 'Active' : 'Inactive'}</span>
-            </div>
-          </div>
+          <input
+            value={draftName}
+            onChange={(e) => {
+              const v = e.target.value
+              setDraftName(v)
+              if (!isCreate) handleEdit('pc_org_name', v)
+            }}
+            placeholder="e.g. East Ops"
+            className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+          />
         </div>
 
-        {!isCreate && (
-          <div
-            className="mt-4 rounded border p-3 text-xs text-[var(--to-ink-muted)]"
-            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">PC</div>
+          <select
+            value={draftPcId}
+            onChange={(e) => {
+              const v = e.target.value
+              setDraftPcId(v)
+              if (!isCreate) handleEdit('pc_id', v)
+            }}
+            className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            disabled={loadingOpts}
           >
-            <div className="font-semibold uppercase tracking-wide mb-1">Edit behavior</div>
-            <div>Changes write optimistically and are committed with a small debounce.</div>
-          </div>
-        )}
+            <option value="">{loadingOpts ? 'Loading…' : 'Select PC'}</option>
+            {pcOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Division</div>
+          <select
+            value={draftDivisionId}
+            onChange={(e) => {
+              const v = e.target.value
+              setDraftDivisionId(v)
+              if (!isCreate) handleEdit('division_id', v)
+            }}
+            className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            disabled={loadingOpts}
+          >
+            <option value="">{loadingOpts ? 'Loading…' : 'Select Division'}</option>
+            {divisionOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.code ? `${o.label} (${o.code})` : o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Region</div>
+          <select
+            value={draftRegionId}
+            onChange={(e) => {
+              const v = e.target.value
+              setDraftRegionId(v)
+              if (!isCreate) handleEdit('region_id', v)
+            }}
+            className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            disabled={loadingOpts}
+          >
+            <option value="">{loadingOpts ? 'Loading…' : 'Select Region'}</option>
+            {regionOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.code ? `${o.label} (${o.code})` : o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">MSO</div>
+          <select
+            value={draftMsoId}
+            onChange={(e) => {
+              const v = e.target.value
+              setDraftMsoId(v)
+              if (!isCreate) handleEdit('mso_id', v)
+            }}
+            className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            disabled={loadingOpts}
+          >
+            <option value="">{loadingOpts ? 'Loading…' : 'Select MSO'}</option>
+            {msoOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
     </AdminOverlay>
   )

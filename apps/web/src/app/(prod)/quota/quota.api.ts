@@ -5,130 +5,100 @@ import type { CreateQuotaInput, QuotaRow } from './quota.types'
 
 const supabase = createClient()
 
-function pickId(row: any): string {
-  const id = row?.quota_id ?? row?.id
-  if (!id) throw new Error('Could not determine quota id from insert/update result.')
-  return String(id)
-}
-
-async function tryInsertQuota(base: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    {
-      quota_name: base.name,
-      quota_code: base.code ?? null,
-      quota_value: base.quota_value ?? null,
-      is_active: base.active ?? true,
-    },
-    {
-      name: base.name,
-      code: base.code ?? null,
-      value: base.quota_value ?? null,
-      active: base.active ?? true,
-    },
-    {
-      quota_name: base.name,
-      code: base.code ?? null,
-      target: base.quota_value ?? null,
-      active: base.active ?? true,
-    },
-  ]
-
-  let lastErr: any = null
-  for (const payload of candidates) {
-    const { data, error } = await supabase.from('quota').insert(payload).select('*').single()
-    if (!error) return data
-    lastErr = error
-  }
-
-  console.error('tryInsertQuota failed', lastErr)
-  throw lastErr
-}
-
-async function tryUpdateQuota(quotaId: string, patch: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    {
-      ...(patch.name !== undefined ? { quota_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { quota_code: patch.code } : {}),
-      ...(patch.quota_value !== undefined ? { quota_value: patch.quota_value } : {}),
-      ...(patch.active !== undefined ? { is_active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.quota_value !== undefined ? { value: patch.quota_value } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { quota_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.quota_value !== undefined ? { target: patch.quota_value } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-  ]
-
-  let lastErr: any = null
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('quota').update(payload).eq('quota_id', quotaId)
-    if (!error) return
-    lastErr = error
-  }
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('quota').update(payload).eq('id', quotaId)
-    if (!error) return
-    lastErr = error
-  }
-
-  console.error('tryUpdateQuota failed', lastErr)
-  throw lastErr
+function newUuid(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `quota_${Date.now()}_${Math.random().toString(16).slice(2)}`
 }
 
 async function fetchFromViewById(quotaId: string): Promise<QuotaRow> {
-  let { data, error } = await supabase.from('quota_admin_v').select('*').eq('quota_id', quotaId).single()
-  if (!error && data) return data as QuotaRow
-
-  const res2 = await supabase.from('quota_admin_v').select('*').eq('id', quotaId).single()
-  data = res2.data
-  error = res2.error
+  const { data, error } = await supabase
+    .from('quota_admin_v')
+    .select('quota_id, route_id, route_name, q_units, q_hours')
+    .eq('quota_id', quotaId)
+    .single()
 
   if (error) {
-    console.error('fetchFromViewById error', error)
-    throw error
+    console.error('fetchFromViewById quota error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Failed to fetch quota.')
   }
 
-  return (data ?? {}) as QuotaRow
+  return data as QuotaRow
 }
 
-/* READ */
+/** READ: view */
 export async function fetchQuotas(): Promise<QuotaRow[]> {
-  const { data, error } = await supabase.from('quota_admin_v').select('*').limit(500)
+  const { data, error } = await supabase
+    .from('quota_admin_v')
+    .select('quota_id, route_id, route_name, q_units, q_hours')
+    .order('route_name')
+
   if (error) {
-    console.error('fetchQuotas error', error)
-    throw error
+    console.error('fetchQuotas error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Failed to load quotas.')
   }
+
   return (data ?? []) as QuotaRow[]
 }
 
-/* WRITE */
-export async function createQuota(payload: CreateQuotaInput): Promise<QuotaRow> {
-  const inserted = await tryInsertQuota(payload)
-  const id = pickId(inserted)
-  return await fetchFromViewById(id)
-}
+/** CREATE: base table, then re-read view */
+export async function createQuota(input: CreateQuotaInput): Promise<QuotaRow> {
+  const quota_id = input.quota_id?.trim() || newUuid()
+  const route_id = input.route_id.trim()
 
-export async function updateQuota(quotaId: string, patch: Partial<CreateQuotaInput>): Promise<QuotaRow> {
-  await tryUpdateQuota(quotaId, patch)
-  return await fetchFromViewById(quotaId)
-}
+  if (!route_id) throw new Error('Route is required.')
 
-export async function deleteQuota(quotaId: string): Promise<void> {
-  let { error } = await supabase.from('quota').delete().eq('quota_id', quotaId)
-  if (!error) return
+  const { error } = await supabase.from('quota').insert({
+    quota_id,
+    route_id,
+    q_units: input.q_units,
+    q_hours: input.q_hours,
+  })
 
-  const res2 = await supabase.from('quota').delete().eq('id', quotaId)
-  if (res2.error) {
-    console.error('deleteQuota error', res2.error)
-    throw res2.error
+  if (error) {
+    console.error('createQuota insert error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Create quota failed.')
   }
+
+  return await fetchFromViewById(quota_id)
+}
+
+/** UPDATE: base table, then re-read view */
+export async function updateQuota(
+  quotaId: string,
+  patch: Partial<Pick<QuotaRow, 'route_id' | 'q_units' | 'q_hours'>>
+): Promise<QuotaRow> {
+  const payload: Record<string, any> = {}
+
+  if (patch.route_id !== undefined) payload.route_id = String(patch.route_id ?? '').trim()
+  if (patch.q_units !== undefined) payload.q_units = patch.q_units
+  if (patch.q_hours !== undefined) payload.q_hours = patch.q_hours
+
+  const { error } = await supabase.from('quota').update(payload).eq('quota_id', quotaId)
+
+  if (error) {
+    console.error('updateQuota error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Update quota failed.')
+  }
+
+  return await fetchFromViewById(quotaId)
 }

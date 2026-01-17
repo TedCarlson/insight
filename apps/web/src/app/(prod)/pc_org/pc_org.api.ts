@@ -5,130 +5,117 @@ import type { CreatePcOrgInput, PcOrgRow } from './pc_org.types'
 
 const supabase = createClient()
 
-function pickId(row: any): string {
-  const id = row?.pc_org_id ?? row?.id
-  if (!id) throw new Error('Could not determine pc_org id from insert/update result.')
-  return String(id)
-}
-
-async function tryInsertPcOrg(base: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    {
-      pc_org_name: base.name,
-      pc_org_code: base.code ?? null,
-      pc_number: base.pc_number ?? null,
-      is_active: base.active ?? true,
-    },
-    {
-      name: base.name,
-      code: base.code ?? null,
-      number: base.pc_number ?? null,
-      active: base.active ?? true,
-    },
-    {
-      pc_org_name: base.name,
-      code: base.code ?? null,
-      pc_no: base.pc_number ?? null,
-      active: base.active ?? true,
-    },
-  ]
-
-  let lastErr: any = null
-  for (const payload of candidates) {
-    const { data, error } = await supabase.from('pc_org').insert(payload).select('*').single()
-    if (!error) return data
-    lastErr = error
-  }
-
-  console.error('tryInsertPcOrg failed', lastErr)
-  throw lastErr
-}
-
-async function tryUpdatePcOrg(pcOrgId: string, patch: Record<string, any>) {
-  const candidates: Record<string, any>[] = [
-    {
-      ...(patch.name !== undefined ? { pc_org_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { pc_org_code: patch.code } : {}),
-      ...(patch.pc_number !== undefined ? { pc_number: patch.pc_number } : {}),
-      ...(patch.active !== undefined ? { is_active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.pc_number !== undefined ? { number: patch.pc_number } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-    {
-      ...(patch.name !== undefined ? { pc_org_name: patch.name } : {}),
-      ...(patch.code !== undefined ? { code: patch.code } : {}),
-      ...(patch.pc_number !== undefined ? { pc_no: patch.pc_number } : {}),
-      ...(patch.active !== undefined ? { active: patch.active } : {}),
-    },
-  ]
-
-  let lastErr: any = null
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('pc_org').update(payload).eq('pc_org_id', pcOrgId)
-    if (!error) return
-    lastErr = error
-  }
-
-  for (const payload of candidates) {
-    const { error } = await supabase.from('pc_org').update(payload).eq('id', pcOrgId)
-    if (!error) return
-    lastErr = error
-  }
-
-  console.error('tryUpdatePcOrg failed', lastErr)
-  throw lastErr
+function newUuid(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `pcorg_${Date.now()}_${Math.random().toString(16).slice(2)}`
 }
 
 async function fetchFromViewById(pcOrgId: string): Promise<PcOrgRow> {
-  let { data, error } = await supabase.from('pc_org_admin_v').select('*').eq('pc_org_id', pcOrgId).single()
-  if (!error && data) return data as PcOrgRow
-
-  const res2 = await supabase.from('pc_org_admin_v').select('*').eq('id', pcOrgId).single()
-  data = res2.data
-  error = res2.error
+  const { data, error } = await supabase
+    .from('pc_org_admin_v')
+    .select(
+      'pc_org_id, pc_org_name, pc_id, pc_number, division_id, division_name, region_id, region_name, mso_id, mso_name'
+    )
+    .eq('pc_org_id', pcOrgId)
+    .single()
 
   if (error) {
-    console.error('fetchFromViewById error', error)
-    throw error
+    console.error('fetchFromViewById pc_org error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Failed to fetch PC Org.')
   }
 
-  return (data ?? {}) as PcOrgRow
+  return data as PcOrgRow
 }
 
-/* READ */
+/** READ: view */
 export async function fetchPcOrgs(): Promise<PcOrgRow[]> {
-  const { data, error } = await supabase.from('pc_org_admin_v').select('*').limit(500)
+  const { data, error } = await supabase
+    .from('pc_org_admin_v')
+    .select(
+      'pc_org_id, pc_org_name, pc_id, pc_number, division_id, division_name, region_id, region_name, mso_id, mso_name'
+    )
+    .order('pc_org_name')
+
   if (error) {
-    console.error('fetchPcOrgs error', error)
-    throw error
+    console.error('fetchPcOrgs error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Failed to load PC Orgs.')
   }
+
   return (data ?? []) as PcOrgRow[]
 }
 
-/* WRITE */
-export async function createPcOrg(payload: CreatePcOrgInput): Promise<PcOrgRow> {
-  const inserted = await tryInsertPcOrg(payload)
-  const id = pickId(inserted)
-  return await fetchFromViewById(id)
-}
+/** CREATE: base table, then re-read view */
+export async function createPcOrg(input: CreatePcOrgInput): Promise<PcOrgRow> {
+  const pc_org_id = input.pc_org_id?.trim() || newUuid()
+  const pc_org_name = input.pc_org_name.trim()
 
-export async function updatePcOrg(pcOrgId: string, patch: Partial<CreatePcOrgInput>): Promise<PcOrgRow> {
-  await tryUpdatePcOrg(pcOrgId, patch)
-  return await fetchFromViewById(pcOrgId)
-}
+  const pc_id = input.pc_id.trim()
+  const division_id = input.division_id.trim()
+  const region_id = input.region_id.trim()
+  const mso_id = input.mso_id.trim()
 
-export async function deletePcOrg(pcOrgId: string): Promise<void> {
-  let { error } = await supabase.from('pc_org').delete().eq('pc_org_id', pcOrgId)
-  if (!error) return
+  if (!pc_org_name) throw new Error('PC Org name is required.')
+  if (!pc_id) throw new Error('PC is required.')
+  if (!division_id) throw new Error('Division is required.')
+  if (!region_id) throw new Error('Region is required.')
+  if (!mso_id) throw new Error('MSO is required.')
 
-  const res2 = await supabase.from('pc_org').delete().eq('id', pcOrgId)
-  if (res2.error) {
-    console.error('deletePcOrg error', res2.error)
-    throw res2.error
+  const { error } = await supabase.from('pc_org').insert({
+    pc_org_id,
+    pc_org_name,
+    pc_id,
+    division_id,
+    region_id,
+    mso_id,
+  })
+
+  if (error) {
+    console.error('createPcOrg insert error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Create PC Org failed.')
   }
+
+  return await fetchFromViewById(pc_org_id)
+}
+
+/** UPDATE: base table, then re-read view */
+export async function updatePcOrg(
+  pcOrgId: string,
+  patch: Partial<Pick<PcOrgRow, 'pc_org_name' | 'pc_id' | 'division_id' | 'region_id' | 'mso_id'>>
+): Promise<PcOrgRow> {
+  const payload: Record<string, any> = {}
+
+  if (patch.pc_org_name !== undefined) payload.pc_org_name = String(patch.pc_org_name ?? '').trim()
+  if (patch.pc_id !== undefined) payload.pc_id = String(patch.pc_id ?? '').trim()
+  if (patch.division_id !== undefined) payload.division_id = String(patch.division_id ?? '').trim()
+  if (patch.region_id !== undefined) payload.region_id = String(patch.region_id ?? '').trim()
+  if (patch.mso_id !== undefined) payload.mso_id = String(patch.mso_id ?? '').trim()
+
+  const { error } = await supabase.from('pc_org').update(payload).eq('pc_org_id', pcOrgId)
+
+  if (error) {
+    console.error('updatePcOrg error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Update PC Org failed.')
+  }
+
+  return await fetchFromViewById(pcOrgId)
 }

@@ -2,34 +2,44 @@
 
 export type PcOrgInspectorMode = 'create' | 'edit'
 
+/**
+ * READ shape (view): public.pc_org_admin_v
+ * Columns:
+ * - pc_org_id, pc_org_name
+ * - pc_id, pc_number
+ * - division_id, division_name
+ * - region_id, region_name
+ * - mso_id, mso_name
+ */
 export type PcOrgRow = {
-  pc_org_id?: string | null
-  id?: string | null
+  pc_org_id: string
+  pc_org_name: string
 
-  pc_org_name?: string | null
-  name?: string | null
+  pc_id: string
+  pc_number: number | null
 
-  pc_org_code?: string | null
-  code?: string | null
+  division_id: string
+  division_name: string | null
 
-  pc_number?: string | number | null
-  pc_no?: string | number | null
-  number?: string | number | null
+  region_id: string
+  region_name: string | null
 
-  is_active?: boolean | null
-  active?: boolean | null
-
-  created_at?: string | null
-  updated_at?: string | null
-
-  [key: string]: any
+  mso_id: string
+  mso_name: string | null
 }
 
+/**
+ * WRITE shape (base): public.pc_org
+ * Required:
+ * - pc_org_id, pc_org_name, pc_id, division_id, region_id, mso_id
+ */
 export type CreatePcOrgInput = {
-  name: string
-  code?: string | null
-  pc_number?: string | null
-  active?: boolean
+  pc_org_id?: string
+  pc_org_name: string
+  pc_id: string
+  division_id: string
+  region_id: string
+  mso_id: string
 }
 
-export type EditableField = 'name' | 'code' | 'pc_number' | 'active'
+export type EditableField = 'pc_org_name' | 'pc_id' | 'division_id' | 'region_id' | 'mso_id'

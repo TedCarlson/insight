@@ -3,52 +3,36 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createQuota, deleteQuota, fetchQuotas, updateQuota } from './quota.api'
+import { createQuota, fetchQuotas, updateQuota } from './quota.api'
 import type { CreateQuotaInput, EditableField, QuotaInspectorMode, QuotaRow } from './quota.types'
 import QuotaInspector from './QuotaInspector'
 
 const WRITE_DELAY_MS = 450
 
 function getId(row: QuotaRow): string {
-  const id = row.quota_id ?? row.id
-  return id ? String(id) : ''
+  return String(row.quota_id)
 }
-
-function getName(row: QuotaRow): string {
-  return String(row.quota_name ?? row.name ?? '')
+function getRoute(row: QuotaRow): string {
+  return String(row.route_name ?? '')
 }
-
-function getCode(row: QuotaRow): string {
-  return String(row.quota_code ?? row.code ?? '')
-}
-
-function getQuotaValue(row: QuotaRow): string {
-  const v = row.quota_value ?? row.value ?? row.target
+function getUnits(row: QuotaRow): string {
+  const v = row.q_units
   return v === null || v === undefined ? '' : String(v)
 }
-
-function getActive(row: QuotaRow): boolean {
-  const v = row.is_active ?? row.active
-  return v === null || v === undefined ? true : Boolean(v)
-}
-
-function parseNumberOrNull(s: string): number | null {
-  const t = s.trim()
-  if (!t) return null
-  const n = Number(t)
-  return Number.isFinite(n) ? n : null
+function getHours(row: QuotaRow): string {
+  const v = row.q_hours
+  return v === null || v === undefined ? '' : String(v)
 }
 
 export default function QuotaTable() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
   const [rows, setRows] = useState<QuotaRow[]>([])
   const [search, setSearch] = useState('')
 
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [inspectorMode, setInspectorMode] = useState<QuotaInspectorMode>('create')
-  const [selectedQuotaId, setSelectedQuotaId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const writeTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const writeSeq = useRef(new Map<string, number>())
@@ -82,31 +66,29 @@ export default function QuotaTable() {
     const q = search.trim().toLowerCase()
     if (!q) return rows
     return rows.filter((r) => {
-      const hay = `${getName(r)} ${getCode(r)} ${getQuotaValue(r)} ${getId(r)}`.toLowerCase()
+      const hay = `${getRoute(r)} ${getUnits(r)} ${getHours(r)} ${getId(r)}`.toLowerCase()
       return hay.includes(q)
     })
   }, [rows, search])
 
-  const selectedQuota = useMemo(() => {
-    if (!selectedQuotaId) return null
-    return rows.find((r) => getId(r) === selectedQuotaId) ?? null
-  }, [rows, selectedQuotaId])
+  const selected = useMemo(() => {
+    if (!selectedId) return null
+    return rows.find((r) => getId(r) === selectedId) ?? null
+  }, [rows, selectedId])
 
   function openCreate() {
     setInspectorMode('create')
-    setSelectedQuotaId(null)
+    setSelectedId(null)
     setInspectorOpen(true)
   }
 
   function openEdit(row: QuotaRow) {
-    const id = getId(row)
-    if (!id) return
     setInspectorMode('edit')
-    setSelectedQuotaId(id)
+    setSelectedId(getId(row))
     setInspectorOpen(true)
   }
 
-  function onCloseInspector() {
+  function closeInspector() {
     setInspectorOpen(false)
   }
 
@@ -115,41 +97,19 @@ export default function QuotaTable() {
     setRows((prev) => [created, ...prev])
   }
 
-  async function onDelete(quotaId: string) {
-    await deleteQuota(quotaId)
-    setRows((prev) => prev.filter((r) => getId(r) !== quotaId))
-  }
-
   function updateField(quotaId: string, field: EditableField, value: any) {
-    // 1) optimistic
+    // optimistic
     setRows((prev) =>
       prev.map((r) => {
         if (getId(r) !== quotaId) return r
         const next: QuotaRow = { ...(r as any) }
-
-        if (field === 'name') {
-          next.quota_name = String(value ?? '')
-          next.name = String(value ?? '')
-        } else if (field === 'code') {
-          const v = value === '' ? null : String(value ?? '')
-          next.quota_code = v
-          next.code = v
-        } else if (field === 'quota_value') {
-          // keep as string in UI row until re-read
-          const v = String(value ?? '')
-          next.quota_value = v
-          next.value = v
-          next.target = v
-        } else if (field === 'active') {
-          next.is_active = Boolean(value)
-          next.active = Boolean(value)
-        }
-
+        if (field === 'route_id') next.route_id = String(value ?? '')
+        if (field === 'q_units') next.q_units = value as number | null
+        if (field === 'q_hours') next.q_hours = value as number | null
         return next
       })
     )
 
-    // 2) debounce write
     const key = `${quotaId}:${field}`
     const prior = writeTimers.current.get(key)
     if (prior) clearTimeout(prior)
@@ -158,19 +118,18 @@ export default function QuotaTable() {
     writeSeq.current.set(key, seq)
 
     const timer = setTimeout(async () => {
+      if ((writeSeq.current.get(key) ?? 0) !== seq) return
       try {
-        if ((writeSeq.current.get(key) ?? 0) !== seq) return
-
+        setError(null)
         const patch: any = {}
-        if (field === 'name') patch.name = String(value ?? '')
-        if (field === 'code') patch.code = value === '' ? null : String(value ?? '')
-        if (field === 'quota_value') patch.quota_value = parseNumberOrNull(String(value ?? ''))
-        if (field === 'active') patch.active = Boolean(value)
+        if (field === 'route_id') patch.route_id = String(value ?? '').trim()
+        if (field === 'q_units') patch.q_units = value
+        if (field === 'q_hours') patch.q_hours = value
 
         const updated = await updateQuota(quotaId, patch)
         setRows((prev) => prev.map((r) => (getId(r) === quotaId ? updated : r)))
       } catch (err: any) {
-        console.error('Debounced quota update error', err)
+        console.error('Quota update error', err)
         setError(err?.message ?? 'Update failed.')
       } finally {
         writeTimers.current.delete(key)
@@ -183,15 +142,20 @@ export default function QuotaTable() {
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between gap-3 px-6 py-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="text-lg font-semibold text-[var(--to-ink)] whitespace-nowrap">Quota</div>
+
           <input
-            placeholder="Search by name, code, value, id…"
-            className="w-96 rounded border px-2 py-1 text-sm bg-white"
-            style={{ borderColor: 'var(--to-border)' }}
+            className="w-72 max-w-[60vw] rounded border px-3 py-2 text-sm outline-none"
+            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            placeholder="Search route, units, hours, or id…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <div className="text-sm text-[var(--to-ink-muted)]">{loading ? 'Loading…' : `${filtered.length} rows`}</div>
+
+          <div className="text-sm text-[var(--to-ink-muted)]">
+            {loading ? 'Loading…' : `${filtered.length} rows`}
+          </div>
         </div>
 
         <button
@@ -203,56 +167,50 @@ export default function QuotaTable() {
         </button>
       </div>
 
-      {error && (
-        <div className="px-6 pb-3">
-          <div
-            className="rounded border px-3 py-2 text-sm"
-            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
-          >
-            <span className="font-semibold">Error:</span> {error}
-          </div>
+      {error ? (
+        <div className="px-6 pb-3 text-sm" style={{ color: 'var(--to-danger)' }}>
+          {error}
         </div>
-      )}
+      ) : null}
 
       <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
-        <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)' }}>
+        <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--to-border)' }}>
           <table className="w-full text-sm">
-            <thead className="border-b" style={{ borderColor: 'var(--to-border)', background: 'var(--to-header-bg)' }}>
+            <thead className="border-b" style={{ borderColor: 'var(--to-border)' }}>
               <tr className="text-left">
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Code</th>
-                <th className="px-3 py-2">Value</th>
-                <th className="px-3 py-2">Active</th>
+                <th className="px-3 py-2">Route</th>
+                <th className="px-3 py-2">Units</th>
+                <th className="px-3 py-2">Hours</th>
                 <th className="px-3 py-2">ID</th>
               </tr>
             </thead>
+
             <tbody>
+              {!loading && filtered.length === 0 ? (
+                <tr>
+                  <td className="px-3 py-4 text-[var(--to-ink-muted)]" colSpan={4}>
+                    No rows
+                  </td>
+                </tr>
+              ) : null}
+
               {filtered.map((r) => {
                 const id = getId(r)
                 return (
                   <tr
-                    key={id || JSON.stringify(r)}
-                    className="border-b hover:bg-black/5 cursor-pointer"
+                    key={id}
+                    className="border-b last:border-b-0 cursor-pointer hover:opacity-90"
                     style={{ borderColor: 'var(--to-border)' }}
                     onClick={() => openEdit(r)}
                     title="Click to edit"
                   >
-                    <td className="px-3 py-2">{getName(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getCode(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getQuotaValue(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getActive(r) ? 'Yes' : 'No'}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-[var(--to-ink-muted)]">{id || '—'}</td>
+                    <td className="px-3 py-2 font-medium text-[var(--to-ink)]">{getRoute(r)}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{getUnits(r)}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{getHours(r)}</td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{id}</td>
                   </tr>
                 )
               })}
-
-              {!loading && filtered.length === 0 && (
-                <tr>
-                  <td className="px-3 py-6 text-[var(--to-ink-muted)]" colSpan={5}>
-                    No rows match your search.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
@@ -261,11 +219,10 @@ export default function QuotaTable() {
       <QuotaInspector
         open={inspectorOpen}
         mode={inspectorMode}
-        quota={inspectorMode === 'edit' ? selectedQuota : null}
+        quota={inspectorMode === 'edit' ? selected : null}
         onChange={updateField}
         onCreate={onCreate}
-        onDelete={onDelete}
-        onClose={onCloseInspector}
+        onClose={closeInspector}
       />
     </div>
   )

@@ -46,13 +46,14 @@ async function fetchOptions(params: {
   from: string
   select: string
   orderBy: string
+  ascending?: boolean
   map: (row: any) => DropdownOption
 }): Promise<DropdownOption[]> {
   return memoizePromise(params.cacheKey, async () => {
     const res = await supabase
       .from(params.from)
       .select(params.select)
-      .order(params.orderBy)
+      .order(params.orderBy, { ascending: params.ascending ?? true })
 
     if (res.error) {
       console.error(`fetchOptions: ${params.from} error`, res.error)
@@ -71,10 +72,7 @@ async function fetchOptions(params: {
  */
 export async function fetchCompanyOptions(): Promise<CompanyOption[]> {
   const [companyRes, contractorRes] = await Promise.all([
-    supabase
-      .from('company')
-      .select('company_id, company_name, company_code')
-      .order('company_name'),
+    supabase.from('company').select('company_id, company_name, company_code').order('company_name'),
 
     supabase
       .from('contractor')
@@ -110,7 +108,6 @@ export async function fetchCompanyOptions(): Promise<CompanyOption[]> {
 
   return [...companies, ...contractors]
 }
-
 
 /**
  * Division options (READ from view)
@@ -187,26 +184,139 @@ export async function fetchMsoOptions(): Promise<DropdownOption[]> {
 }
 
 /**
+ * PC Org options (READ from view)
+ * view: public.pc_org_admin_v
+ * cols (expected): pc_org_id, pc_org_name
+ *
+ * Used by:
+ * - Route editor (pc_org_id is the new anchor)
+ * - Future ops planning / reporting anchors
+ */
+export async function fetchPcOrgOptions(): Promise<DropdownOption[]> {
+  return fetchOptions({
+    cacheKey: 'pc_org_admin_v',
+    from: 'pc_org_admin_v',
+    select: 'pc_org_id, pc_org_name, division_code, region_code, pc_number, mso_name',
+    orderBy: 'pc_org_name',
+    map: (po) => ({
+      id: po.pc_org_id,
+      label: po.pc_org_name,
+      meta: {
+        pc_org_name: po.pc_org_name,
+        division_code: po.division_code ?? null,
+        region_code: po.region_code ?? null,
+        pc_number: po.pc_number ?? null,
+        mso_name: po.mso_name ?? null,
+      },
+    }),
+  })
+}
+
+/**
+ * Fiscal Month options (READ from table)
+ * table: public.fiscal_month_dim
+ * cols: fiscal_month_id, label, month_key, start_date, end_date
+ *
+ * Window: current fiscal month + next 3 fiscal months (no look-back).
+ * Label convention: "FY2026 January"
+ */
+export async function fetchFiscalMonthOptions(): Promise<DropdownOption[]> {
+  return memoizePromise('fiscal_month_dim_current_plus_3', async () => {
+    // Compute current fiscal month start anchor (22nd rule)
+    const today = new Date()
+    const y = today.getFullYear()
+    const m0 = today.getMonth() // 0-based
+    const d = today.getDate()
+
+    let anchorYear = y
+    let anchorMonth0 = m0
+    if (d < 22) {
+      anchorMonth0 = m0 - 1
+      if (anchorMonth0 < 0) {
+        anchorMonth0 = 11
+        anchorYear = y - 1
+      }
+    }
+
+    const toDateOnly = (year: number, month0: number, day: number) => {
+      const mm = String(month0 + 1).padStart(2, '0')
+      const dd = String(day).padStart(2, '0')
+      return `${year}-${mm}-${dd}`
+    }
+
+    const shiftMonth = (year: number, month0: number, deltaMonths: number) => {
+      const total = year * 12 + month0 + deltaMonths
+      const ny = Math.floor(total / 12)
+      const nm0 = total % 12
+      return { year: ny, month0: nm0 }
+    }
+
+    // current anchor start_date
+    const minStart = toDateOnly(anchorYear, anchorMonth0, 22)
+
+    // exclusive upper bound: anchor + 4 months => returns 4 items: current + 3
+    const maxExcl = shiftMonth(anchorYear, anchorMonth0, +4)
+    const maxStartExcl = toDateOnly(maxExcl.year, maxExcl.month0, 22)
+
+    const res = await supabase
+      .from('fiscal_month_dim')
+      .select('fiscal_month_id, label, month_key, start_date, end_date')
+      .gte('start_date', minStart)
+      .lt('start_date', maxStartExcl)
+      .order('start_date', { ascending: true })
+
+    if (res.error) {
+      console.error('fetchFiscalMonthOptions: fiscal_month_dim error', res.error)
+      throw res.error
+    }
+
+    return (res.data ?? []).map((fm) => ({
+      id: fm.fiscal_month_id,
+      label: fm.label,
+      code: fm.month_key ?? null,
+      meta: {
+        month_key: fm.month_key ?? null,
+        start_date: fm.start_date ?? null,
+        end_date: fm.end_date ?? null,
+      },
+    }))
+  })
+}
+
+/**
  * Route options (READ from view)
  * view: public.route_admin_v
- * cols: route_id, route_name, mso_id, mso_name
+ * cols (expected): route_id, route_name, pc_org_id, pc_org_name, mso_id, mso_name
  *
- * Label includes MSO name to make Quota route selection unambiguous.
+ * Label priority:
+ * 1) Route — PC Org (preferred)
+ * 2) Route — MSO (legacy fallback)
+ * 3) Route
  */
 export async function fetchRouteOptions(): Promise<DropdownOption[]> {
   return fetchOptions({
     cacheKey: 'route_admin_v',
     from: 'route_admin_v',
-    select: 'route_id, route_name, mso_id, mso_name',
+    select: 'route_id, route_name, pc_org_id, pc_org_name, mso_id, mso_name',
     orderBy: 'route_name',
-    map: (r) => ({
-      id: r.route_id,
-      label: r.mso_name ? `${r.route_name} — ${r.mso_name}` : r.route_name,
-      meta: {
-        route_name: r.route_name,
-        mso_id: r.mso_id,
-        mso_name: r.mso_name,
-      },
-    }),
+    map: (r) => {
+      const label = r.pc_org_name
+        ? `${r.route_name} — ${r.pc_org_name}`
+        : r.mso_name
+          ? `${r.route_name} — ${r.mso_name}`
+          : r.route_name
+
+      return {
+        id: r.route_id,
+        label,
+        meta: {
+          route_name: r.route_name,
+          pc_org_id: r.pc_org_id ?? null,
+          pc_org_name: r.pc_org_name ?? null,
+          mso_id: r.mso_id ?? null,
+          mso_name: r.mso_name ?? null,
+        },
+      }
+    },
   })
 }

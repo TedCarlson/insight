@@ -38,6 +38,30 @@ function memoizePromise<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return p
 }
 
+function logSupabaseError(context: string, err: any) {
+  console.error(context, {
+    raw: err,
+    message: err?.message,
+    details: err?.details,
+    hint: err?.hint,
+    code: err?.code,
+    status: err?.status,
+    statusText: err?.statusText,
+  })
+}
+
+function logSupabaseWarn(context: string, err: any) {
+  console.warn(context, {
+    raw: err,
+    message: err?.message,
+    details: err?.details,
+    hint: err?.hint,
+    code: err?.code,
+    status: err?.status,
+    statusText: err?.statusText,
+  })
+}
+
 /**
  * Internal helper to fetch normalized options from any table/view.
  */
@@ -56,7 +80,7 @@ async function fetchOptions(params: {
       .order(params.orderBy, { ascending: params.ascending ?? true })
 
     if (res.error) {
-      console.error(`fetchOptions: ${params.from} error`, res.error)
+      logSupabaseError(`fetchOptions: ${params.from} error`, res.error)
       throw res.error
     }
 
@@ -65,28 +89,67 @@ async function fetchOptions(params: {
 }
 
 /**
+ * Derive the current user's default pc_org_id using assignment_id.
+ *
+ * Requirement:
+ * - The authenticated user's metadata must include assignment_id:
+ *   user.user_metadata.assignment_id OR user.app_metadata.assignment_id
+ *
+ * Lookup:
+ * - assignment_admin_v (assignment_id) -> pc_org_id
+ */
+export async function fetchDefaultPcOrgIdForCurrentUser(): Promise<string | null> {
+  try {
+    const userRes = await supabase.auth.getUser()
+    const user = userRes.data?.user
+    if (!user) return null
+
+    const assignmentId =
+      (user.user_metadata as any)?.assignment_id ||
+      (user.app_metadata as any)?.assignment_id ||
+      null
+
+    if (!assignmentId) {
+      // Not an error, just no default available.
+      console.warn('fetchDefaultPcOrgIdForCurrentUser: no assignment_id found in auth metadata')
+      return null
+    }
+
+    const res = await supabase
+      .from('assignment_admin_v')
+      .select('pc_org_id')
+      .eq('assignment_id', String(assignmentId))
+      .single()
+
+    if (res.error) {
+      logSupabaseWarn('fetchDefaultPcOrgIdForCurrentUser: assignment_admin_v lookup failed', res.error)
+      return null
+    }
+
+    const pcOrgId = (res.data as any)?.pc_org_id
+    return pcOrgId ? String(pcOrgId) : null
+  } catch (e) {
+    console.warn('fetchDefaultPcOrgIdForCurrentUser: unexpected error', e)
+    return null
+  }
+}
+
+/**
  * Fetch Company + Contractor options for dropdowns
- * Used by:
- * - Person editor
- * - Future assignment / admin flows
  */
 export async function fetchCompanyOptions(): Promise<CompanyOption[]> {
   const [companyRes, contractorRes] = await Promise.all([
     supabase.from('company').select('company_id, company_name, company_code').order('company_name'),
-
-    supabase
-      .from('contractor')
-      .select('contractor_id, contractor_name, contractor_code')
-      .order('contractor_name'),
+    supabase.from('contractor').select('contractor_id, contractor_name, contractor_code').order('contractor_name'),
   ])
 
   if (companyRes.error) {
-    console.error('fetchCompanyOptions: company error', companyRes.error)
+    logSupabaseError('fetchCompanyOptions: company error', companyRes.error)
     throw companyRes.error
   }
 
   if (contractorRes.error) {
-    console.error('fetchCompanyOptions: contractor error', contractorRes.error)
+    logSupabaseError('fetchCompanyOptions: contractor error', contractorRes.error)
     throw contractorRes.error
   }
 
@@ -112,7 +175,6 @@ export async function fetchCompanyOptions(): Promise<CompanyOption[]> {
 /**
  * Division options (READ from view)
  * view: public.division_admin_v
- * cols: division_id, division_name, division_code
  */
 export async function fetchDivisionOptions(): Promise<DropdownOption[]> {
   return fetchOptions({
@@ -131,7 +193,6 @@ export async function fetchDivisionOptions(): Promise<DropdownOption[]> {
 /**
  * Region options (READ from view)
  * view: public.region_admin_v
- * cols: region_id, region_name, region_code
  */
 export async function fetchRegionOptions(): Promise<DropdownOption[]> {
   return fetchOptions({
@@ -150,7 +211,6 @@ export async function fetchRegionOptions(): Promise<DropdownOption[]> {
 /**
  * PC options (READ from view)
  * view: public.pc_admin_v
- * cols: pc_id, pc_number
  */
 export async function fetchPcOptions(): Promise<DropdownOption[]> {
   return fetchOptions({
@@ -160,7 +220,7 @@ export async function fetchPcOptions(): Promise<DropdownOption[]> {
     orderBy: 'pc_number',
     map: (p) => ({
       id: p.pc_id,
-      label: p.pc_number,
+      label: String(p.pc_number),
     }),
   })
 }
@@ -168,7 +228,6 @@ export async function fetchPcOptions(): Promise<DropdownOption[]> {
 /**
  * MSO options (READ from view)
  * view: public.mso_admin_v
- * cols: mso_id, mso_name
  */
 export async function fetchMsoOptions(): Promise<DropdownOption[]> {
   return fetchOptions({
@@ -184,48 +243,81 @@ export async function fetchMsoOptions(): Promise<DropdownOption[]> {
 }
 
 /**
- * PC Org options (READ from view)
- * view: public.pc_org_admin_v
- * cols (expected): pc_org_id, pc_org_name
+ * PC Org options
  *
- * Used by:
- * - Route editor (pc_org_id is the new anchor)
- * - Future ops planning / reporting anchors
+ * Primary: public.pc_org_admin_v
+ * Fallback: public.pc_org
+ *
+ * pc_org_admin_v inventory:
+ * pc_org_id, pc_id, mso_id, division_id, region_id, pc_org_name, pc_number, mso_name, division_name, region_name
  */
 export async function fetchPcOrgOptions(): Promise<DropdownOption[]> {
-  return fetchOptions({
-    cacheKey: 'pc_org_admin_v',
-    from: 'pc_org_admin_v',
-    select: 'pc_org_id, pc_org_name, division_code, region_code, pc_number, mso_name',
-    orderBy: 'pc_org_name',
-    map: (po) => ({
+  return memoizePromise('pc_org_options', async () => {
+    const viewRes = await supabase
+      .from('pc_org_admin_v')
+      .select(
+        [
+          'pc_org_id',
+          'pc_org_name',
+          'pc_number',
+          'division_id',
+          'division_name',
+          'region_id',
+          'region_name',
+          'pc_id',
+          'mso_id',
+          'mso_name',
+        ].join(', ')
+      )
+      .order('pc_org_name', { ascending: true })
+
+    if (!viewRes.error) {
+      return (viewRes.data ?? []).map((po: any) => ({
+        id: po.pc_org_id,
+        label: po.pc_org_name,
+        meta: {
+          pc_org_name: po.pc_org_name,
+          pc_number: po.pc_number ?? null,
+          division_id: po.division_id ?? null,
+          division_name: po.division_name ?? null,
+          region_id: po.region_id ?? null,
+          region_name: po.region_name ?? null,
+          pc_id: po.pc_id ?? null,
+          mso_id: po.mso_id ?? null,
+          mso_name: po.mso_name ?? null,
+        },
+      }))
+    }
+
+    logSupabaseWarn('fetchPcOrgOptions: pc_org_admin_v failed (fallback to pc_org)', viewRes.error)
+
+    const tblRes = await supabase
+      .from('pc_org')
+      .select('pc_org_id, pc_org_name')
+      .order('pc_org_name', { ascending: true })
+
+    if (tblRes.error) {
+      logSupabaseError('fetchPcOrgOptions: pc_org table failed', tblRes.error)
+      throw tblRes.error
+    }
+
+    return (tblRes.data ?? []).map((po: any) => ({
       id: po.pc_org_id,
       label: po.pc_org_name,
-      meta: {
-        pc_org_name: po.pc_org_name,
-        division_code: po.division_code ?? null,
-        region_code: po.region_code ?? null,
-        pc_number: po.pc_number ?? null,
-        mso_name: po.mso_name ?? null,
-      },
-    }),
+    }))
   })
 }
 
 /**
- * Fiscal Month options (READ from table)
+ * Fiscal Month options
  * table: public.fiscal_month_dim
- * cols: fiscal_month_id, label, month_key, start_date, end_date
- *
  * Window: current fiscal month + next 3 fiscal months (no look-back).
- * Label convention: "FY2026 January"
  */
 export async function fetchFiscalMonthOptions(): Promise<DropdownOption[]> {
   return memoizePromise('fiscal_month_dim_current_plus_3', async () => {
-    // Compute current fiscal month start anchor (22nd rule)
     const today = new Date()
     const y = today.getFullYear()
-    const m0 = today.getMonth() // 0-based
+    const m0 = today.getMonth()
     const d = today.getDate()
 
     let anchorYear = y
@@ -251,10 +343,7 @@ export async function fetchFiscalMonthOptions(): Promise<DropdownOption[]> {
       return { year: ny, month0: nm0 }
     }
 
-    // current anchor start_date
     const minStart = toDateOnly(anchorYear, anchorMonth0, 22)
-
-    // exclusive upper bound: anchor + 4 months => returns 4 items: current + 3
     const maxExcl = shiftMonth(anchorYear, anchorMonth0, +4)
     const maxStartExcl = toDateOnly(maxExcl.year, maxExcl.month0, 22)
 
@@ -266,11 +355,11 @@ export async function fetchFiscalMonthOptions(): Promise<DropdownOption[]> {
       .order('start_date', { ascending: true })
 
     if (res.error) {
-      console.error('fetchFiscalMonthOptions: fiscal_month_dim error', res.error)
+      logSupabaseError('fetchFiscalMonthOptions: fiscal_month_dim error', res.error)
       throw res.error
     }
 
-    return (res.data ?? []).map((fm) => ({
+    return (res.data ?? []).map((fm: any) => ({
       id: fm.fiscal_month_id,
       label: fm.label,
       code: fm.month_key ?? null,
@@ -286,12 +375,6 @@ export async function fetchFiscalMonthOptions(): Promise<DropdownOption[]> {
 /**
  * Route options (READ from view)
  * view: public.route_admin_v
- * cols (expected): route_id, route_name, pc_org_id, pc_org_name, mso_id, mso_name
- *
- * Label priority:
- * 1) Route — PC Org (preferred)
- * 2) Route — MSO (legacy fallback)
- * 3) Route
  */
 export async function fetchRouteOptions(): Promise<DropdownOption[]> {
   return fetchOptions({

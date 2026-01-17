@@ -4,7 +4,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import AdminOverlay from '../_shared/AdminOverlay'
-import { fetchPcOrgOptions, type DropdownOption } from '../_shared/dropdowns'
+import {
+  fetchPcOrgOptions,
+  fetchDefaultPcOrgIdForCurrentUser,
+  type DropdownOption,
+} from '../_shared/dropdowns'
 import type { CreateRouteInput, EditableField, RouteInspectorMode, RouteRow } from './route.types'
 
 function getId(row: RouteRow | null | undefined): string | null {
@@ -31,8 +35,8 @@ export default function RouteInspector(props: {
   const [pcOrgOptions, setPcOrgOptions] = useState<DropdownOption[]>([])
   const [loadingPcOrg, setLoadingPcOrg] = useState(false)
 
-  const [draftName, setDraftName] = useState('')
   const [draftPcOrgId, setDraftPcOrgId] = useState<string>('')
+  const [draftName, setDraftName] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -41,27 +45,45 @@ export default function RouteInspector(props: {
     setSaving(false)
 
     if (isCreate) {
-      setDraftName('')
       setDraftPcOrgId('')
+      setDraftName('')
     } else {
-      setDraftName(String(route?.route_name ?? ''))
       setDraftPcOrgId(String(route?.pc_org_id ?? ''))
+      setDraftName(String(route?.route_name ?? ''))
     }
   }, [open, isCreate, route])
 
   useEffect(() => {
     if (!open) return
+
+    let alive = true
     ;(async () => {
       try {
         setLoadingPcOrg(true)
         const opts = await fetchPcOrgOptions()
+        if (!alive) return
         setPcOrgOptions(opts)
+
+        // Create flow only: default pc org from assignment_admin_v
+        if (isCreate) {
+          const defaultPcOrgId = await fetchDefaultPcOrgIdForCurrentUser()
+          if (!alive) return
+          if (defaultPcOrgId && !draftPcOrgId.trim()) {
+            const exists = opts.some((o) => o.id === defaultPcOrgId)
+            if (exists) setDraftPcOrgId(defaultPcOrgId)
+          }
+        }
       } catch (e) {
         console.error('Failed to load PC Org options for Route', e)
       } finally {
-        setLoadingPcOrg(false)
+        if (alive) setLoadingPcOrg(false)
       }
     })()
+
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   function handleEdit(field: EditableField, value: any) {
@@ -69,11 +91,20 @@ export default function RouteInspector(props: {
     onChange(routeId, field, value)
   }
 
-  const canCreate = draftName.trim().length > 0
+  const pcOrgRequired = true
+  const lockNameUntilPcOrg = true
+  const nameDisabled = isCreate && lockNameUntilPcOrg && !draftPcOrgId.trim()
+
+  const canCreate = draftName.trim().length > 0 && (!pcOrgRequired || draftPcOrgId.trim().length > 0)
 
   async function handleCreate() {
     setSubmitError(null)
-    if (!canCreate) {
+
+    if (pcOrgRequired && !draftPcOrgId.trim()) {
+      setSubmitError('PC Org is required.')
+      return
+    }
+    if (!draftName.trim()) {
       setSubmitError('Route name is required.')
       return
     }
@@ -82,7 +113,7 @@ export default function RouteInspector(props: {
       setSaving(true)
       await onCreate({
         route_name: draftName.trim(),
-        pc_org_id: draftPcOrgId.trim() ? draftPcOrgId.trim() : null,
+        pc_org_id: draftPcOrgId.trim(),
       })
       onClose()
     } catch (err: any) {
@@ -118,11 +149,6 @@ export default function RouteInspector(props: {
     </div>
   )
 
-  const legacyMsoText =
-    !isCreate && (route?.mso_name || route?.mso_id)
-      ? `${route?.mso_name ?? ''}${route?.mso_name && route?.mso_id ? ' · ' : ''}${route?.mso_id ?? ''}`
-      : null
-
   return (
     <AdminOverlay
       open={open}
@@ -133,29 +159,11 @@ export default function RouteInspector(props: {
       footer={footer}
     >
       <div className="space-y-6">
-        {/* Route Name */}
+        {/* PC Org selector FIRST */}
         <div>
-          <div className="text-sm font-medium">Route Name</div>
-          <input
-            value={draftName}
-            onChange={(e) => {
-              const v = e.target.value
-              setDraftName(v)
-              if (!isCreate) handleEdit('route_name', v)
-            }}
-            placeholder="e.g., Route 12"
-            className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
-            style={{
-              borderColor: 'var(--to-border)',
-              background: 'var(--to-surface)',
-              color: 'var(--to-ink)',
-            }}
-          />
-        </div>
-
-        {/* PC Org selector (new anchor) */}
-        <div>
-          <div className="text-sm font-medium">PC Org</div>
+          <div className="text-sm font-medium">
+            PC Org <span className="text-[var(--to-danger)]">*</span>
+          </div>
           <select
             value={draftPcOrgId}
             onChange={(e) => {
@@ -171,7 +179,7 @@ export default function RouteInspector(props: {
             }}
             disabled={loadingPcOrg}
           >
-            <option value="">{loadingPcOrg ? 'Loading…' : 'Select PC Org (recommended)'}</option>
+            <option value="">{loadingPcOrg ? 'Loading…' : 'Select PC Org'}</option>
             {pcOrgOptions.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.label}
@@ -180,17 +188,39 @@ export default function RouteInspector(props: {
           </select>
 
           <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
-            PC Org will become required once existing routes are backfilled.
+            Defaults to your assigned PC Org when available.
           </div>
         </div>
 
-        {/* Legacy MSO (read-only, transition context) */}
-        {legacyMsoText ? (
-          <div className="rounded border px-3 py-2" style={{ borderColor: 'var(--to-border)' }}>
-            <div className="text-xs font-medium text-[var(--to-ink-muted)]">Legacy MSO (transition)</div>
-            <div className="mt-1 text-sm text-[var(--to-ink)]">{legacyMsoText}</div>
+        {/* Route Name second */}
+        <div>
+          <div className="text-sm font-medium">
+            Route Name <span className="text-[var(--to-danger)]">*</span>
           </div>
-        ) : null}
+          <input
+            value={draftName}
+            onChange={(e) => {
+              const v = e.target.value
+              setDraftName(v)
+              if (!isCreate) handleEdit('route_name', v)
+            }}
+            placeholder="e.g., Route 12"
+            className="mt-2 w-full rounded border px-3 py-2 text-sm outline-none"
+            style={{
+              borderColor: 'var(--to-border)',
+              background: 'var(--to-surface)',
+              color: 'var(--to-ink)',
+              opacity: nameDisabled ? 0.6 : 1,
+            }}
+            disabled={nameDisabled}
+          />
+
+          {nameDisabled ? (
+            <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
+              Select PC Org first to enable Route Name.
+            </div>
+          ) : null}
+        </div>
       </div>
     </AdminOverlay>
   )

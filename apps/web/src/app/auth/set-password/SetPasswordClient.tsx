@@ -11,9 +11,31 @@ function getHashParams() {
   return new URLSearchParams(raw);
 }
 
+type BootstrapResponse = {
+  ok: boolean;
+  auth_user_id: string;
+  status: string | null;
+  person_id: string | null;
+  selected_pc_org_id: string | null;
+  created: boolean;
+  hydrated: boolean;
+  notes?: string[];
+};
+
+async function callBootstrap(): Promise<BootstrapResponse | null> {
+  try {
+    const res = await fetch("/api/auth/bootstrap", { method: "POST" });
+    const json = (await res.json()) as BootstrapResponse;
+    return json;
+  } catch {
+    return null;
+  }
+}
+
 export default function SetPasswordPage() {
   const router = useRouter();
   const sp = useSearchParams();
+
   const next = sp.get("next") || "/home";
 
   const supabase = useMemo(() => createClient(), []);
@@ -69,6 +91,14 @@ export default function SetPasswordPage() {
         return;
       }
 
+      // Bootstrap profile row + hydrate metadata linkages
+      const boot = await callBootstrap();
+      if (boot?.ok) {
+        setOut(`Password set. bootstrap ok (status=${boot.status ?? "?"}). Redirecting…`);
+      } else {
+        setOut("Password set. Redirecting…");
+      }
+
       // Optional: clear hash from URL for cleanliness
       if (typeof window !== "undefined" && window.location.hash) {
         history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -83,9 +113,7 @@ export default function SetPasswordPage() {
   return (
     <main className="mx-auto max-w-md p-6">
       <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Set your password</h1>
-      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-        Choose a password to finish onboarding.
-      </p>
+      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">Choose a password to finish onboarding.</p>
 
       <div className="mt-6 grid gap-3">
         <label className="grid gap-1">

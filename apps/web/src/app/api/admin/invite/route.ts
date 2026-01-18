@@ -10,6 +10,18 @@ type InviteBody = {
   assignment_id: string;
 };
 
+/**
+ * Owner-only invite endpoint.
+ *
+ * Creates an invite link (Supabase admin.generateLink) and stamps the invited user's metadata
+ * so the app can bootstrap user_profile on first login.
+ *
+ * Requires env:
+ *   - NEXT_PUBLIC_SUPABASE_URL
+ *   - NEXT_PUBLIC_SUPABASE_ANON_KEY
+ *   - SUPABASE_SERVICE_ROLE_KEY
+ *   - NEXT_PUBLIC_SITE_URL (optional; defaults to http://localhost:3000)
+ */
 export async function GET() {
   // Simple ping to prove the route exists (browser GET should show this JSON, not a 404 page)
   return NextResponse.json({ ok: true, route: "/api/admin/invite" });
@@ -26,7 +38,6 @@ export async function POST(req: Request) {
     const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/+$/, "");
     const redirectTo = `${siteUrl}/auth/callback?next=/auth/set-password`;
 
-
     if (!url || !anon) {
       return NextResponse.json(
         { error: "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY" },
@@ -37,6 +48,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing SUPABASE_SERVICE_ROLE_KEY" }, { status: 500 });
     }
 
+    // Session-aware client (cookie auth)
     const supabase = createServerClient(url, anon, {
       cookies: {
         getAll() {
@@ -48,6 +60,7 @@ export async function POST(req: Request) {
       },
     });
 
+    // AuthZ: must be signed in and be owner
     const { data: userData, error: userErr } = await supabase.auth.getUser();
     const user = userData?.user ?? null;
     if (!user || userErr) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -61,6 +74,7 @@ export async function POST(req: Request) {
     }
     if (!isOwner) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+    // Parse body
     let body: InviteBody;
     try {
       body = (await req.json()) as InviteBody;
@@ -75,6 +89,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "email and assignment_id are required" }, { status: 400 });
     }
 
+    // Validate prerequisites via assignment_admin_v (already present in Phase 2 work)
     const prereq = await supabase
       .from("assignment_admin_v")
       .select("assignment_id, person_id, position_title, pc_org_id, pc_org_name")
@@ -112,8 +127,10 @@ export async function POST(req: Request) {
       );
     }
 
+    // Service-role client (admin)
     const admin = createClient(url, service, { auth: { persistSession: false } });
 
+    // Create invite link
     const linkRes = await admin.auth.admin.generateLink({
       type: "invite",
       email,
@@ -137,6 +154,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // Stamp metadata for bootstrap (client never sees service key)
     const meta = { assignment_id, person_id, position_title, pc_org_id, pc_org_name };
 
     const upd = await admin.auth.admin.updateUserById(invitedUserId, {
@@ -158,9 +176,19 @@ export async function POST(req: Request) {
       );
     }
 
-    await admin
-      .from("user_profile" as any)
-      .upsert({ auth_user_id: invitedUserId, status: "active" }, { onConflict: "auth_user_id" as any });
+    // Ensure user_profile exists and is linked (service-role bypasses RLS)
+    const nowIso = new Date().toISOString();
+    await admin.from("user_profile" as any).upsert(
+      {
+        auth_user_id: invitedUserId,
+        status: "active",
+        person_id,
+        selected_pc_org_id: pc_org_id,
+        created_at: nowIso,
+        updated_at: nowIso,
+      },
+      { onConflict: "auth_user_id" as any }
+    );
 
     return NextResponse.json({
       ok: true,

@@ -4,6 +4,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { MasterOverlay, safeOverlayTab } from "../_shared/MasterOverlay";
 import { OrgContextSelector } from "./_shared/OrgContextSelector";
 import { OrgRosterPanel } from "./_shared/OrgRosterPanel";
+import { OrgPlanningPanel } from "./_shared/OrgPlanningPanel";
 
 export default async function OrgPage({
   searchParams,
@@ -76,9 +77,13 @@ export default async function OrgPage({
         </p>
       )}
 
-      {tab === "planning" && (
+      {tab === "planning" && selectedPcOrgId && (
+        <OrgPlanningPanel pcOrgId={selectedPcOrgId} />
+      )}
+
+      {tab === "planning" && !selectedPcOrgId && (
         <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Planning dimension (pc_org scoped) will load here next.
+          Select an org to view planning.
         </p>
       )}
 

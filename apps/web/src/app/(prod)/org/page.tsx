@@ -1,9 +1,9 @@
 // apps/web/src/app/(prod)/org/page.tsx
 import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
-
+import { supabaseServer } from "@/lib/supabase/server";
 import { MasterOverlay, safeOverlayTab } from "../_shared/MasterOverlay";
+import { OrgContextSelector } from "./_shared/OrgContextSelector";
+import { OrgRosterPanel } from "./_shared/OrgRosterPanel";
 
 export default async function OrgPage({
   searchParams,
@@ -13,27 +13,7 @@ export default async function OrgPage({
   const sp = await searchParams;
   const tab = safeOverlayTab(sp?.tab);
 
-
-  // Server Supabase client (cookie-based session)
-  const cookieStore = await cookies();
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !anon) {
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
-  }
-
-  const supabase = createServerClient(url, anon, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll() {
-        /* noop */
-      },
-    },
-  });
+  const supabase = await supabaseServer();
 
   const {
     data: { user },
@@ -42,47 +22,69 @@ export default async function OrgPage({
 
   if (!user || userErr) redirect("/login");
 
-  // Derive assignment_id from auth metadata (same rule as your dropdowns.ts)
-  const assignmentId =
-    (user.user_metadata as any)?.assignment_id ||
-    (user.app_metadata as any)?.assignment_id ||
-    null;
+  // Pull selected_pc_org_id from user_profile (persisted org context)
+  const { data: profile, error: profileErr } = await supabase
+    .from("user_profile")
+    .select("selected_pc_org_id")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
 
-  // Pull pc_org_name from assignment_admin_v
-  let pcOrgName: string | null = null;
-
-  if (assignmentId) {
-    const res = await supabase
-      .from("assignment_admin_v")
-      .select("pc_org_name, pc_org_id")
-      .eq("assignment_id", String(assignmentId))
-      .maybeSingle();
-
-    // Prefer name, fallback to id if name is null
-    pcOrgName = (res.data as any)?.pc_org_name ?? (res.data as any)?.pc_org_id ?? null;
+  if (profileErr) {
+    // best-effort render
+    console.error("OrgPage user_profile lookup error:", profileErr);
   }
 
-  const scopeLabel = pcOrgName
-    ? `Manager scope (pc_org): ${pcOrgName}`
-    : "Manager scope (pc_org): unknown";
+  const selectedPcOrgId = profile?.selected_pc_org_id ?? null;
+
+  // Resolve org name for label (best-effort)
+  let pcOrgName: string | null = null;
+  if (selectedPcOrgId) {
+    const res = await supabase
+      .from("pc_org_admin_v")
+      .select("pc_org_name")
+      .eq("pc_org_id", selectedPcOrgId)
+      .maybeSingle();
+
+    pcOrgName = (res.data as any)?.pc_org_name ?? null;
+  }
+
+  const scopeLabel = selectedPcOrgId
+    ? `Manager scope (pc_org): ${pcOrgName ?? selectedPcOrgId}`
+    : "Manager scope (pc_org): none selected";
 
   return (
-    <MasterOverlay title="Org" scopeLabel={scopeLabel} activeTab={tab} baseHref="/org">
-      {tab === "roster" && (
+    <MasterOverlay
+      title="Org"
+      scopeLabel={scopeLabel}
+      activeTab={tab}
+      baseHref="/org"
+      headerRight={<OrgContextSelector />}
+    >
+      {!selectedPcOrgId ? (
         <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Roster dimension will live here (pc_org-scoped people/structure).
+          Select an org to view scoped roster/planning/metrics.
+        </p>
+      ) : null}
+
+      {tab === "roster" && selectedPcOrgId && (
+        <OrgRosterPanel pcOrgId={selectedPcOrgId} />
+      )}
+
+      {tab === "roster" && !selectedPcOrgId && (
+        <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
+          Select an org to view roster.
         </p>
       )}
 
       {tab === "planning" && (
         <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Planning dimension will live here (assignments/routes/schedules/quota framing).
+          Planning dimension (pc_org scoped) will load here next.
         </p>
       )}
 
       {tab === "metrics" && (
         <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Metrics dimension will live here (quota-derived metrics visibility).
+          Metrics dimension (pc_org scoped) will load here next.
         </p>
       )}
     </MasterOverlay>

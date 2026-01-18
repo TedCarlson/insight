@@ -13,9 +13,10 @@ export function MasterOverlay(props: {
   scopeLabel: string; // for now: "Manager scope (pc_org)" etc.
   activeTab: OverlayTabKey;
   baseHref: string; // e.g. "/org"
+  headerRight?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const { title, scopeLabel, activeTab, baseHref, children } = props;
+  const { title, scopeLabel, activeTab, baseHref, headerRight, children } = props;
 
   const tabLink = (tab: OverlayTabKey) => `${baseHref}?tab=${tab}`;
 
@@ -26,11 +27,16 @@ export function MasterOverlay(props: {
 
   return (
     <main className="mx-auto max-w-5xl p-6">
-      <h1 className="text-2xl font-semibold text-[var(--to-ink)]">{title}</h1>
-      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-        {scopeLabel}. Active section:{" "}
-        <span className="font-mono text-[var(--to-ink)]">{activeTab}</span>
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-[var(--to-ink)]">{title}</h1>
+          <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
+            {scopeLabel}. Active section:{" "}
+            <span className="font-mono text-[var(--to-ink)]">{activeTab}</span>
+          </p>
+        </div>
+        {headerRight ? <div className="pt-1">{headerRight}</div> : null}
+      </div>
 
       <div className="mt-6 flex flex-wrap gap-3">
         <Link

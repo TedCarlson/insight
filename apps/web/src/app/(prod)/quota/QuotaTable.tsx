@@ -3,11 +3,17 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createQuota, fetchQuotas, updateQuota } from './quota.api'
-import type { CreateQuotaInput, EditableField, QuotaInspectorMode, QuotaRow } from './quota.types'
+import { createQuota, listQuotas, updateQuota } from './quota.api'
+import type {
+  CreateQuotaInput,
+  EditableField,
+  QuotaInspectorMode,
+  QuotaRow,
+} from './quota.types'
 import QuotaInspector from './QuotaInspector'
 
 const WRITE_DELAY_MS = 450
+const SEARCH_DEBOUNCE_MS = 300
 
 function getId(row: QuotaRow): string {
   return String(row.quota_id)
@@ -63,8 +69,17 @@ function computeDerivedFromInputs(next: QuotaRow): QuotaRow {
 export default function QuotaTable() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
   const [rows, setRows] = useState<QuotaRow[]>([])
+  const [total, setTotal] = useState(0)
+
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+
+  const [reloadKey, setReloadKey] = useState(0)
 
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [inspectorMode, setInspectorMode] = useState<QuotaInspectorMode>('create')
@@ -73,19 +88,44 @@ export default function QuotaTable() {
   const writeTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const writeSeq = useRef(new Map<string, number>())
 
+  // Debounce search → server query
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim())
+    }, SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(t)
+  }, [search])
+
+  // Reset to page 1 when search/pageSize changes
+  useEffect(() => {
+    setPage(1)
+  }, [debouncedSearch, pageSize])
+
+  // Load paged quotas
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
         setLoading(true)
         setError(null)
-        const data = await fetchQuotas()
+
+        const { rows: nextRows, total: nextTotal } = await listQuotas({
+          page,
+          pageSize,
+          q: debouncedSearch || undefined,
+        })
+
         if (!alive) return
-        setRows(data)
-      } catch (err: any) {
+        setRows(nextRows)
+        setTotal(nextTotal)
+      } catch (err: unknown) {
         console.error('Quota load error', err)
         if (!alive) return
-        setError(err?.message ?? 'Failed to load.')
+        const msg =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as any).message)
+            : 'Failed to load.'
+        setError(msg)
       } finally {
         if (!alive) return
         setLoading(false)
@@ -94,6 +134,14 @@ export default function QuotaTable() {
     return () => {
       alive = false
     }
+  }, [page, pageSize, debouncedSearch, reloadKey])
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    const timers = writeTimers.current
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer)
+    }
   }, [])
 
   const selected = useMemo(() => {
@@ -101,29 +149,10 @@ export default function QuotaTable() {
     return rows.find((r) => getId(r) === selectedId) ?? null
   }, [rows, selectedId])
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return rows
-
-    return rows.filter((r) => {
-      const id = getId(r).toLowerCase()
-      const route = getRouteLabel(r).toLowerCase()
-      const fm = getFiscalMonthLabel(r).toLowerCase()
-      const fmKey = String(r.fiscal_month_key ?? '').toLowerCase()
-
-      const hours = getTotalHours(r).toLowerCase()
-      const units = getTotalUnits(r).toLowerCase()
-
-      return (
-        id.includes(q) ||
-        route.includes(q) ||
-        fm.includes(q) ||
-        fmKey.includes(q) ||
-        hours.includes(q) ||
-        units.includes(q)
-      )
-    })
-  }, [rows, search])
+  const rangeFrom = total === 0 ? 0 : (page - 1) * pageSize + 1
+  const rangeTo = Math.min(page * pageSize, total)
+  const canPrev = page > 1
+  const canNext = page * pageSize < total
 
   function openCreate() {
     setInspectorMode('create')
@@ -141,8 +170,10 @@ export default function QuotaTable() {
   }
 
   async function onCreate(payload: CreateQuotaInput) {
-    const created = await createQuota(payload)
-    setRows((prev) => [created, ...prev])
+    await createQuota(payload)
+    // Refresh authoritative ordering from server
+    setPage(1)
+    setReloadKey((k) => k + 1)
   }
 
   function updateField(quotaId: string, field: EditableField, value: any) {
@@ -184,7 +215,8 @@ export default function QuotaTable() {
         const patch: any = {}
 
         if (field === 'route_id') patch.route_id = String(value ?? '').trim()
-        if (field === 'fiscal_month_id') patch.fiscal_month_id = String(value ?? '').trim()
+        if (field === 'fiscal_month_id')
+          patch.fiscal_month_id = String(value ?? '').trim()
 
         if (field === 'qh_sun') patch.qh_sun = Number(value ?? 0)
         if (field === 'qh_mon') patch.qh_mon = Number(value ?? 0)
@@ -196,9 +228,13 @@ export default function QuotaTable() {
 
         const updated = await updateQuota(quotaId, patch)
         setRows((prev) => prev.map((r) => (getId(r) === quotaId ? updated : r)))
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Quota update error', err)
-        setError(err?.message ?? 'Update failed.')
+        const msg =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as any).message)
+            : 'Update failed.'
+        setError(msg)
       } finally {
         writeTimers.current.delete(key)
       }
@@ -209,20 +245,65 @@ export default function QuotaTable() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between gap-3 px-6 py-4">
-        <div className="flex items-center gap-4 min-w-0">
-          <div className="text-lg font-semibold text-[var(--to-ink)] whitespace-nowrap">Quota</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
+        <div className="flex flex-wrap items-center gap-4 min-w-0">
+          <div className="text-lg font-semibold text-[var(--to-ink)] whitespace-nowrap">
+            Quota
+          </div>
 
           <input
             className="w-72 max-w-[60vw] rounded border px-3 py-2 text-sm outline-none"
-            style={{ borderColor: 'var(--to-border)', background: 'var(--to-surface)', color: 'var(--to-ink)' }}
+            style={{
+              borderColor: 'var(--to-border)',
+              background: 'var(--to-surface)',
+              color: 'var(--to-ink)',
+            }}
             placeholder="Search fiscal month, route, totals, or id…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
 
-          <div className="text-sm text-[var(--to-ink-muted)]">
-            {loading ? 'Loading…' : `${filtered.length} rows`}
+          <div className="text-sm text-[var(--to-ink-muted)] flex items-center gap-2">
+            <span>
+              {rangeFrom}-{rangeTo} of {total}
+            </span>
+
+            <button
+              className="rounded border px-2 py-1"
+              style={{ borderColor: 'var(--to-border)' }}
+              disabled={!canPrev || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Prev
+            </button>
+
+            <button
+              className="rounded border px-2 py-1"
+              style={{ borderColor: 'var(--to-border)' }}
+              disabled={!canNext || loading}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </button>
+
+            <select
+              className="rounded border px-2 py-1 text-sm outline-none"
+              style={{
+                borderColor: 'var(--to-border)',
+                background: 'var(--to-surface)',
+                color: 'var(--to-ink)',
+              }}
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              disabled={loading}
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+
+            <span>{loading ? 'Loading…' : null}</span>
           </div>
         </div>
 
@@ -242,7 +323,10 @@ export default function QuotaTable() {
       ) : null}
 
       <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
-        <div className="rounded border overflow-hidden" style={{ borderColor: 'var(--to-border)' }}>
+        <div
+          className="rounded border overflow-hidden"
+          style={{ borderColor: 'var(--to-border)' }}
+        >
           <table className="w-full text-sm">
             <thead className="border-b" style={{ borderColor: 'var(--to-border)' }}>
               <tr className="text-left">
@@ -255,7 +339,7 @@ export default function QuotaTable() {
             </thead>
 
             <tbody>
-              {!loading && filtered.length === 0 ? (
+              {!loading && rows.length === 0 ? (
                 <tr>
                   <td className="px-3 py-4 text-[var(--to-ink-muted)]" colSpan={5}>
                     No rows
@@ -263,7 +347,7 @@ export default function QuotaTable() {
                 </tr>
               ) : null}
 
-              {filtered.map((r) => {
+              {rows.map((r) => {
                 const id = getId(r)
                 return (
                   <tr
@@ -273,10 +357,18 @@ export default function QuotaTable() {
                     onClick={() => openEdit(r)}
                     title="Click to edit"
                   >
-                    <td className="px-3 py-2 font-medium text-[var(--to-ink)]">{getFiscalMonthLabel(r)}</td>
-                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{getRouteLabel(r)}</td>
-                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{getTotalHours(r)}</td>
-                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">{getTotalUnits(r)}</td>
+                    <td className="px-3 py-2 font-medium text-[var(--to-ink)]">
+                      {getFiscalMonthLabel(r)}
+                    </td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">
+                      {getRouteLabel(r)}
+                    </td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">
+                      {getTotalHours(r)}
+                    </td>
+                    <td className="px-3 py-2 text-[var(--to-ink-muted)]">
+                      {getTotalUnits(r)}
+                    </td>
                     <td className="px-3 py-2 text-[var(--to-ink-muted)]">{id}</td>
                   </tr>
                 )

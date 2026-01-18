@@ -1,4 +1,5 @@
 import { supabaseServer } from "@/lib/supabase/server";
+import { OrgRosterClient } from "./OrgRosterClient";
 
 type Row = Record<string, any>;
 
@@ -27,36 +28,5 @@ export async function OrgRosterPanel(props: { pcOrgId: string }) {
     );
   }
 
-  const cols = Object.keys(rows[0] ?? {});
-
-  return (
-    <div className="mt-4 overflow-auto rounded border" style={{ borderColor: "var(--to-border)" }}>
-      <table className="min-w-[900px] text-sm">
-        <thead>
-          <tr className="border-b" style={{ borderColor: "var(--to-border)" }}>
-            {cols.map((c) => (
-              <th key={c} className="px-3 py-2 text-left font-semibold">
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, idx) => (
-            <tr
-              key={idx}
-              className="border-b last:border-b-0"
-              style={{ borderColor: "var(--to-border)" }}
-            >
-              {cols.map((c) => (
-                <td key={c} className="px-3 py-2 align-top">
-                  {r?.[c] === null || r?.[c] === undefined ? "" : String(r[c])}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  return <OrgRosterClient rows={rows} />;
 }

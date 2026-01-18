@@ -125,3 +125,59 @@ export async function updateRoute(
 
   return await fetchFromViewById(routeId)
 }
+
+/* ------------------------------------------------------------------ */
+/* LIST (Server pagination/search)                                     */
+/* ------------------------------------------------------------------ */
+
+export type ListRoutesParams = {
+  page: number
+  pageSize: number
+  q?: string
+}
+
+export async function listRoutes(
+  params: ListRoutesParams
+): Promise<{ rows: RouteRow[]; total: number }> {
+  const page = Math.max(1, params.page || 1)
+  const pageSize = Math.max(1, params.pageSize || 25)
+  const from = (page - 1) * pageSize
+  const to = from + pageSize - 1
+
+  let query = (supabase as any)
+    .from('route_admin_v')
+    .select(ROUTE_ADMIN_SELECT, { count: 'exact' })
+    .order('route_name', { ascending: true })
+    .range(from, to)
+
+  const q = (params.q ?? '').trim()
+  if (q) {
+    const like = `%${q}%`
+    query = query.or(
+      [
+        `route_name.ilike.${like}`,
+        `pc_org_name.ilike.${like}`,
+        `mso_name.ilike.${like}`,
+        `pc_number.ilike.${like}`,
+        `route_id.ilike.${like}`,
+      ].join(',')
+    )
+  }
+
+  const { data, count, error } = await query
+
+  if (error) {
+    console.error('listRoutes error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Failed to load routes.')
+  }
+
+  return {
+    rows: (data ?? []) as unknown as RouteRow[],
+    total: count ?? 0,
+  }
+}

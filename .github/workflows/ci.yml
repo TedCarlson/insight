@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: package.json
@@ -30,4 +30,8 @@ jobs:
         run: pnpm -C apps/web typecheck
 
       - name: Build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321"
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6anF3aWNkc3llbGxvcndzcGx3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgzMTI5NTQsImV4cCI6MjA4Mzg4ODk1NH0.HFsrVCCViXyOp5b8kkJMIiiI-d_vcbqov2Ikij0_yC8"
         run: pnpm -C apps/web build
+

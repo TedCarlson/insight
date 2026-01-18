@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/app/(prod)/_shared/supabase'
 import {
   createAssignment,
-  fetchAssignments,
+  listAssignments,
   updateAssignmentCore,
   fetchPositionTitles,
 } from './assignment.api'
@@ -27,6 +27,7 @@ import AssignmentInspector, {
 const supabase = createClient()
 
 const WRITE_DELAY_MS = 450
+const SEARCH_DEBOUNCE_MS = 300
 
 function formatDate(d: string | null) {
   if (!d) return '—'
@@ -61,10 +62,18 @@ async function fetchPcOrgOptions(): Promise<PcOrgOption[]> {
 
 export default function AssignmentTable() {
   const [rows, setRows] = useState<AssignmentRow[]>([])
+  const [total, setTotal] = useState(0)
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+
+  const [reloadKey, setReloadKey] = useState(0)
 
   const [people, setPeople] = useState<PersonOption[]>([])
   const [pcOrgs, setPcOrgs] = useState<PcOrgOption[]>([])
@@ -92,23 +101,19 @@ export default function AssignmentTable() {
   const writeTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const writeSeq = useRef(new Map<string, number>())
 
+  // Load options once (people, orgs, titles)
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
-        setLoading(true)
         setError(null)
-
-        const [assignments, persons, orgs, titles] = await Promise.all([
-          fetchAssignments(),
+        const [persons, orgs, titles] = await Promise.all([
           fetchPersons(),
           fetchPcOrgOptions(),
           fetchPositionTitles(),
         ])
 
         if (!alive) return
-
-        setRows(assignments)
 
         setPeople(
           (persons ?? []).map((p: PersonRow) => ({
@@ -121,9 +126,7 @@ export default function AssignmentTable() {
         setPositionTitles(titles)
       } catch (e: any) {
         if (!alive) return
-        setError(e?.message ?? 'Failed to load assignments.')
-      } finally {
-        if (alive) setLoading(false)
+        setError(e?.message ?? 'Failed to load reference data.')
       }
     })()
 
@@ -132,37 +135,70 @@ export default function AssignmentTable() {
     }
   }, [])
 
+  // Debounce search → server query
   useEffect(() => {
-  const timers = writeTimers.current;
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim())
+    }, SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(t)
+  }, [search])
 
-  return () => {
-    for (const timer of timers.values()) clearTimeout(timer);
-  };
-}, []);
+  // Reset to page 1 when the debounced search changes
+  useEffect(() => {
+    setPage(1)
+  }, [debouncedSearch, pageSize])
 
+  // Load paged assignments whenever paging/search changes (or after create)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        setLoading(true)
+        setError(null)
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return rows
+        const { rows: nextRows, total: nextTotal } = await listAssignments({
+          page,
+          pageSize,
+          q: debouncedSearch || undefined,
+        })
 
-    return rows.filter((r) => {
-      const hay = [
-        r.full_name ?? '',
-        r.tech_id ?? '',
-        r.position_title ?? '',
-        r.pc_org_name ?? '',
-        r.assignment_id ?? '',
-      ]
-        .join(' ')
-        .toLowerCase()
-      return hay.includes(q)
-    })
-  }, [rows, search])
+        if (!alive) return
+        setRows(nextRows)
+        setTotal(nextTotal)
+      } catch (err: unknown) {
+        if (!alive) return
+        const msg =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as any).message)
+            : 'Failed to load assignments.'
+        setError(msg)
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+
+    return () => {
+      alive = false
+    }
+  }, [page, pageSize, debouncedSearch, reloadKey])
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    const timers = writeTimers.current
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer)
+    }
+  }, [])
 
   const selectedAssignment = useMemo(() => {
     if (!selectedAssignmentId) return null
     return rows.find((r) => r.assignment_id === selectedAssignmentId) ?? null
   }, [rows, selectedAssignmentId])
+
+  const rangeFrom = total === 0 ? 0 : (page - 1) * pageSize + 1
+  const rangeTo = Math.min(page * pageSize, total)
+  const canPrev = page > 1
+  const canNext = page * pageSize < total
 
   function onAddAssignment() {
     setInspectorMode('create')
@@ -187,8 +223,11 @@ export default function AssignmentTable() {
 
   async function onCreate(payload: CreateAssignmentInput) {
     setError(null)
-    const created = await createAssignment(payload)
-    setRows((prev) => [created, ...prev])
+    await createAssignment(payload)
+
+    // Refresh list (keeps server ordering authoritative)
+    setPage(1)
+    setReloadKey((k) => k + 1)
   }
 
   function updateField(assignmentId: string, field: EditableField, value: any) {
@@ -210,7 +249,6 @@ export default function AssignmentTable() {
             : null
         }
 
-        // position_title is stored as string; no derived label needed
         return next
       })
     )
@@ -235,9 +273,13 @@ export default function AssignmentTable() {
         setRows((prev) =>
           prev.map((r) => (r.assignment_id === assignmentId ? updated : r))
         )
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Debounced assignment update error', err)
-        setError(err?.message ?? 'Update failed.')
+        const msg =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as any).message)
+            : 'Update failed.'
+        setError(msg)
       } finally {
         writeTimers.current.delete(key)
       }
@@ -249,8 +291,8 @@ export default function AssignmentTable() {
   return (
     <div className="h-full flex flex-col">
       {/* Controls */}
-      <div className="flex items-center justify-between gap-3 px-6 py-4">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
+        <div className="flex flex-wrap items-center gap-3">
           <input
             placeholder="Search by person, tech id, org, title…"
             className="w-96 rounded border px-2 py-1 text-sm bg-white"
@@ -258,9 +300,45 @@ export default function AssignmentTable() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          {loading && (
-            <span className="text-sm text-[var(--to-ink-muted)]">Loading…</span>
-          )}
+
+          <div className="flex items-center gap-2 text-sm text-[var(--to-ink-muted)]">
+            <span>
+              {rangeFrom}-{rangeTo} of {total}
+            </span>
+
+            <button
+              className="rounded border px-2 py-1"
+              style={{ borderColor: 'var(--to-border)' }}
+              disabled={!canPrev || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Prev
+            </button>
+
+            <button
+              className="rounded border px-2 py-1"
+              style={{ borderColor: 'var(--to-border)' }}
+              disabled={!canNext || loading}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </button>
+
+            <select
+              className="rounded border px-2 py-1 text-sm bg-white"
+              style={{ borderColor: 'var(--to-border)' }}
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              disabled={loading}
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+
+            {loading && <span>Loading…</span>}
+          </div>
         </div>
 
         <button
@@ -311,7 +389,7 @@ export default function AssignmentTable() {
             </thead>
 
             <tbody>
-              {!loading && filtered.length === 0 ? (
+              {!loading && rows.length === 0 ? (
                 <tr>
                   <td
                     colSpan={6}
@@ -321,7 +399,7 @@ export default function AssignmentTable() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((row) => (
+                rows.map((row) => (
                   <tr
                     key={row.assignment_id ?? Math.random().toString(36)}
                     className="border-t hover:bg-[var(--to-row-hover)] cursor-pointer"

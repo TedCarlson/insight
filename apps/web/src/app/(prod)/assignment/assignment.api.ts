@@ -212,3 +212,49 @@ export async function fetchPositionTitles(): Promise<PositionTitleOption[]> {
     })) as PositionTitleOption[]
   )
 }
+
+/* ------------------------------------------------------------------ */
+/* LIST (Server pagination/search)                                     */
+/* ------------------------------------------------------------------ */
+
+export type ListAssignmentsParams = {
+  page: number
+  pageSize: number
+  q?: string
+}
+
+export async function listAssignments(
+  params: ListAssignmentsParams
+): Promise<{ rows: AssignmentRow[]; total: number }> {
+  const page = Math.max(1, params.page || 1)
+  const pageSize = Math.max(1, params.pageSize || 25)
+  const from = (page - 1) * pageSize
+  const to = from + pageSize - 1
+
+  let query = supabase
+    .from('assignment_admin_v')
+    .select('*', { count: 'exact' })
+    .order('full_name', { ascending: true, nullsFirst: false })
+    .order('start_date', { ascending: false, nullsFirst: false })
+    .range(from, to)
+
+  const q = (params.q ?? '').trim()
+  if (q) {
+    const like = `%${q}%`
+    query = query.or(
+      `full_name.ilike.${like},pc_org_name.ilike.${like},position_title.ilike.${like},tech_id.ilike.${like}`
+    )
+  }
+
+  const { data, count, error } = await query
+
+  if (error) {
+    console.error('listAssignments error', error)
+    throw error
+  }
+
+  return {
+    rows: (data ?? []) as AssignmentRow[],
+    total: count ?? 0,
+  }
+}

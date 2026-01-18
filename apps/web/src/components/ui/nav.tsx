@@ -10,7 +10,7 @@ import { createClient } from '@/app/(prod)/_shared/supabase';
 type NavItem = { href: string; label: string };
 
 const DEV_NAV: NavItem[] = [
-  { href: '/home', label: 'Home' },
+  { href: '/dev_home', label: 'Dev Home' },
   { href: '/models', label: 'Models' },
   { href: '/tasks', label: 'Tasks' },
   { href: '/data', label: 'Data' },
@@ -45,6 +45,7 @@ export default function Nav() {
   const ref = useRef<HTMLDivElement>(null);
 
   const [profileStatus, setProfileStatus] = useState<ProfileStatus>('unknown');
+  const [sessionLabel, setSessionLabel] = useState<string>(''); // ✅ Full Name — email
   const [isOwner, setIsOwner] = useState(false);
   const [roles, setRoles] = useState<string[]>([]);
   const [debugErr, setDebugErr] = useState<string>('');
@@ -79,6 +80,7 @@ export default function Nav() {
           setIsOwner(false);
           setRoles([]);
           setProfileStatus('unknown');
+          setSessionLabel('');
           return;
         }
 
@@ -88,8 +90,21 @@ export default function Nav() {
           setIsOwner(false);
           setRoles([]);
           setProfileStatus('unknown');
+          setSessionLabel('');
           return;
         }
+
+        // ✅ Session label: "Full Name — email" (fallbacks included)
+        const u = session.user;
+        const fullName =
+          (u.user_metadata as any)?.full_name ||
+          (u.user_metadata as any)?.name ||
+          (u.user_metadata as any)?.display_name ||
+          '';
+
+        const email = u.email || '';
+        const label = fullName && email ? `${String(fullName)} — ${String(email)}` : String(fullName || email || '');
+        setSessionLabel(label);
 
         const { data, error } = await supabase.rpc('get_access_context');
 
@@ -132,6 +147,7 @@ export default function Nav() {
           setIsOwner(false);
           setRoles([]);
           setProfileStatus('unknown');
+          setSessionLabel('');
         }
       }
     }
@@ -206,8 +222,15 @@ export default function Nav() {
 
             <div className="mt-2 rounded border bg-[var(--to-surface-soft)] p-2 text-xs text-[var(--to-ink)]">
               <div>
-                Status is <span className="font-mono">{profileStatus}</span>.
+                Status: <span className="font-mono">{profileStatus}</span>.
               </div>
+
+              {sessionLabel ? (
+                <div className="mt-1">
+                  User: <span className="font-mono">{sessionLabel}</span>
+                </div>
+              ) : null}
+
               {debugErr ? (
                 <div className="mt-2 text-[10px] text-red-700">
                   <div className="font-semibold">Access debug:</div>

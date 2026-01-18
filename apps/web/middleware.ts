@@ -10,7 +10,10 @@ function isPublicPath(pathname: string) {
   return (
     pathname === "/" ||
     pathname.startsWith("/login") ||
-    pathname.startsWith("/access")
+    pathname.startsWith("/access") ||
+    pathname.startsWith("/auth") ||
+    pathname.startsWith("/api/") ||
+    pathname.startsWith("/favicon.ico")
   );
 }
 

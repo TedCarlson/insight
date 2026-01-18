@@ -154,7 +154,7 @@ export async function fetchCompanyOptions(): Promise<CompanyOption[]> {
   }
 
   const companies: CompanyOption[] =
-    companyRes.data?.map((c) => ({
+    companyRes.data?.map((c: any) => ({
       id: c.company_id,
       label: c.company_name,
       code: c.company_code ?? null,
@@ -162,7 +162,7 @@ export async function fetchCompanyOptions(): Promise<CompanyOption[]> {
     })) ?? []
 
   const contractors: CompanyOption[] =
-    contractorRes.data?.map((k) => ({
+    contractorRes.data?.map((k: any) => ({
       id: k.contractor_id,
       label: k.contractor_name,
       code: k.contractor_code ?? null,

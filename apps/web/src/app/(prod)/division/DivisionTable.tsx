@@ -34,6 +34,7 @@ export default function DivisionTable() {
 
   useEffect(() => {
     let alive = true
+    const timers = writeTimers.current
     ;(async () => {
       try {
         setLoading(true)
@@ -51,10 +52,10 @@ export default function DivisionTable() {
     })()
 
     return () => {
-      alive = false
-      for (const t of writeTimers.current.values()) clearTimeout(t)
-      writeTimers.current.clear()
-    }
+  for (const t of timers.values()) clearTimeout(t)
+  timers.clear()
+}
+
   }, [])
 
   const filtered = useMemo(() => {

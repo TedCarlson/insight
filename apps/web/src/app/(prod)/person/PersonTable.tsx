@@ -75,12 +75,14 @@ export default function PersonTable() {
   }, [])
 
   useEffect(() => {
-    return () => {
-      for (const t of writeTimers.current.values()) clearTimeout(t)
-      writeTimers.current.clear()
-      writeSeq.current.clear()
-    }
-  }, [])
+  const timers = writeTimers.current;
+
+  return () => {
+    for (const timer of timers.values()) clearTimeout(timer);
+  };
+}, []);
+
+
 
   /* ---------------- Derived ---------------- */
   const companyLabelById = useMemo(() => {

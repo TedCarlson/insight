@@ -6,3 +6,6 @@ dist
 .DS_Store
 ui-journal-*.zip
 *.bak.*
+
+# TypeScript incremental build info
+**/tsconfig.tsbuildinfo

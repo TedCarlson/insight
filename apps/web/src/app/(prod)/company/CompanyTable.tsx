@@ -42,30 +42,33 @@ export default function CompanyTable() {
   const writeSeq = useRef(new Map<string, number>())
 
   useEffect(() => {
-    let alive = true
-    ;(async () => {
-      try {
-        setLoading(true)
-        setError(null)
-        const data = await fetchCompanies()
-        if (!alive) return
-        setRows(data)
-      } catch (err: any) {
-        console.error('Company load error', err)
-        if (!alive) return
-        setError(err?.message ?? 'Failed to load.')
-      } finally {
-        if (alive) setLoading(false)
-      }
-    })()
+  let alive = true
+  const timers = writeTimers.current
 
-    return () => {
-      alive = false
-      // clear any pending debounced writes to avoid setState after unmount
-      for (const t of writeTimers.current.values()) clearTimeout(t)
-      writeTimers.current.clear()
+  ;(async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const data = await fetchCompanies()
+      if (!alive) return
+      setRows(data)
+    } catch (err: any) {
+      console.error('Company load error', err)
+      if (!alive) return
+      setError(err?.message ?? 'Failed to load.')
+    } finally {
+      if (alive) setLoading(false)
     }
-  }, [])
+  })()
+
+  return () => {
+    alive = false
+    for (const t of timers.values()) clearTimeout(t)
+    timers.clear()
+  }
+}, [])
+
+
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()

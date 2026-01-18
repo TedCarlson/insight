@@ -133,12 +133,13 @@ export default function AssignmentTable() {
   }, [])
 
   useEffect(() => {
-    return () => {
-      writeTimers.current.forEach((t) => clearTimeout(t))
-      writeTimers.current.clear()
-      writeSeq.current.clear()
-    }
-  }, [])
+  const timers = writeTimers.current;
+
+  return () => {
+    for (const timer of timers.values()) clearTimeout(timer);
+  };
+}, []);
+
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()

@@ -202,3 +202,51 @@ export async function createPerson(
 
   return { type: 'created', row: row as PersonRow }
 }
+
+/* ------------------------------------------------------------------ */
+/* LIST (Server pagination/search)                                     */
+/* ------------------------------------------------------------------ */
+
+export type ListPersonsParams = {
+  page: number
+  pageSize: number
+  q?: string
+  active?: boolean | null
+}
+
+export async function listPersons(
+  params: ListPersonsParams
+): Promise<{ rows: PersonRow[]; total: number }> {
+  const page = Math.max(1, params.page || 1)
+  const pageSize = Math.max(1, params.pageSize || 25)
+  const from = (page - 1) * pageSize
+  const to = from + pageSize - 1
+
+  let query = supabase
+    .from('person_admin_v')
+    .select('*', { count: 'exact' })
+    .order('full_name')
+    .range(from, to)
+
+  const q = (params.q ?? '').trim()
+  if (q) {
+    const like = `%${q}%`
+    query = query.or(`full_name.ilike.${like},emails.ilike.${like}`)
+  }
+
+  if (params.active !== undefined && params.active !== null) {
+    query = query.eq('active', params.active)
+  }
+
+  const { data, count, error } = await query
+
+  if (error) {
+    console.error('listPersons error', error)
+    throw error
+  }
+
+  return {
+    rows: (data ?? []) as PersonRow[],
+    total: count ?? 0,
+  }
+}

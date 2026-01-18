@@ -51,6 +51,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "generateLink(recovery) failed", details: linkRes.error }, { status: 400 });
     }
 
+    // In production, do NOT return the action_link to the caller.
+    // Supabase should deliver recovery via email; returning direct links is a security footgun.
+    const isProd = process.env.NODE_ENV === "production";
+
+    if (isProd) {
+      return NextResponse.json({
+        ok: true,
+        email,
+        redirect_to: redirectTo,
+      });
+    }
+
+    // Dev/local convenience: allow returning the link so you can test flows quickly.
     const actionLink = (linkRes.data as any)?.properties?.action_link ?? null;
 
     if (!actionLink) {
@@ -65,6 +78,7 @@ export async function POST(req: Request) {
       email,
       action_link: actionLink,
       redirect_to: redirectTo,
+      dev_only: true,
     });
   } catch (e: any) {
     console.error("RECOVERY_ROUTE_UNCAUGHT_ERROR", e);

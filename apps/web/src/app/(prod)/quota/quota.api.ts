@@ -210,3 +210,61 @@ export async function updateQuota(
 
   return await fetchFromViewById(quotaId)
 }
+
+/* ------------------------------------------------------------------ */
+/* LIST (Server pagination/search)                                     */
+/* ------------------------------------------------------------------ */
+
+export type ListQuotasParams = {
+  page: number
+  pageSize: number
+  q?: string
+}
+
+export async function listQuotas(
+  params: ListQuotasParams
+): Promise<{ rows: QuotaRow[]; total: number }> {
+  const page = Math.max(1, params.page || 1)
+  const pageSize = Math.max(1, params.pageSize || 25)
+  const from = (page - 1) * pageSize
+  const to = from + pageSize - 1
+
+  let query = (supabase as any)
+    .from('quota_admin_v')
+    .select(QUOTA_ADMIN_SELECT, { count: 'exact' })
+    .order('fiscal_month_start_date', { ascending: false })
+    .order('route_name', { ascending: true })
+    .range(from, to)
+
+  const q = (params.q ?? '').trim()
+  if (q) {
+    const like = `%${q}%`
+    query = query.or(
+      [
+        `route_name.ilike.${like}`,
+        `pc_org_name.ilike.${like}`,
+        `fiscal_month_label.ilike.${like}`,
+        `fiscal_month_key.ilike.${like}`,
+        `route_id.ilike.${like}`,
+        `quota_id.ilike.${like}`,
+      ].join(',')
+    )
+  }
+
+  const { data, count, error } = await query
+
+  if (error) {
+    console.error('listQuotas error', {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+    })
+    throw new Error((error as any)?.message ?? 'Failed to load quotas.')
+  }
+
+  return {
+    rows: (data ?? []) as unknown as QuotaRow[],
+    total: count ?? 0,
+  }
+}

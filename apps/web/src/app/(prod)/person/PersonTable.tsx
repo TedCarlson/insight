@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  fetchPersons,
+  listPersons,
   updatePersonEmployer,
   updatePersonCore, // <-- include here
   createPerson
@@ -57,6 +57,11 @@ export default function PersonTable() {
   const [statusFilter, setStatusFilter] =
     useState<ActiveFilter>('all')
 
+
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
   /* ---------------- Inspector State ---------------- */
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [inspectorMode, setInspectorMode] =
@@ -66,14 +71,49 @@ export default function PersonTable() {
 
   /* ---------------- Bootstrap ---------------- */
   useEffect(() => {
-    Promise.all([fetchPersons(), fetchCompanyOptions()]).then(
-      ([people, companies]) => {
-        setRows(people)
-        setCompanyOptions(companies)
-      }
-    )
+    fetchCompanyOptions().then(setCompanyOptions)
   }, [])
 
+  // Debounce search so we don't query on every keystroke
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => clearTimeout(t)
+  }, [search])
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setPage(1)
+  }, [statusFilter, pageSize, debouncedSearch])
+
+  // Server-driven list (pagination + count)
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+
+    listPersons({ page, pageSize, q: debouncedSearch, active: statusFilter === "all" ? null : statusFilter === "active" })
+      .then(({ rows, total }) => {
+        if (!alive) return
+        setRows(rows)
+        setTotal(total)
+      })
+      .catch((err: unknown) => {
+        console.error('PersonTable listPersons error', err)
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [page, pageSize, debouncedSearch, statusFilter])
+
+  // Clamp current page when total changes
+  useEffect(() => {
+    const tp = Math.max(1, Math.ceil(total / pageSize))
+    setPage((p) => Math.min(p, tp))
+  }, [total, pageSize])
   useEffect(() => {
   const timers = writeTimers.current;
 
@@ -97,33 +137,6 @@ export default function PersonTable() {
     if (!selectedPersonId) return null
     return rows.find((r) => r.person_id === selectedPersonId) ?? null
   }, [rows, selectedPersonId])
-
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase()
-
-    return rows.filter((r) => {
-      const companyLabel =
-        r.co_ref_id && companyLabelById.get(String(r.co_ref_id))
-          ? companyLabelById.get(String(r.co_ref_id))!
-          : ''
-
-      const matchesSearch =
-        r.full_name?.toLowerCase().includes(q) ||
-        r.emails?.toLowerCase().includes(q) ||
-        r.mobile?.toLowerCase().includes(q) ||
-        r.co_code?.toLowerCase().includes(q) ||
-        companyLabel.toLowerCase().includes(q)
-
-      const matchesStatus =
-        statusFilter === 'all'
-          ? true
-          : statusFilter === 'active'
-            ? r.active === true
-            : r.active === false
-
-      return matchesSearch && matchesStatus
-    })
-  }, [rows, search, statusFilter, companyLabelById])
 
   /* ---------------- Mutations ---------------- */
   function updateField(
@@ -250,6 +263,13 @@ export default function PersonTable() {
     'px-3 py-2 text-[11px] font-semibold uppercase tracking-wide border-b'
   const td = 'px-3 py-2 align-top border-b'
 
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const fromRow = total === 0 ? 0 : (page - 1) * pageSize + 1
+  const toRow = Math.min(page * pageSize, total)
+  const canPrev = page > 1
+  const canNext = page < totalPages
+
   /* ---------------- Render ---------------- */
   return (
     <div className="flex h-full flex-col">
@@ -313,6 +333,53 @@ export default function PersonTable() {
                 onChange={(e) => setSearch(e.target.value)}
               />
 
+              <div className="flex items-center gap-2 text-xs text-[var(--to-ink-muted)]">
+                <span>{loading ? 'Loading…' : `${total.toLocaleString()} total`}</span>
+                <span className="hidden sm:inline">•</span>
+                <span className="hidden sm:inline">
+                  {total === 0 ? '0–0' : `${fromRow.toLocaleString()}–${toRow.toLocaleString()}`}
+                </span>
+              </div>
+
+              <select
+                className="rounded border px-2 py-1 text-sm bg-white"
+                style={{ borderColor: 'var(--to-border)' }}
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                disabled={loading}
+                title="Page size"
+              >
+                {[10, 25, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}/page
+                  </option>
+                ))}
+              </select>
+
+              <div className="flex items-center gap-2">
+                <button
+                  className="rounded px-2 py-1 text-sm border bg-white disabled:opacity-50"
+                  style={{ borderColor: 'var(--to-border)' }}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={loading || !canPrev}
+                  title="Previous page"
+                >
+                  Prev
+                </button>
+                <div className="text-xs text-[var(--to-ink-muted)] w-16 text-center">
+                  {page}/{totalPages}
+                </div>
+                <button
+                  className="rounded px-2 py-1 text-sm border bg-white disabled:opacity-50"
+                  style={{ borderColor: 'var(--to-border)' }}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={loading || !canNext}
+                  title="Next page"
+                >
+                  Next
+                </button>
+              </div>
+
               <button
                 onClick={onAddPerson}
                 disabled={inlineEdit}
@@ -365,7 +432,7 @@ export default function PersonTable() {
           </thead>
 
           <tbody>
-            {filtered.map((r, idx) => {
+            {rows.map((r, idx) => {
               const companyLabel =
                 r.co_ref_id && companyLabelById.get(String(r.co_ref_id))
                   ? companyLabelById.get(String(r.co_ref_id))!

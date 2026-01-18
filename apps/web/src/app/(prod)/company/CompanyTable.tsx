@@ -3,11 +3,22 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createCompany, deleteCompany, fetchCompanies, updateCompany } from './company.api'
-import type { CompanyInspectorMode, CompanyRow, CreateCompanyInput, EditableField } from './company.types'
+import {
+  createCompany,
+  deleteCompany,
+  listCompanies,
+  updateCompany,
+} from './company.api'
+import type {
+  CompanyInspectorMode,
+  CompanyRow,
+  CreateCompanyInput,
+  EditableField,
+} from './company.types'
 import CompanyInspector from './CompanyInspector'
 
 const WRITE_DELAY_MS = 450
+const SEARCH_DEBOUNCE_MS = 300
 
 function getId(row: CompanyRow): string {
   const id = row.company_id ?? row.id
@@ -32,60 +43,97 @@ export default function CompanyTable() {
   const [error, setError] = useState<string | null>(null)
 
   const [rows, setRows] = useState<CompanyRow[]>([])
+  const [total, setTotal] = useState(0)
+
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
+
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>(
+    'all'
+  )
+
+  const [reloadKey, setReloadKey] = useState(0)
 
   const [inspectorOpen, setInspectorOpen] = useState(false)
-  const [inspectorMode, setInspectorMode] = useState<CompanyInspectorMode>('create')
+  const [inspectorMode, setInspectorMode] =
+    useState<CompanyInspectorMode>('create')
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null)
 
   const writeTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const writeSeq = useRef(new Map<string, number>())
 
+  // Debounce search
   useEffect(() => {
-  let alive = true
-  const timers = writeTimers.current
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(t)
+  }, [search])
 
-  ;(async () => {
-    try {
-      setLoading(true)
-      setError(null)
-      const data = await fetchCompanies()
-      if (!alive) return
-      setRows(data)
-    } catch (err: any) {
-      console.error('Company load error', err)
-      if (!alive) return
-      setError(err?.message ?? 'Failed to load.')
-    } finally {
-      if (alive) setLoading(false)
+  // Reset to page 1 when query/pageSize/filter changes
+  useEffect(() => {
+    setPage(1)
+  }, [debouncedSearch, pageSize, activeFilter])
+
+  // Load paged companies
+  useEffect(() => {
+    let alive = true
+
+    ;(async () => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        const active =
+          activeFilter === 'all' ? null : activeFilter === 'active'
+
+        const { rows: nextRows, total: nextTotal } = await listCompanies({
+          page,
+          pageSize,
+          q: debouncedSearch || undefined,
+          active,
+        })
+
+        if (!alive) return
+        setRows(nextRows)
+        setTotal(nextTotal)
+      } catch (err: unknown) {
+        console.error('Company load error', err)
+        if (!alive) return
+        const msg =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as any).message)
+            : 'Failed to load.'
+        setError(msg)
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+
+    return () => {
+      alive = false
     }
-  })()
+  }, [page, pageSize, debouncedSearch, activeFilter, reloadKey])
 
-  return () => {
-    alive = false
-    for (const t of timers.values()) clearTimeout(t)
-    timers.clear()
-  }
-}, [])
-
-
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return rows
-
-    return rows.filter((r) => {
-      const name = getName(r).toLowerCase()
-      const code = getCode(r).toLowerCase()
-      const id = getId(r).toLowerCase()
-      return name.includes(q) || code.includes(q) || id.includes(q)
-    })
-  }, [rows, search])
+  // Cleanup timers on unmount
+  useEffect(() => {
+    const timers = writeTimers.current
+    return () => {
+      for (const t of timers.values()) clearTimeout(t)
+      timers.clear()
+    }
+  }, [])
 
   const selectedCompany = useMemo(() => {
     if (!selectedCompanyId) return null
     return rows.find((r) => getId(r) === selectedCompanyId) ?? null
   }, [rows, selectedCompanyId])
+
+  const rangeFrom = total === 0 ? 0 : (page - 1) * pageSize + 1
+  const rangeTo = Math.min(page * pageSize, total)
+  const canPrev = page > 1
+  const canNext = page * pageSize < total
 
   function openCreate() {
     setInspectorMode('create')
@@ -106,13 +154,16 @@ export default function CompanyTable() {
   }
 
   async function onCreate(payload: CreateCompanyInput) {
-    const created = await createCompany(payload)
-    setRows((prev) => [created, ...prev])
+    await createCompany(payload)
+    setPage(1)
+    setReloadKey((k) => k + 1)
   }
 
   async function onDelete(companyId: string) {
     await deleteCompany(companyId)
+    // keep UI responsive; then refresh authoritative list
     setRows((prev) => prev.filter((r) => getId(r) !== companyId))
+    setReloadKey((k) => k + 1)
   }
 
   function updateField(companyId: string, field: EditableField, value: any) {
@@ -124,7 +175,6 @@ export default function CompanyTable() {
         const next: CompanyRow = { ...(r as any) }
 
         if (field === 'name') {
-          // update both name candidates so UI stays consistent
           next.company_name = String(value ?? '')
           next.name = String(value ?? '')
         } else if (field === 'code') {
@@ -149,7 +199,6 @@ export default function CompanyTable() {
 
     const timer = setTimeout(async () => {
       try {
-        // if a newer write was scheduled, skip this one
         if ((writeSeq.current.get(key) ?? 0) !== seq) return
 
         const patch: any = {}
@@ -158,11 +207,14 @@ export default function CompanyTable() {
         if (field === 'active') patch.active = Boolean(value)
 
         const updated = await updateCompany(companyId, patch)
-
         setRows((prev) => prev.map((r) => (getId(r) === companyId ? updated : r)))
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Debounced company update error', err)
-        setError(err?.message ?? 'Update failed.')
+        const msg =
+          err && typeof err === 'object' && 'message' in err
+            ? String((err as any).message)
+            : 'Update failed.'
+        setError(msg)
       } finally {
         writeTimers.current.delete(key)
       }
@@ -174,8 +226,8 @@ export default function CompanyTable() {
   return (
     <div className="h-full flex flex-col">
       {/* Controls */}
-      <div className="flex items-center justify-between gap-3 px-6 py-4">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4">
+        <div className="flex flex-wrap items-center gap-3">
           <input
             placeholder="Search by name, code, id…"
             className="w-96 rounded border px-2 py-1 text-sm bg-white"
@@ -183,8 +235,56 @@ export default function CompanyTable() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <div className="text-sm text-[var(--to-ink-muted)]">
-            {loading ? 'Loading…' : `${filtered.length} rows`}
+
+          <select
+            className="rounded border px-2 py-1 text-sm bg-white"
+            style={{ borderColor: 'var(--to-border)' }}
+            value={activeFilter}
+            onChange={(e) => setActiveFilter(e.target.value as any)}
+            disabled={loading}
+          >
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+
+          <div className="text-sm text-[var(--to-ink-muted)] flex items-center gap-2">
+            <span>
+              {rangeFrom}-{rangeTo} of {total}
+            </span>
+
+            <button
+              className="rounded border px-2 py-1"
+              style={{ borderColor: 'var(--to-border)' }}
+              disabled={!canPrev || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Prev
+            </button>
+
+            <button
+              className="rounded border px-2 py-1"
+              style={{ borderColor: 'var(--to-border)' }}
+              disabled={!canNext || loading}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </button>
+
+            <select
+              className="rounded border px-2 py-1 text-sm bg-white"
+              style={{ borderColor: 'var(--to-border)' }}
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              disabled={loading}
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+
+            <span>{loading ? 'Loading…' : null}</span>
           </div>
         </div>
 
@@ -231,7 +331,7 @@ export default function CompanyTable() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => {
+              {rows.map((r) => {
                 const id = getId(r)
                 return (
                   <tr
@@ -241,15 +341,21 @@ export default function CompanyTable() {
                     onClick={() => openEdit(r)}
                     title="Click to edit"
                   >
-                    <td className="px-3 py-2">{getName(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
-                    <td className="px-3 py-2">{getCode(r) || <span className="text-[var(--to-ink-muted)]">—</span>}</td>
+                    <td className="px-3 py-2">
+                      {getName(r) || <span className="text-[var(--to-ink-muted)]">—</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      {getCode(r) || <span className="text-[var(--to-ink-muted)]">—</span>}
+                    </td>
                     <td className="px-3 py-2">{getActive(r) ? 'Yes' : 'No'}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-[var(--to-ink-muted)]">{id || '—'}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-[var(--to-ink-muted)]">
+                      {id || '—'}
+                    </td>
                   </tr>
                 )
               })}
 
-              {!loading && filtered.length === 0 && (
+              {!loading && rows.length === 0 && (
                 <tr>
                   <td className="px-3 py-6 text-[var(--to-ink-muted)]" colSpan={4}>
                     No rows match your search.

@@ -161,3 +161,66 @@ export async function deleteCompany(companyId: string): Promise<void> {
     throw res2.error
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* LIST (Server pagination/search)                                     */
+/* ------------------------------------------------------------------ */
+
+export type ListCompaniesParams = {
+  page: number
+  pageSize: number
+  q?: string
+  active?: boolean | null
+}
+
+export async function listCompanies(
+  params: ListCompaniesParams
+): Promise<{ rows: CompanyRow[]; total: number }> {
+  const page = Math.max(1, params.page || 1)
+  const pageSize = Math.max(1, params.pageSize || 25)
+  const from = (page - 1) * pageSize
+  const to = from + pageSize - 1
+
+  let query = supabase
+    .from('company_admin_v')
+    .select('*', { count: 'exact' })
+    .range(from, to)
+
+  const q = (params.q ?? '').trim()
+  if (q) {
+    const like = `%${q}%`
+    // Support multiple naming conventions in the view
+    query = query.or(
+      [
+        `company_name.ilike.${like}`,
+        `name.ilike.${like}`,
+        `company_code.ilike.${like}`,
+        `code.ilike.${like}`,
+        `company_id.ilike.${like}`,
+        `id.ilike.${like}`,
+      ].join(',')
+    )
+  }
+
+  if (params.active !== undefined && params.active !== null) {
+    // Support both possible active fields; use OR on equality
+    query = query.or(
+      [
+        `is_active.eq.${params.active}`,
+        `active.eq.${params.active}`,
+      ].join(',')
+    )
+  }
+
+  const { data, count, error } = await query
+
+  if (error) {
+    console.error('listCompanies error', error)
+    throw error
+  }
+
+  return {
+    rows: (data ?? []) as CompanyRow[],
+    total: count ?? 0,
+  }
+}

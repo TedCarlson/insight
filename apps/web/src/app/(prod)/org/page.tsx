@@ -5,7 +5,6 @@ import { MasterOverlay, safeOverlayTab } from "../_shared/MasterOverlay";
 import { OrgContextSelector } from "./_shared/OrgContextSelector";
 import { OrgRosterPanel } from "./_shared/OrgRosterPanel";
 import { OrgPlanningPanel } from "./_shared/OrgPlanningPanel";
-import { OrgWirePanel } from "./_shared/OrgWirePanel";
 
 export default async function OrgPage({
   searchParams,
@@ -56,7 +55,7 @@ export default async function OrgPage({
 
   return (
     <MasterOverlay
-      title="Org"
+      title="ITG → Insight"
       scopeLabel={scopeLabel}
       activeTab={tab}
       baseHref="/org"
@@ -94,13 +93,6 @@ export default async function OrgPage({
         </p>
       )}
 
-      {tab === "wire" && selectedPcOrgId && <OrgWirePanel pcOrgId={selectedPcOrgId} />}
-
-      {tab === "wire" && !selectedPcOrgId && (
-        <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Select an org to view leadership wire.
-        </p>
-      )}
     </MasterOverlay>
   );
 }

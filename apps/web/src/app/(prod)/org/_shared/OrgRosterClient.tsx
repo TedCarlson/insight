@@ -4,6 +4,15 @@ import React, { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MasterRosterRow } from "./OrgRosterPanel";
 import { OrgRosterOverlay } from "./OrgRosterOverlay";
+import {
+  toBtnPrimary,
+  toToggleOn,
+  toToggleOff,
+  toPillLocked,
+  toTableWrap,
+  toThead,
+  toRowHover,
+} from "../../_shared/toStyles";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -13,6 +22,13 @@ export function OrgRosterClient(props: { rows: MasterRosterRow[]; pcOrgId: strin
   const router = useRouter();
 
   const [showOnlyActive, setShowOnlyActive] = useState(true);
+
+  function isSchedulingLocked(r: MasterRosterRow) {
+    const isActive = !!r.assignment_active;
+    const isTech = (r.position_title ?? "").trim().toLowerCase() === "technician";
+    const missingTechId = !r.tech_id || r.tech_id.trim() === "";
+    return isActive && isTech && missingTechId;
+  }
 
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [overlayMode, setOverlayMode] = useState<"add" | "edit">("add");
@@ -47,25 +63,26 @@ export function OrgRosterClient(props: { rows: MasterRosterRow[]; pcOrgId: strin
 
         <div className="flex items-center gap-2">
           <button
-            className="rounded-md border px-3 py-1.5 text-sm"
+            className={showOnlyActive ? toToggleOn : toToggleOff}
             onClick={() => setShowOnlyActive((v) => !v)}
             type="button"
           >
             {showOnlyActive ? "Active" : "All"}
           </button>
 
-          <button className="rounded-md border px-3 py-1.5 text-sm" onClick={openAdd} type="button">
-            + Bring person (global unassigned)
+          <button className={toBtnPrimary} onClick={openAdd} type="button">
+            + Onboard
           </button>
         </div>
       </div>
 
       {/* Roster table (human-readable) */}
-      <div className="overflow-auto rounded-md border">
+      <div className={toTableWrap}>
         <table className="min-w-full text-sm">
-          <thead className="bg-black/5">
+          <thead className={toThead}>
             <tr>
               <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Tech ID</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Scheduling</th>
               <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Name</th>
               <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Mobile</th>
               <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Reports To</th>
@@ -90,6 +107,15 @@ export function OrgRosterClient(props: { rows: MasterRosterRow[]; pcOrgId: strin
                   tabIndex={0}
                 >
                   <td className="whitespace-nowrap px-3 py-2">{r.tech_id || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2">
+                    {isSchedulingLocked(r) ? (
+                      <span className={toPillLocked}>
+                        Locked
+                      </span>
+                    ) : (
+                      <span className="text-xs text-[var(--to-ink-muted)]">—</span>
+                    )}
+                  </td>
                   <td className="whitespace-nowrap px-3 py-2 font-medium">{r.full_name}</td>
                   <td className="whitespace-nowrap px-3 py-2">{r.mobile || "—"}</td>
                   <td className="whitespace-nowrap px-3 py-2">{r.reports_to_full_name || "—"}</td>

@@ -11,6 +11,12 @@ type UnassignedPerson = {
   emails?: string | null;
 };
 
+type PositionTitleRow = {
+  position_title: string;
+  sort_order?: number | null;
+  active?: boolean | null;
+};
+
 export function OrgRosterClient(props: { rows: RosterRow[]; pcOrgId: string }) {
   const router = useRouter();
   const { rows, pcOrgId } = props;
@@ -23,6 +29,10 @@ export function OrgRosterClient(props: { rows: RosterRow[]; pcOrgId: string }) {
   const [loading, setLoading] = useState(false);
   const [people, setPeople] = useState<UnassignedPerson[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Position titles (standardized)
+  const [titlesLoading, setTitlesLoading] = useState(false);
+  const [titles, setTitles] = useState<PositionTitleRow[]>([]);
 
   const [selectedPersonId, setSelectedPersonId] = useState<string>("");
   const [positionTitle, setPositionTitle] = useState<string>("Rep");
@@ -63,9 +73,39 @@ export function OrgRosterClient(props: { rows: RosterRow[]; pcOrgId: string }) {
     }
   }
 
+  async function loadTitles() {
+    setTitlesLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/meta/position-titles", { method: "GET" });
+      const json = await res.json();
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || `Failed to load titles (${res.status})`);
+      }
+      const t: PositionTitleRow[] = json.titles || [];
+      setTitles(t);
+
+      // Default selection: prefer "Rep" if present, else first available
+      const rep = t.find((x) => x.position_title === "Rep")?.position_title;
+      const first = t[0]?.position_title;
+      setPositionTitle((prev) => {
+        // If current selection is valid, keep it.
+        if (t.some((x) => x.position_title === prev)) return prev;
+        return rep || first || prev;
+      });
+    } catch (e: any) {
+      setTitles([]);
+      // Don't block the entire modal if titles fail; show error.
+      setError(e?.message || "Failed to load position titles");
+    } finally {
+      setTitlesLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (!open) return;
     loadPeople(q);
+    loadTitles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -82,7 +122,7 @@ export function OrgRosterClient(props: { rows: RosterRow[]; pcOrgId: string }) {
       return;
     }
     if (!positionTitle.trim()) {
-      setError("Enter a position/title.");
+      setError("Pick a position/title.");
       return;
     }
     if (!startDate.trim()) {
@@ -257,12 +297,31 @@ export function OrgRosterClient(props: { rows: RosterRow[]; pcOrgId: string }) {
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <label className="grid gap-1">
                   <div className="text-sm font-medium">Position / Title</div>
-                  <input
+                  <select
                     className="rounded-md border px-3 py-2 text-sm"
                     value={positionTitle}
                     onChange={(e) => setPositionTitle(e.target.value)}
-                    placeholder="e.g. Rep"
-                  />
+                    disabled={titlesLoading || titles.length === 0}
+                  >
+                    {titlesLoading ? (
+                      <option value={positionTitle}>Loading…</option>
+                    ) : titles.length === 0 ? (
+                      <option value={positionTitle}>No titles available</option>
+                    ) : (
+                      titles.map((t) => (
+                        <option key={t.position_title} value={t.position_title}>
+                          {t.position_title}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <div className="text-xs text-[var(--to-ink-muted)]">
+                    {titlesLoading
+                      ? "Loading standardized titles…"
+                      : titles.length === 0
+                        ? "No active titles found in position_title."
+                        : "Standardized (from position_title)."}
+                  </div>
                 </label>
 
                 <label className="grid gap-1">

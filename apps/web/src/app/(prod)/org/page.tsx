@@ -5,6 +5,7 @@ import { MasterOverlay, safeOverlayTab } from "../_shared/MasterOverlay";
 import { OrgContextSelector } from "./_shared/OrgContextSelector";
 import { OrgRosterPanel } from "./_shared/OrgRosterPanel";
 import { OrgPlanningPanel } from "./_shared/OrgPlanningPanel";
+import { OrgWirePanel } from "./_shared/OrgWirePanel";
 
 export default async function OrgPage({
   searchParams,
@@ -63,7 +64,7 @@ export default async function OrgPage({
     >
       {!selectedPcOrgId ? (
         <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Select an org to view scoped roster/planning/metrics.
+          Select an org to view scoped roster/planning/metrics/wire.
         </p>
       ) : null}
 
@@ -90,6 +91,14 @@ export default async function OrgPage({
       {tab === "metrics" && (
         <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
           Metrics dimension (pc_org scoped) will load here next.
+        </p>
+      )}
+
+      {tab === "wire" && selectedPcOrgId && <OrgWirePanel pcOrgId={selectedPcOrgId} />}
+
+      {tab === "wire" && !selectedPcOrgId && (
+        <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
+          Select an org to view leadership wire.
         </p>
       )}
     </MasterOverlay>

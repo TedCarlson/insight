@@ -17,6 +17,7 @@ const DEV_NAV: NavItem[] = [
 ];
 
 const PROD_NAV: NavItem[] = [
+  { href: '/home', label: 'Home' },
   { href: '/person', label: 'People' },
   { href: '/assignment', label: 'Assignments' },
   { href: '/leadership', label: 'Leadership' },
@@ -185,10 +186,9 @@ export default function Nav() {
         onClick={() => setOpen(false)}
         className={`
           block rounded px-3 py-2 text-sm font-medium transition
-          ${
-            active
-              ? 'bg-blue-200 text-[var(--to-ink)]'
-              : 'text-[var(--to-ink-muted)] hover:bg-blue-100 hover:text-[var(--to-ink)]'
+          ${active
+            ? 'bg-blue-200 text-[var(--to-ink)]'
+            : 'text-[var(--to-ink-muted)] hover:bg-blue-100 hover:text-[var(--to-ink)]'
           }
         `}
       >

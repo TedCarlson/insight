@@ -1,10 +1,10 @@
 // apps/web/src/app/(prod)/_shared/MasterOverlay.tsx
 import Link from "next/link";
 
-export type OverlayTabKey = "roster" | "planning" | "metrics";
+export type OverlayTabKey = "roster" | "planning" | "metrics" | "wire";
 
 export function safeOverlayTab(v: unknown): OverlayTabKey {
-  if (v === "planning" || v === "metrics" || v === "roster") return v;
+  if (v === "planning" || v === "metrics" || v === "roster" || v === "wire") return v;
   return "roster";
 }
 
@@ -61,6 +61,14 @@ export function MasterOverlay(props: {
           style={tabStyle("metrics")}
         >
           Metrics
+        </Link>
+
+        <Link
+          href={tabLink("wire")}
+          className="rounded border px-4 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)]"
+          style={tabStyle("wire")}
+        >
+          Wire
         </Link>
       </div>
 

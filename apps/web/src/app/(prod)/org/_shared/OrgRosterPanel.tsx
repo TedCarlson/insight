@@ -20,13 +20,13 @@ export async function OrgRosterPanel(props: { pcOrgId: string }) {
 
   const rows = (data ?? []) as Row[];
 
-  if (rows.length === 0) {
-    return (
-      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-        No roster rows returned for this org.
-      </p>
-    );
-  }
+  return (
+    <div className="mt-2 space-y-3">
+      {rows.length === 0 ? (
+        <p className="text-sm text-[var(--to-ink-muted)]">No roster rows returned for this org.</p>
+      ) : null}
 
-  return <OrgRosterClient rows={rows} />;
+      <OrgRosterClient rows={rows} pcOrgId={props.pcOrgId} />
+    </div>
+  );
 }

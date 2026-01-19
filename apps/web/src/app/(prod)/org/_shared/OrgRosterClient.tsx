@@ -1,175 +1,49 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { MasterRosterRow } from "./OrgRosterPanel";
+import { OrgRosterOverlay } from "./OrgRosterOverlay";
 
-type RosterRow = Record<string, any>;
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
 
-type UnassignedPerson = {
-  person_id: string;
-  full_name: string;
-  emails?: string | null;
-};
-
-type PositionTitleRow = {
-  position_title: string;
-  sort_order?: number | null;
-  active?: boolean | null;
-};
-
-export function OrgRosterClient(props: { rows: RosterRow[]; pcOrgId: string }) {
+export function OrgRosterClient(props: { rows: MasterRosterRow[]; pcOrgId: string }) {
   const router = useRouter();
-  const { rows, pcOrgId } = props;
 
   const [showOnlyActive, setShowOnlyActive] = useState(true);
 
-  // Modal state
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [people, setPeople] = useState<UnassignedPerson[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  // Position titles (standardized)
-  const [titlesLoading, setTitlesLoading] = useState(false);
-  const [titles, setTitles] = useState<PositionTitleRow[]>([]);
-
-  const [selectedPersonId, setSelectedPersonId] = useState<string>("");
-  const [positionTitle, setPositionTitle] = useState<string>("Rep");
-  const [startDate, setStartDate] = useState<string>(() => {
-    const d = new Date();
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
-  });
-  const [saving, setSaving] = useState(false);
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [overlayMode, setOverlayMode] = useState<"add" | "edit">("add");
+  const [selectedRow, setSelectedRow] = useState<MasterRosterRow | null>(null);
 
   const filteredRows = useMemo(() => {
-    if (!showOnlyActive) return rows ?? [];
-    return (rows ?? []).filter((r) => r?.active === true);
-  }, [rows, showOnlyActive]);
+    if (!showOnlyActive) return props.rows ?? [];
+    return (props.rows ?? []).filter((r) => r?.assignment_active === true);
+  }, [props.rows, showOnlyActive]);
 
-  async function loadPeople(search: string) {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams();
-      if (search.trim()) params.set("q", search.trim());
-      params.set("limit", "25");
-
-      const res = await fetch(`/api/org/unassigned?${params.toString()}`, { method: "GET" });
-      const json = await res.json();
-
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || `Failed to load (${res.status})`);
-      }
-      setPeople(json.people || []);
-    } catch (e: any) {
-      setPeople([]);
-      setError(e?.message || "Failed to load people");
-    } finally {
-      setLoading(false);
-    }
+  function openAdd() {
+    setSelectedRow(null);
+    setOverlayMode("add");
+    setOverlayOpen(true);
   }
 
-  async function loadTitles() {
-    setTitlesLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/meta/position-titles", { method: "GET" });
-      const json = await res.json();
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || `Failed to load titles (${res.status})`);
-      }
-      const t: PositionTitleRow[] = json.titles || [];
-      setTitles(t);
-
-      // Default selection: prefer "Rep" if present, else first available
-      const rep = t.find((x) => x.position_title === "Rep")?.position_title;
-      const first = t[0]?.position_title;
-      setPositionTitle((prev) => {
-        // If current selection is valid, keep it.
-        if (t.some((x) => x.position_title === prev)) return prev;
-        return rep || first || prev;
-      });
-    } catch (e: any) {
-      setTitles([]);
-      // Don't block the entire modal if titles fail; show error.
-      setError(e?.message || "Failed to load position titles");
-    } finally {
-      setTitlesLoading(false);
-    }
+  function openEdit(row: MasterRosterRow) {
+    setSelectedRow(row);
+    setOverlayMode("edit");
+    setOverlayOpen(true);
   }
 
-  useEffect(() => {
-    if (!open) return;
-    loadPeople(q);
-    loadTitles();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const t = setTimeout(() => loadPeople(q), 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, open]);
-
-  async function submitAssign() {
-    if (!selectedPersonId) {
-      setError("Pick a person first.");
-      return;
-    }
-    if (!positionTitle.trim()) {
-      setError("Pick a position/title.");
-      return;
-    }
-    if (!startDate.trim()) {
-      setError("Pick a start date.");
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/org/assign", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pc_org_id: pcOrgId,
-          person_id: selectedPersonId,
-          position_title: positionTitle.trim(),
-          start_date: startDate.trim(),
-        }),
-      });
-
-      const json = await res.json();
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || `Assign failed (${res.status})`);
-      }
-
-      // Close + refresh roster
-      setOpen(false);
-      setQ("");
-      setPeople([]);
-      setSelectedPersonId("");
-      setPositionTitle("Rep");
-      setShowOnlyActive(true);
-      router.refresh();
-    } catch (e: any) {
-      setError(e?.message || "Assign failed");
-    } finally {
-      setSaving(false);
-    }
+  function onSaved() {
+    // Server component re-fetch
+    router.refresh();
   }
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <div className="text-sm text-[var(--to-ink-muted)]">
-          Showing {filteredRows.length} row(s)
-        </div>
+        <div className="text-sm text-[var(--to-ink-muted)]">Showing {filteredRows.length} row(s)</div>
 
         <div className="flex items-center gap-2">
           <button
@@ -180,43 +54,47 @@ export function OrgRosterClient(props: { rows: RosterRow[]; pcOrgId: string }) {
             {showOnlyActive ? "Active" : "All"}
           </button>
 
-          <button
-            className="rounded-md border px-3 py-1.5 text-sm"
-            onClick={() => setOpen(true)}
-            type="button"
-          >
+          <button className="rounded-md border px-3 py-1.5 text-sm" onClick={openAdd} type="button">
             + Bring person (global unassigned)
           </button>
         </div>
       </div>
 
-      {/* Simple roster table */}
+      {/* Roster table (human-readable) */}
       <div className="overflow-auto rounded-md border">
         <table className="min-w-full text-sm">
           <thead className="bg-black/5">
             <tr>
-              {Object.keys((filteredRows[0] ?? {}) as any).map((k) => (
-                <th key={k} className="whitespace-nowrap px-3 py-2 text-left font-medium">
-                  {k}
-                </th>
-              ))}
+              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Tech ID</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Name</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Mobile</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Reports To</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Company / Contractor</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Active</th>
             </tr>
           </thead>
           <tbody>
             {filteredRows.length === 0 ? (
               <tr>
-                <td className="px-3 py-3 text-[var(--to-ink-muted)]" colSpan={999}>
+                <td className="px-3 py-3 text-[var(--to-ink-muted)]" colSpan={6}>
                   No rows to display.
                 </td>
               </tr>
             ) : (
-              filteredRows.map((r, idx) => (
-                <tr key={idx} className="border-t">
-                  {Object.keys(r).map((k) => (
-                    <td key={k} className="whitespace-nowrap px-3 py-2">
-                      {String((r as any)[k] ?? "")}
-                    </td>
-                  ))}
+              filteredRows.map((r) => (
+                <tr
+                  key={r.assignment_id}
+                  className={cx("border-t", "cursor-pointer hover:bg-black/5")}
+                  onClick={() => openEdit(r)}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <td className="whitespace-nowrap px-3 py-2">{r.tech_id || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2 font-medium">{r.full_name}</td>
+                  <td className="whitespace-nowrap px-3 py-2">{r.mobile || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2">{r.reports_to_full_name || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2">{r.co_name || r.co_code || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2">{r.assignment_active ? "Yes" : "No"}</td>
                 </tr>
               ))
             )}
@@ -224,142 +102,14 @@ export function OrgRosterClient(props: { rows: RosterRow[]; pcOrgId: string }) {
         </table>
       </div>
 
-      {/* Modal */}
-      {open ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="w-full max-w-2xl rounded-lg bg-white p-5 shadow-lg">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-xl font-semibold">Bring person (global unassigned)</div>
-                <div className="mt-1 text-sm text-[var(--to-ink-muted)]">
-                  Search unassigned people, set title + start date, and create an assignment in this org.
-                </div>
-              </div>
-
-              <button
-                className="rounded-md border px-3 py-1.5 text-sm"
-                onClick={() => setOpen(false)}
-                type="button"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="mt-4 grid gap-3">
-              <label className="grid gap-1">
-                <div className="text-sm font-medium">Search</div>
-                <input
-                  className="rounded-md border px-3 py-2 text-sm"
-                  placeholder="Type a name or email…"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                />
-              </label>
-
-              <div className="rounded-md border">
-                <div className="flex items-center justify-between border-b px-3 py-2 text-sm">
-                  <div className="font-medium">Results</div>
-                  <div className="text-[var(--to-ink-muted)]">
-                    {loading ? "Loading…" : `${people.length} found`}
-                  </div>
-                </div>
-
-                <div className="max-h-64 overflow-auto">
-                  {people.length === 0 ? (
-                    <div className="px-3 py-3 text-sm text-[var(--to-ink-muted)]">
-                      {loading ? "Loading…" : "No unassigned people found."}
-                    </div>
-                  ) : (
-                    <ul className="divide-y">
-                      {people.map((p) => (
-                        <li key={p.person_id} className="px-3 py-2">
-                          <label className="flex cursor-pointer items-center gap-2">
-                            <input
-                              type="radio"
-                              name="person"
-                              checked={selectedPersonId === p.person_id}
-                              onChange={() => setSelectedPersonId(p.person_id)}
-                            />
-                            <div className="min-w-0">
-                              <div className="truncate font-medium">{p.full_name}</div>
-                              {p.emails ? (
-                                <div className="truncate text-xs text-[var(--to-ink-muted)]">{p.emails}</div>
-                              ) : null}
-                            </div>
-                          </label>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <label className="grid gap-1">
-                  <div className="text-sm font-medium">Position / Title</div>
-                  <select
-                    className="rounded-md border px-3 py-2 text-sm"
-                    value={positionTitle}
-                    onChange={(e) => setPositionTitle(e.target.value)}
-                    disabled={titlesLoading || titles.length === 0}
-                  >
-                    {titlesLoading ? (
-                      <option value={positionTitle}>Loading…</option>
-                    ) : titles.length === 0 ? (
-                      <option value={positionTitle}>No titles available</option>
-                    ) : (
-                      titles.map((t) => (
-                        <option key={t.position_title} value={t.position_title}>
-                          {t.position_title}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                  <div className="text-xs text-[var(--to-ink-muted)]">
-                    {titlesLoading
-                      ? "Loading standardized titles…"
-                      : titles.length === 0
-                        ? "No active titles found in position_title."
-                        : "Standardized (from position_title)."}
-                  </div>
-                </label>
-
-                <label className="grid gap-1">
-                  <div className="text-sm font-medium">Start date</div>
-                  <input
-                    className="rounded-md border px-3 py-2 text-sm"
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
-                </label>
-              </div>
-
-              {error ? <div className="text-sm text-red-600">{error}</div> : null}
-
-              <div className="mt-1 flex items-center justify-end gap-2">
-                <button
-                  className="rounded-md border px-3 py-1.5 text-sm"
-                  onClick={() => setOpen(false)}
-                  type="button"
-                  disabled={saving}
-                >
-                  Cancel
-                </button>
-
-                <button
-                  className="rounded-md border px-3 py-1.5 text-sm font-medium"
-                  onClick={submitAssign}
-                  type="button"
-                  disabled={saving}
-                >
-                  {saving ? "Assigning…" : "Assign to this org"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <OrgRosterOverlay
+        open={overlayOpen}
+        mode={overlayMode}
+        pcOrgId={props.pcOrgId}
+        row={selectedRow}
+        onClose={() => setOverlayOpen(false)}
+        onSaved={onSaved}
+      />
     </div>
   );
 }

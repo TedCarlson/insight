@@ -4,6 +4,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@/app/(prod)/_shared/supabase'
+import { cn } from '@/lib/utils'
+import { toBtnPrimary, toRowHover, toTableWrap, toThead } from '../_shared/toStyles'
 import {
   createAssignment,
   listAssignments,
@@ -295,8 +297,7 @@ export default function AssignmentTable() {
         <div className="flex flex-wrap items-center gap-3">
           <input
             placeholder="Search by person, tech id, org, title…"
-            className="w-96 rounded border px-2 py-1 text-sm bg-white"
-            style={{ borderColor: 'var(--to-border)' }}
+            className="w-96 rounded border px-2 py-1 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -307,26 +308,21 @@ export default function AssignmentTable() {
             </span>
 
             <button
-              className="rounded border px-2 py-1"
-              style={{ borderColor: 'var(--to-border)' }}
-              disabled={!canPrev || loading}
+              className="rounded border px-2 py-1" disabled={!canPrev || loading}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
               Prev
             </button>
 
             <button
-              className="rounded border px-2 py-1"
-              style={{ borderColor: 'var(--to-border)' }}
-              disabled={!canNext || loading}
+              className="rounded border px-2 py-1" disabled={!canNext || loading}
               onClick={() => setPage((p) => p + 1)}
             >
               Next
             </button>
 
             <select
-              className="rounded border px-2 py-1 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="rounded border px-2 py-1 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)]"
               value={pageSize}
               onChange={(e) => setPageSize(Number(e.target.value))}
               disabled={loading}
@@ -343,7 +339,7 @@ export default function AssignmentTable() {
 
         <button
           onClick={onAddAssignment}
-          className="rounded px-3 py-1.5 text-sm bg-[var(--to-blue-600)] text-white"
+          className={toBtnPrimary}
         >
           + New Assignment
         </button>
@@ -352,12 +348,7 @@ export default function AssignmentTable() {
       {error && (
         <div className="px-6 pb-3">
           <div
-            className="rounded border px-3 py-2 text-sm"
-            style={{
-              borderColor: 'var(--to-border)',
-              background: 'var(--to-surface)',
-              color: 'var(--to-ink)',
-            }}
+            className="rounded border px-3 py-2 text-sm border-[var(--to-border)] bg-[var(--to-surface)] text-[var(--to-ink)]"
           >
             <span className="font-semibold">Error:</span> {error}
           </div>
@@ -366,18 +357,9 @@ export default function AssignmentTable() {
 
       {/* Table */}
       <div className="flex-1 min-h-0 px-6 pb-6">
-        <div
-          className="h-full rounded border overflow-auto"
-          style={{ borderColor: 'var(--to-border)' }}
-        >
+        <div className={cn("h-full", toTableWrap)}>
           <table className="w-full text-sm">
-            <thead
-              className="sticky top-0 z-10 border-b"
-              style={{
-                borderColor: 'var(--to-border)',
-                background: 'var(--to-header-bg)',
-              }}
-            >
+            <thead className={cn("sticky top-0 z-10 border-b border-[var(--to-border)]", toThead)}>
               <tr className="text-left text-[var(--to-ink-muted)]">
                 <th className="px-3 py-2 font-medium">Person</th>
                 <th className="px-3 py-2 font-medium">Tech ID</th>
@@ -402,8 +384,7 @@ export default function AssignmentTable() {
                 rows.map((row) => (
                   <tr
                     key={row.assignment_id ?? Math.random().toString(36)}
-                    className="border-t hover:bg-[var(--to-row-hover)] cursor-pointer"
-                    style={{ borderColor: 'var(--to-border)' }}
+                    className={cn("border-t border-[var(--to-border)] cursor-pointer", toRowHover)}
                     onClick={() => onEditAssignment(row)}
                   >
                     <td className="px-3 py-2 font-medium">

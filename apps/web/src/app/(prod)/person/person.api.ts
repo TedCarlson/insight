@@ -1,4 +1,3 @@
-
 //apps/web/src/app/(prod)/person/person.api.ts
 
 import { createClient } from '@/app/(prod)/_shared/supabase'
@@ -22,6 +21,25 @@ export async function fetchPersons(): Promise<PersonRow[]> {
   }
 
   return data as PersonRow[]
+}
+
+/**
+ * Fetch a single person by id (admin)
+ * Authoritative read = person_admin_v
+ */
+export async function fetchPersonById(personId: string): Promise<PersonRow> {
+  const { data, error } = await supabase
+    .from('person_admin_v')
+    .select('*')
+    .eq('person_id', personId)
+    .single()
+
+  if (error) {
+    console.error('fetchPersonById error', error)
+    throw error
+  }
+
+  return data as PersonRow
 }
 
 /**

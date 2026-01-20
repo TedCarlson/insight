@@ -9,6 +9,8 @@ import {
 } from './person.api'
 import { PersonRow } from './person.types'
 import { fetchCompanyOptions, CompanyOption } from '../_shared/dropdowns'
+import { toBtnNeutral, toBtnPrimary, toPillActive, toPillInactive, toTableWrap, toThead, toRowHover } from '../_shared/toStyles'
+
 import PersonInspector, {
   type EditableField,
   type CreatePersonInput,
@@ -260,8 +262,8 @@ export default function PersonTable() {
 
   /* ---------------- Visual Tokens ---------------- */
   const th =
-    'px-3 py-2 text-[11px] font-semibold uppercase tracking-wide border-b'
-  const td = 'px-3 py-2 align-top border-b'
+    'whitespace-nowrap px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide border-b border-[var(--to-border)] text-[var(--to-ink-muted)]'
+  const td = 'px-3 py-2 align-top border-b border-[var(--to-border)] text-[var(--to-ink)]'
 
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -276,13 +278,11 @@ export default function PersonTable() {
       {/* HEADER */}
       <div
         className={cx(
-          'border-b px-6 py-4',
+          'border-b border-[var(--to-border)] px-6 py-4',
           inlineEdit
             ? 'bg-[var(--to-green-100)]'
             : 'bg-[var(--to-blue-050)]'
-        )}
-        style={{ borderColor: 'var(--to-border)' }}
-      >
+        )} >
         <div className="flex items-start justify-between gap-6">
           {/* Left */}
           <div>
@@ -309,10 +309,8 @@ export default function PersonTable() {
                       'rounded-full border px-3 py-1 text-xs',
                       statusFilter === k
                         ? 'bg-[var(--to-blue-600)] text-white'
-                        : 'bg-white'
-                    )}
-                    style={{ borderColor: 'var(--to-border)' }}
-                  >
+                        : 'bg-[var(--to-surface)]'
+                    )} >
                     {k === 'all'
                       ? 'All'
                       : k === 'active'
@@ -327,8 +325,7 @@ export default function PersonTable() {
             <div className="flex items-center gap-3">
               <input
                 placeholder="Search name, email, mobile, company…"
-                className="w-72 rounded border px-2 py-1 text-sm"
-                style={{ borderColor: 'var(--to-border)' }}
+                className="w-72 rounded border px-2 py-1 text-sm border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -342,8 +339,7 @@ export default function PersonTable() {
               </div>
 
               <select
-                className="rounded border px-2 py-1 text-sm bg-white"
-                style={{ borderColor: 'var(--to-border)' }}
+                className="rounded border px-2 py-1 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                 value={pageSize}
                 onChange={(e) => setPageSize(Number(e.target.value))}
                 disabled={loading}
@@ -358,8 +354,7 @@ export default function PersonTable() {
 
               <div className="flex items-center gap-2">
                 <button
-                  className="rounded px-2 py-1 text-sm border bg-white disabled:opacity-50"
-                  style={{ borderColor: 'var(--to-border)' }}
+                  className="rounded px-2 py-1 text-sm border bg-[var(--to-surface)] disabled:opacity-50 border-[var(--to-border)]"
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={loading || !canPrev}
                   title="Previous page"
@@ -370,8 +365,7 @@ export default function PersonTable() {
                   {page}/{totalPages}
                 </div>
                 <button
-                  className="rounded px-2 py-1 text-sm border bg-white disabled:opacity-50"
-                  style={{ borderColor: 'var(--to-border)' }}
+                  className="rounded px-2 py-1 text-sm border bg-[var(--to-surface)] disabled:opacity-50 border-[var(--to-border)]"
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={loading || !canNext}
                   title="Next page"
@@ -383,8 +377,7 @@ export default function PersonTable() {
               <button
                 onClick={onAddPerson}
                 disabled={inlineEdit}
-                className="rounded px-3 py-1.5 text-sm border bg-white"
-                style={{ borderColor: 'var(--to-border)' }}
+                className="rounded px-3 py-1.5 text-sm border bg-[var(--to-surface)] border-[var(--to-border)]"
               >
                 Add
               </button>
@@ -401,10 +394,8 @@ export default function PersonTable() {
                   'rounded px-3 py-1.5 text-sm border',
                   inlineEdit
                     ? 'bg-[var(--to-green-600)] text-white'
-                    : 'bg-white'
-                )}
-                style={{ borderColor: 'var(--to-border)' }}
-              >
+                    : 'bg-[var(--to-surface)]'
+                )} >
                 {inlineEdit ? 'Exit Bulk Edit' : 'Bulk Edit'}
               </button>
             </div>
@@ -413,9 +404,9 @@ export default function PersonTable() {
       </div>
 
       {/* LEDGER */}
-      <div className="flex-1 overflow-auto">
-        <table className="min-w-full text-sm border-separate border-spacing-0">
-          <thead className="sticky top-[var(--ledger-header-height)] z-10">
+      <div className={cx("flex-1 min-h-0", toTableWrap)}>
+        <table className="min-w-full border-collapse text-sm">
+          <thead className={cx('sticky top-0 border-b border-[var(--to-border)]', toThead)}>
             <tr>
               <th className={th}>Name</th>
               <th className={th}>Email</th>
@@ -442,23 +433,16 @@ export default function PersonTable() {
                 <tr
                   key={r.person_id}
                   className={cx(
-                    inlineEdit
-                      ? 'hover:bg-[var(--to-green-050)]'
-                      : 'hover:bg-[var(--to-row-hover)]'
+                  idx % 2 === 0 ? 'bg-[var(--to-surface)]' : 'bg-[var(--to-surface-soft)]',
+                  inlineEdit ? 'hover:bg-[var(--to-green-050)]' : toRowHover
                   )}
-                  style={{
-                    background:
-                      idx % 2 === 0
-                        ? 'var(--to-surface)'
-                        : 'var(--to-surface-soft)',
-                  }}
                 >
+
                   {/* NAME */}
                   <td className={td}>
                     {inlineEdit ? (
                       <input
-                        className="w-full rounded border px-2 py-1"
-                        style={{ borderColor: 'var(--to-border)' }}
+                        className="w-full rounded border px-2 py-1 border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                         value={r.full_name ?? ''}
                         onChange={(e) =>
                           updateField(
@@ -479,8 +463,7 @@ export default function PersonTable() {
                   </td>
 
                   <td className={td}>{inlineEdit ? (
-                    <input className="w-full rounded border px-2 py-1"
-                      style={{ borderColor: 'var(--to-border)' }}
+                    <input className="w-full rounded border px-2 py-1 border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                       value={r.emails ?? ''}
                       onChange={(e) =>
                         updateField(r.person_id, 'emails', e.target.value)
@@ -488,8 +471,7 @@ export default function PersonTable() {
                   ) : r.emails}</td>
 
                   <td className={td}>{inlineEdit ? (
-                    <input className="w-full rounded border px-2 py-1"
-                      style={{ borderColor: 'var(--to-border)' }}
+                    <input className="w-full rounded border px-2 py-1 border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                       value={r.mobile ?? ''}
                       onChange={(e) =>
                         updateField(r.person_id, 'mobile', e.target.value)
@@ -497,8 +479,7 @@ export default function PersonTable() {
                   ) : r.mobile}</td>
 
                   <td className={td}>{inlineEdit ? (
-                    <select className="w-full rounded border px-2 py-1"
-                      style={{ borderColor: 'var(--to-border)' }}
+                    <select className="w-full rounded border px-2 py-1 border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                       value={r.co_ref_id ?? ''}
                       onChange={(e) =>
                         updateField(r.person_id, 'co_ref_id', e.target.value || null)
@@ -534,8 +515,7 @@ export default function PersonTable() {
 
 
                   <td className={td}>{inlineEdit ? (
-                    <input className="w-full rounded border px-2 py-1"
-                      style={{ borderColor: 'var(--to-border)' }}
+                    <input className="w-full rounded border px-2 py-1 border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                       value={r.role ?? ''}
                       onChange={(e) =>
                         updateField(r.person_id, 'role', e.target.value)
@@ -543,8 +523,7 @@ export default function PersonTable() {
                   ) : r.role}</td>
 
                   <td className={td}>{inlineEdit ? (
-                    <input className="w-full rounded border px-2 py-1 text-xs"
-                      style={{ borderColor: 'var(--to-border)' }}
+                    <input className="w-full rounded border px-2 py-1 text-xs border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                       value={r.fuse_emp_id ?? ''}
                       onChange={(e) =>
                         updateField(r.person_id, 'fuse_emp_id', e.target.value)
@@ -552,8 +531,7 @@ export default function PersonTable() {
                   ) : r.fuse_emp_id}</td>
 
                   <td className={td}>{inlineEdit ? (
-                    <input className="w-full rounded border px-2 py-1 text-xs"
-                      style={{ borderColor: 'var(--to-border)' }}
+                    <input className="w-full rounded border px-2 py-1 text-xs border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                       value={r.person_nt_login ?? ''}
                       onChange={(e) =>
                         updateField(r.person_id, 'person_nt_login', e.target.value)
@@ -561,8 +539,7 @@ export default function PersonTable() {
                   ) : r.person_nt_login}</td>
 
                   <td className={td}>{inlineEdit ? (
-                    <input className="w-full rounded border px-2 py-1 text-xs"
-                      style={{ borderColor: 'var(--to-border)' }}
+                    <input className="w-full rounded border px-2 py-1 text-xs border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                       value={r.person_csg_id ?? ''}
                       onChange={(e) =>
                         updateField(r.person_id, 'person_csg_id', e.target.value)
@@ -570,10 +547,8 @@ export default function PersonTable() {
                   ) : r.person_csg_id}</td>
 
                   <td className={td}>{inlineEdit ? (
-                    <textarea className="w-full rounded border px-2 py-1 text-xs"
-                      rows={2}
-                      style={{ borderColor: 'var(--to-border)' }}
-                      value={r.person_notes ?? ''}
+                    <textarea className="w-full rounded border px-2 py-1 text-xs text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
+                      rows={2} value={r.person_notes ?? ''}
                       onChange={(e) =>
                         updateField(r.person_id, 'person_notes', e.target.value)
                       } />

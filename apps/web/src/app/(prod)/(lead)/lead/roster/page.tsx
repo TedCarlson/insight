@@ -1,10 +1,10 @@
 import { createClient } from "@/app/(prod)/_shared/supabase";
-import { RosterPageShell } from "@/features/roster/RosterPageShell";
+import { RosterLeadPage } from "@/features/roster/RosterLeadPage";
 
 export default async function LeadRosterPage() {
   const supabase = await createClient();
 
-  const { data, error } = await supabase
+  const { data: rosterRows, error: rosterError } = await supabase
     .from("v_roster_active")
     .select(
       [
@@ -22,11 +22,17 @@ export default async function LeadRosterPage() {
     )
     .order("full_name", { ascending: true });
 
+  const { data: unassignedRows, error: unassignedError } = await supabase
+    .from("v_people_unassigned")
+    .select(["person_id", "full_name", "emails", "mobile", "person_active", "person_role"].join(","))
+    .order("full_name", { ascending: true });
+
   return (
-    <RosterPageShell
-      surface="lead"
-      rosterRows={data ?? []}
-      rosterError={error?.message ?? null}
+    <RosterLeadPage
+      rosterRows={rosterRows ?? []}
+      rosterError={rosterError?.message ?? null}
+      unassigned={unassignedRows ?? []}
+      unassignedError={unassignedError?.message ?? null}
     />
   );
 }

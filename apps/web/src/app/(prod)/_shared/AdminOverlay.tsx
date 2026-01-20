@@ -1,6 +1,9 @@
+//apps/web/src/app/(prod)/_shared/AdminOverlay.tsx
+
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useId, useRef } from 'react'
+import { toBtnNeutral } from './toStyles'
 
 type Mode = 'create' | 'edit'
 
@@ -15,7 +18,11 @@ function cx(...parts: Array<string | false | null | undefined>) {
  * - Panel background (fixes "transparent overlay" issues)
  * - Header color by mode
  * - Border/shadow/radius
- * - ESC close (no click-off close)
+ * - ESC close
+ * - Body scroll lock while open
+ * - Accessible dialog semantics
+ *
+ * Note: Backdrop is inert (no click-to-close) to prevent accidental dismiss.
  */
 export default function AdminOverlay(props: {
   open: boolean
@@ -40,13 +47,31 @@ export default function AdminOverlay(props: {
     children,
   } = props
 
+  const titleId = useId()
+  const descId = useId()
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null)
+
   useEffect(() => {
     if (!open) return
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
+
+    // Lock body scroll while overlay is open
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+
+    // Focus the close button for keyboard users
+    // (keeps this lightweight vs a full focus trap)
+    setTimeout(() => closeBtnRef.current?.focus(), 0)
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = prevOverflow
+    }
   }, [open, onClose])
 
   if (!open) return null
@@ -57,30 +82,30 @@ export default function AdminOverlay(props: {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop (INERT - no click handler) */}
-      <div className="absolute inset-0 bg-black/35" />
+      <div className="absolute inset-0 bg-black/35" aria-hidden="true" />
 
       {/* Panel */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={subtitle ? descId : undefined}
         className={cx(
-          'relative max-h-[88vh] rounded-2xl border shadow-[var(--to-shadow-md)]',
-          'bg-[var(--to-surface)] text-[var(--to-ink)]',
+          'relative max-h-[88vh] rounded-2xl border border-[var(--to-border)]',
+          'shadow-[var(--to-shadow-md)] bg-[var(--to-surface)] text-[var(--to-ink)]',
           'flex flex-col overflow-hidden',
           widthClassName
         )}
-        style={{ borderColor: 'var(--to-border)' }}
       >
         {/* Header */}
-        <div
-          className={cx('sticky top-0 z-10 border-b px-5 py-4', headerBg)}
-          style={{ borderColor: 'var(--to-border)' }}
-        >
+        <div className={cx('sticky top-0 z-10 border-b border-[var(--to-border)] px-5 py-4', headerBg)}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-[var(--to-ink)]">
+              <div id={titleId} className="text-sm font-semibold text-[var(--to-ink)]">
                 {title}
               </div>
               {subtitle ? (
-                <div className="text-xs text-[var(--to-ink-muted)]">
+                <div id={descId} className="text-xs text-[var(--to-ink-muted)]">
                   {subtitle}
                 </div>
               ) : null}
@@ -89,8 +114,8 @@ export default function AdminOverlay(props: {
             <div className="flex items-center gap-2">
               {headerRight}
               <button
-                className="rounded border px-2 py-1 text-sm bg-white"
-                style={{ borderColor: 'var(--to-border)' }}
+                ref={closeBtnRef}
+                className={cx(toBtnNeutral, 'px-2 py-1 text-sm')}
                 onClick={onClose}
                 aria-label="Close"
               >
@@ -105,10 +130,7 @@ export default function AdminOverlay(props: {
 
         {/* Footer (optional) */}
         {footer ? (
-          <div
-            className="sticky bottom-0 border-t px-5 py-3 bg-[var(--to-surface)]"
-            style={{ borderColor: 'var(--to-border)' }}
-          >
+          <div className="sticky bottom-0 border-t border-[var(--to-border)] bg-[var(--to-surface)] px-5 py-3">
             {footer}
           </div>
         ) : null}

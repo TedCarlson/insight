@@ -6,6 +6,15 @@ import { OrgContextSelector } from "./_shared/OrgContextSelector";
 import { OrgRosterPanel } from "./_shared/OrgRosterPanel";
 import { OrgPlanningPanel } from "./_shared/OrgPlanningPanel";
 
+function SurfaceNotice(props: { title: string; message: string }) {
+  return (
+    <div className="mt-2 rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-4">
+      <div className="text-sm font-semibold text-[var(--to-ink)]">{props.title}</div>
+      <div className="mt-1 text-sm text-[var(--to-ink-muted)]">{props.message}</div>
+    </div>
+  );
+}
+
 export default async function OrgPage({
   searchParams,
 }: {
@@ -53,6 +62,26 @@ export default async function OrgPage({
     ? `Manager scope (pc_org): ${pcOrgName ?? selectedPcOrgId}`
     : "Manager scope (pc_org): none selected";
 
+  const noOrg = (
+    <SurfaceNotice
+      title="Select an org"
+      message="Choose an org from the selector to view roster, planning, and metrics."
+    />
+  );
+
+  const content = !selectedPcOrgId
+    ? noOrg
+    : tab === "roster"
+    ? <OrgRosterPanel pcOrgId={selectedPcOrgId} />
+    : tab === "planning"
+    ? <OrgPlanningPanel pcOrgId={selectedPcOrgId} />
+    : (
+      <SurfaceNotice
+        title="Metrics (coming soon)"
+        message="Metrics dimension (pc_org scoped) will load here next."
+      />
+    );
+
   return (
     <MasterOverlay
       title="ITG → Insight"
@@ -61,38 +90,7 @@ export default async function OrgPage({
       baseHref="/org"
       headerRight={<OrgContextSelector />}
     >
-      {!selectedPcOrgId ? (
-        <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Select an org to view scoped roster/planning/metrics/wire.
-        </p>
-      ) : null}
-
-      {tab === "roster" && selectedPcOrgId && (
-        <OrgRosterPanel pcOrgId={selectedPcOrgId} />
-      )}
-
-      {tab === "roster" && !selectedPcOrgId && (
-        <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Select an org to view roster.
-        </p>
-      )}
-
-      {tab === "planning" && selectedPcOrgId && (
-        <OrgPlanningPanel pcOrgId={selectedPcOrgId} />
-      )}
-
-      {tab === "planning" && !selectedPcOrgId && (
-        <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Select an org to view planning.
-        </p>
-      )}
-
-      {tab === "metrics" && (
-        <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          Metrics dimension (pc_org scoped) will load here next.
-        </p>
-      )}
-
+      {content}
     </MasterOverlay>
   );
 }

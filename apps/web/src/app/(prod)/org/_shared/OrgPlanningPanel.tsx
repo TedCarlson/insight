@@ -1,6 +1,27 @@
+//apps/web/src/app/(prod)/org/_shared/OrgPlanningPanel.tsx
+
+// apps/web/src/app/(prod)/org/_shared/OrgPlanningPanel.tsx
+
 import { supabaseServer } from "@/lib/supabase/server";
+import { toTableWrap, toThead, toRowHover } from "../../_shared/toStyles";
 
 type Row = Record<string, any>;
+
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function SurfaceNotice(props: { title: string; message: string; tone?: "neutral" | "warn" }) {
+  const tone = props.tone ?? "neutral";
+  const bg = tone === "warn" ? "bg-[var(--to-amber-100)]" : "bg-[var(--to-surface)]";
+
+  return (
+    <div className={cx("rounded-2xl border border-[var(--to-border)] p-4", bg)}>
+      <div className="text-sm font-semibold text-[var(--to-ink)]">{props.title}</div>
+      <div className="mt-1 text-sm text-[var(--to-ink-muted)]">{props.message}</div>
+    </div>
+  );
+}
 
 export async function OrgPlanningPanel(props: { pcOrgId: string }) {
   const supabase = await supabaseServer();
@@ -14,8 +35,8 @@ export async function OrgPlanningPanel(props: { pcOrgId: string }) {
 
   if (routesErr) {
     return (
-      <div className="mt-2 text-sm text-red-600">
-        Failed to load routes: {routesErr.message}
+      <div className="mt-2">
+        <SurfaceNotice tone="warn" title="Failed to load routes" message={routesErr.message} />
       </div>
     );
   }
@@ -32,8 +53,8 @@ export async function OrgPlanningPanel(props: { pcOrgId: string }) {
 
   if (quotasErr) {
     return (
-      <div className="mt-2 text-sm text-red-600">
-        Failed to load quotas: {quotasErr.message}
+      <div className="mt-2">
+        <SurfaceNotice tone="warn" title="Failed to load quotas" message={quotasErr.message} />
       </div>
     );
   }
@@ -49,8 +70,8 @@ export async function OrgPlanningPanel(props: { pcOrgId: string }) {
 
     if (schedErr) {
       return (
-        <div className="mt-2 text-sm text-red-600">
-          Failed to load schedules: {schedErr.message}
+        <div className="mt-2">
+          <SurfaceNotice tone="warn" title="Failed to load schedules" message={schedErr.message} />
         </div>
       );
     }
@@ -60,88 +81,135 @@ export async function OrgPlanningPanel(props: { pcOrgId: string }) {
 
   return (
     <div className="mt-4 space-y-6">
-      <div>
-        <div className="text-sm font-semibold">Routes</div>
-        <div className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          {routeRows.length} route(s) in this org.
+      {/* Routes */}
+      <section className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-[var(--to-ink)]">Routes</div>
+            <div className="mt-0.5 text-xs text-[var(--to-ink-muted)]">
+              {routeRows.length} route(s) in this org.
+            </div>
+          </div>
         </div>
 
         {routeRows.length > 0 ? (
-          <ul className="mt-2 list-disc pl-5 text-sm">
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--to-ink)]">
             {routeRows.slice(0, 20).map((r) => (
-              <li key={String(r.route_id)}>
-                {String(r.route_name ?? "(unnamed)")}
-              </li>
+              <li key={String(r.route_id)}>{String(r.route_name ?? "(unnamed)")}</li>
             ))}
           </ul>
-        ) : null}
-      </div>
+        ) : (
+          <div className="mt-3 text-sm text-[var(--to-ink-muted)]">No routes found.</div>
+        )}
+      </section>
 
-      <div>
-        <div className="text-sm font-semibold">Quotas</div>
-        <div className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          {(quotas ?? []).length} quota row(s) for this org.
+      {/* Quotas */}
+      <section className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-5">
+        <div>
+          <div className="text-sm font-semibold text-[var(--to-ink)]">Quotas</div>
+          <div className="mt-0.5 text-xs text-[var(--to-ink-muted)]">
+            {(quotas ?? []).length} quota row(s) for this org.
+          </div>
         </div>
 
         {(quotas ?? []).length > 0 ? (
-          <div className="mt-3 overflow-auto rounded border" style={{ borderColor: "var(--to-border)" }}>
-            <table className="min-w-[900px] text-sm">
-              <thead>
-                <tr className="border-b" style={{ borderColor: "var(--to-border)" }}>
-                  <th className="px-3 py-2 text-left">Month</th>
-                  <th className="px-3 py-2 text-left">Route</th>
-                  <th className="px-3 py-2 text-left">Hours</th>
-                  <th className="px-3 py-2 text-left">Units</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(quotas as Row[]).slice(0, 50).map((q) => (
-                  <tr key={String(q.quota_id)} className="border-b last:border-b-0" style={{ borderColor: "var(--to-border)" }}>
-                    <td className="px-3 py-2">{String(q.fiscal_month_label ?? "")}</td>
-                    <td className="px-3 py-2">{String(q.route_name ?? q.route_id ?? "")}</td>
-                    <td className="px-3 py-2">{q.qt_hours == null ? "" : String(q.qt_hours)}</td>
-                    <td className="px-3 py-2">{q.qt_units == null ? "" : String(q.qt_units)}</td>
+          <div className="mt-3">
+            <div className={toTableWrap}>
+              <table className="min-w-[900px] border-collapse text-sm">
+                <thead className={cx("sticky top-0 border-b border-[var(--to-border)]", toThead)}>
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Month
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Route
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Hours
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Units
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(quotas as Row[]).slice(0, 50).map((q) => (
+                    <tr
+                      key={String(q.quota_id)}
+                      className={cx("border-b border-[var(--to-border)] last:border-b-0", toRowHover)}
+                    >
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{String(q.fiscal_month_label ?? "")}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{String(q.route_name ?? q.route_id ?? "")}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{q.qt_hours == null ? "" : String(q.qt_hours)}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{q.qt_units == null ? "" : String(q.qt_units)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        ) : null}
-      </div>
+        ) : (
+          <div className="mt-3 text-sm text-[var(--to-ink-muted)]">No quotas found.</div>
+        )}
+      </section>
 
-      <div>
-        <div className="text-sm font-semibold">Schedules</div>
-        <div className="mt-2 text-sm text-[var(--to-ink-muted)]">
-          {schedules.length} schedule(s) tied to this org’s routes.
+      {/* Schedules */}
+      <section className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-5">
+        <div>
+          <div className="text-sm font-semibold text-[var(--to-ink)]">Schedules</div>
+          <div className="mt-0.5 text-xs text-[var(--to-ink-muted)]">
+            {schedules.length} schedule(s) tied to this org’s routes.
+          </div>
         </div>
 
         {schedules.length > 0 ? (
-          <div className="mt-3 overflow-auto rounded border" style={{ borderColor: "var(--to-border)" }}>
-            <table className="min-w-[900px] text-sm">
-              <thead>
-                <tr className="border-b" style={{ borderColor: "var(--to-border)" }}>
-                  <th className="px-3 py-2 text-left">Schedule</th>
-                  <th className="px-3 py-2 text-left">Route</th>
-                  <th className="px-3 py-2 text-left">Month</th>
-                  <th className="px-3 py-2 text-left">Active</th>
-                  <th className="px-3 py-2 text-left">Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {schedules.slice(0, 50).map((s) => (
-                  <tr key={String(s.schedule_id)} className="border-b last:border-b-0" style={{ borderColor: "var(--to-border)" }}>
-                    <td className="px-3 py-2">{String(s.schedule_name ?? "")}</td>
-                    <td className="px-3 py-2">{String(s.route_name ?? s.route_id ?? "")}</td>
-                    <td className="px-3 py-2">{String(s.fiscal_month_label ?? "")}</td>
-                    <td className="px-3 py-2">{s.active == null ? "" : String(!!s.active)}</td>
-                    <td className="px-3 py-2">{String(s.updated_at ?? "")}</td>
+          <div className="mt-3">
+            <div className={toTableWrap}>
+              <table className="min-w-[900px] border-collapse text-sm">
+                <thead className={cx("sticky top-0 border-b border-[var(--to-border)]", toThead)}>
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Schedule
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Route
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Month
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Active
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Updated
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {schedules.slice(0, 50).map((s) => (
+                    <tr
+                      key={String(s.schedule_id)}
+                      className={cx("border-b border-[var(--to-border)] last:border-b-0", toRowHover)}
+                    >
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{String(s.schedule_name ?? "")}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{String(s.route_name ?? s.route_id ?? "")}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{String(s.fiscal_month_label ?? "")}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{s.active == null ? "" : String(!!s.active)}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{String(s.updated_at ?? "")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        ) : null}
-      </div>
+        ) : routeIds.length === 0 ? (
+          <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
+            No schedules to show because this org has no routes.
+          </div>
+        ) : (
+          <div className="mt-3 text-sm text-[var(--to-ink-muted)]">No schedules found.</div>
+        )}
+      </section>
     </div>
   );
 }

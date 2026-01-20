@@ -1,6 +1,9 @@
+//apps/web/src/app/%28prod%29/org/_shared/OrgRosterSegmentSchedule.tsx
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { toBtnNeutral, toRowHover, toTableWrap, toThead } from "../../_shared/toStyles";
 
 type RouteRow = { route_id: string; route_name: string; pc_org_id: string };
 
@@ -49,6 +52,23 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+function Pill(props: { children: React.ReactNode; tone?: "neutral" | "warn" | "ok" }) {
+  const { children, tone = "neutral" } = props;
+
+  const toneClass =
+    tone === "warn"
+      ? "border-[var(--to-border)] bg-[var(--to-amber-100)] text-[var(--to-ink)]"
+      : tone === "ok"
+      ? "border-[var(--to-border)] bg-[var(--to-green-100)] text-[var(--to-ink)]"
+      : "border-[var(--to-border)] bg-[var(--to-surface-2)] text-[var(--to-ink)]";
+
+  return (
+    <span className={cx("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", toneClass)}>
+      {children}
+    </span>
+  );
+}
+
 async function fetchJson<T = any>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, init);
   const contentType = res.headers.get("content-type") || "";
@@ -68,6 +88,30 @@ async function fetchJson<T = any>(input: RequestInfo, init?: RequestInit): Promi
     throw new Error((json && (json.error || json.message)) || `Request failed (${res.status})`);
   }
   return json;
+}
+
+const DAYS = [
+  ["sun", "Sun"],
+  ["mon", "Mon"],
+  ["tue", "Tue"],
+  ["wed", "Wed"],
+  ["thu", "Thu"],
+  ["fri", "Fri"],
+  ["sat", "Sat"],
+] as const;
+
+type DayKey = (typeof DAYS)[number][0];
+
+function hoursKeyFor(day: DayKey) {
+  return `sch_hours_${day}` as const;
+}
+function unitsKeyFor(day: DayKey) {
+  return `sch_units_${day}` as const;
+}
+
+function routeName(routes: RouteRow[], routeId: string | null) {
+  if (!routeId) return "—";
+  return routes.find((r) => r.route_id === routeId)?.route_name || "—";
 }
 
 export function OrgRosterSegmentSchedule(props: {
@@ -172,6 +216,7 @@ export function OrgRosterSegmentSchedule(props: {
       start_date: isoToday(),
       end_date: null,
       default_route_id: null,
+
       sun: false,
       mon: true,
       tue: true,
@@ -179,6 +224,7 @@ export function OrgRosterSegmentSchedule(props: {
       thu: true,
       fri: true,
       sat: false,
+
       sch_hours_sun: 0,
       sch_hours_mon: 8,
       sch_hours_tue: 8,
@@ -186,6 +232,7 @@ export function OrgRosterSegmentSchedule(props: {
       sch_hours_thu: 8,
       sch_hours_fri: 8,
       sch_hours_sat: 0,
+
       sch_units_sun: 0,
       sch_units_mon: 0,
       sch_units_tue: 0,
@@ -250,21 +297,21 @@ export function OrgRosterSegmentSchedule(props: {
           fri: !!scheduleDraft.fri,
           sat: !!scheduleDraft.sat,
 
-          sch_hours_sun: Number(scheduleDraft.sch_hours_sun ?? 0),
-          sch_hours_mon: Number(scheduleDraft.sch_hours_mon ?? 0),
-          sch_hours_tue: Number(scheduleDraft.sch_hours_tue ?? 0),
-          sch_hours_wed: Number(scheduleDraft.sch_hours_wed ?? 0),
-          sch_hours_thu: Number(scheduleDraft.sch_hours_thu ?? 0),
-          sch_hours_fri: Number(scheduleDraft.sch_hours_fri ?? 0),
-          sch_hours_sat: Number(scheduleDraft.sch_hours_sat ?? 0),
+          sch_hours_sun: Number((scheduleDraft as any).sch_hours_sun ?? 0),
+          sch_hours_mon: Number((scheduleDraft as any).sch_hours_mon ?? 0),
+          sch_hours_tue: Number((scheduleDraft as any).sch_hours_tue ?? 0),
+          sch_hours_wed: Number((scheduleDraft as any).sch_hours_wed ?? 0),
+          sch_hours_thu: Number((scheduleDraft as any).sch_hours_thu ?? 0),
+          sch_hours_fri: Number((scheduleDraft as any).sch_hours_fri ?? 0),
+          sch_hours_sat: Number((scheduleDraft as any).sch_hours_sat ?? 0),
 
-          sch_units_sun: Number(scheduleDraft.sch_units_sun ?? 0),
-          sch_units_mon: Number(scheduleDraft.sch_units_mon ?? 0),
-          sch_units_tue: Number(scheduleDraft.sch_units_tue ?? 0),
-          sch_units_wed: Number(scheduleDraft.sch_units_wed ?? 0),
-          sch_units_thu: Number(scheduleDraft.sch_units_thu ?? 0),
-          sch_units_fri: Number(scheduleDraft.sch_units_fri ?? 0),
-          sch_units_sat: Number(scheduleDraft.sch_units_sat ?? 0),
+          sch_units_sun: Number((scheduleDraft as any).sch_units_sun ?? 0),
+          sch_units_mon: Number((scheduleDraft as any).sch_units_mon ?? 0),
+          sch_units_tue: Number((scheduleDraft as any).sch_units_tue ?? 0),
+          sch_units_wed: Number((scheduleDraft as any).sch_units_wed ?? 0),
+          sch_units_thu: Number((scheduleDraft as any).sch_units_thu ?? 0),
+          sch_units_fri: Number((scheduleDraft as any).sch_units_fri ?? 0),
+          sch_units_sat: Number((scheduleDraft as any).sch_units_sat ?? 0),
         }),
       });
 
@@ -304,38 +351,54 @@ export function OrgRosterSegmentSchedule(props: {
 
   const busy = saving;
 
+  const addDisabled =
+    isAdd || !assignmentId || schedulesLoading || schedulingLocked || busy || !canEditSchedule;
+
   return (
-    <section className="rounded-2xl border p-5" style={{ borderColor: "var(--to-border)" }}>
+    <section className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-5">
+      {/* Segment header */}
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold">Schedule</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-[var(--to-ink)]">Schedule</div>
+            {schedulesLoading ? <Pill>Loading…</Pill> : null}
+            {!canEditSchedule ? <Pill>Read-only</Pill> : null}
+            {schedulingLocked ? <Pill tone="warn">Locked</Pill> : null}
+          </div>
+
           <div className="mt-0.5 text-xs text-[var(--to-ink-muted)]">
             Granular schedule entry/edit for this person (without Org Planning).
-            {/* TODO(grants): gate schedule editing by edge task grants */}
           </div>
         </div>
 
-        <button
-          className="rounded-md border px-3 py-2 text-sm hover:bg-[var(--to-surface-2)]"
-          style={{ borderColor: "var(--to-border)" }}
-          type="button"
-          onClick={openCreateSchedule}
-          disabled={isAdd || !assignmentId || schedulesLoading || schedulingLocked || busy || !canEditSchedule}
-          title={
-            isAdd
-              ? "Save assignment first, then edit schedule."
-              : schedulingLocked
+        <div className="flex items-center gap-2">
+          <button
+            className={cx(toBtnNeutral, "px-3 py-2 text-sm")}
+            type="button"
+            onClick={openCreateSchedule}
+            disabled={addDisabled}
+            title={
+              isAdd
+                ? "Save assignment first, then edit schedule."
+                : schedulingLocked
                 ? "Scheduling locked until Tech ID is set for technicians."
                 : undefined
-          }
-        >
-          + Add schedule
-        </button>
+            }
+          >
+            + Add schedule
+          </button>
+        </div>
       </div>
 
+      {/* Lock + add mode messaging */}
       {schedulingLocked ? (
-        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Scheduling locked: add a Tech ID for this Technician to enable scheduling.
+        <div className="mt-3 rounded-md border border-[var(--to-border)] bg-[var(--to-amber-100)] px-3 py-2 text-sm">
+          <div className="font-medium text-[var(--to-ink)]">
+            Scheduling locked
+          </div>
+          <div className="mt-1 text-[var(--to-ink-muted)]">
+            Add a Tech ID for this Technician to enable scheduling.
+          </div>
         </div>
       ) : null}
 
@@ -350,30 +413,41 @@ export function OrgRosterSegmentSchedule(props: {
           ) : schedules.length === 0 ? (
             <div className="text-sm text-[var(--to-ink-muted)]">No schedules yet.</div>
           ) : (
-            <div className="overflow-auto rounded-md border" style={{ borderColor: "var(--to-border)" }}>
-              <table className="min-w-full text-sm">
-                <thead className="bg-black/5">
+            <div className={toTableWrap}>
+              <table className="min-w-full border-collapse text-sm">
+                <thead className={cx("sticky top-0 border-b border-[var(--to-border)]", toThead)}>
                   <tr>
-                    <th className="px-3 py-2 text-left font-medium">Name</th>
-                    <th className="px-3 py-2 text-left font-medium">Start</th>
-                    <th className="px-3 py-2 text-left font-medium">End</th>
-                    <th className="px-3 py-2 text-left font-medium">Route</th>
-                    <th className="px-3 py-2 text-right font-medium">Actions</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Name
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Start
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      End
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Route
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
+
                 <tbody>
                   {schedules.map((s) => (
-                    <tr key={s.schedule_id} className="border-t hover:bg-black/5">
-                      <td className="px-3 py-2">{s.schedule_name}</td>
-                      <td className="px-3 py-2">{s.start_date}</td>
-                      <td className="px-3 py-2">{s.end_date || "—"}</td>
-                      <td className="px-3 py-2">
-                        {routes.find((r) => r.route_id === s.default_route_id)?.route_name || "—"}
-                      </td>
+                    <tr
+                      key={s.schedule_id}
+                      className={cx("border-b border-[var(--to-border)]", toRowHover)}
+                    >
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{s.schedule_name}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{s.start_date}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{s.end_date || "—"}</td>
+                      <td className="px-3 py-2 text-[var(--to-ink)]">{routeName(routes, s.default_route_id)}</td>
                       <td className="px-3 py-2 text-right">
                         <button
-                          className="rounded-md border px-2 py-1 text-xs hover:bg-[var(--to-surface-2)]"
-                          style={{ borderColor: "var(--to-border)" }}
+                          className={cx(toBtnNeutral, "px-2 py-1 text-xs")}
                           type="button"
                           onClick={() => openEditSchedule(s)}
                           disabled={busy || !canEditSchedule}
@@ -381,8 +455,7 @@ export function OrgRosterSegmentSchedule(props: {
                           Edit
                         </button>
                         <button
-                          className="ml-2 rounded-md border px-2 py-1 text-xs hover:bg-[var(--to-surface-2)]"
-                          style={{ borderColor: "var(--to-border)" }}
+                          className={cx(toBtnNeutral, "ml-2 px-2 py-1 text-xs")}
                           type="button"
                           onClick={() => deleteSchedule(s.schedule_id)}
                           disabled={busy || !canEditSchedule}
@@ -399,18 +472,24 @@ export function OrgRosterSegmentSchedule(props: {
         </div>
       )}
 
-      {/* Modal */}
+      {/* Editor */}
       {scheduleOpen && scheduleDraft ? (
-        <div className="mt-4 rounded-2xl border p-4" style={{ borderColor: "var(--to-border)" }}>
+        <div className="mt-4 rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-4">
           <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold">{scheduleDraft.schedule_id ? "Edit Schedule" : "Add Schedule"}</div>
-              <div className="mt-0.5 text-xs text-[var(--to-ink-muted)]">Days, hours, units, default route.</div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="text-sm font-semibold text-[var(--to-ink)]">
+                  {scheduleDraft.schedule_id ? "Edit Schedule" : "Add Schedule"}
+                </div>
+                {saving ? <Pill tone="ok">Saving…</Pill> : <Pill>Draft</Pill>}
+              </div>
+              <div className="mt-0.5 text-xs text-[var(--to-ink-muted)]">
+                Days, hours, units, default route.
+              </div>
             </div>
 
             <button
-              className="rounded-md border px-3 py-2 text-sm hover:bg-[var(--to-surface-2)]"
-              style={{ borderColor: "var(--to-border)" }}
+              className={cx(toBtnNeutral, "px-3 py-2 text-sm")}
               type="button"
               onClick={() => {
                 setScheduleOpen(false);
@@ -424,10 +503,9 @@ export function OrgRosterSegmentSchedule(props: {
 
           <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
             <label className="grid gap-1">
-              <div className="text-sm font-medium">Schedule Name</div>
+              <div className="text-sm font-medium text-[var(--to-ink)]">Schedule Name</div>
               <input
-                className="rounded-md border px-3 py-2 text-sm"
-                style={{ borderColor: "var(--to-border)" }}
+                className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                 value={scheduleDraft.schedule_name ?? ""}
                 onChange={(e) => setScheduleDraft((d) => ({ ...(d || {}), schedule_name: e.target.value }))}
                 disabled={busy}
@@ -435,10 +513,9 @@ export function OrgRosterSegmentSchedule(props: {
             </label>
 
             <label className="grid gap-1">
-              <div className="text-sm font-medium">Default Route</div>
+              <div className="text-sm font-medium text-[var(--to-ink)]">Default Route</div>
               <select
-                className="rounded-md border px-3 py-2 text-sm"
-                style={{ borderColor: "var(--to-border)" }}
+                className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                 value={scheduleDraft.default_route_id ?? ""}
                 onChange={(e) =>
                   setScheduleDraft((d) => ({ ...(d || {}), default_route_id: e.target.value || null }))
@@ -455,10 +532,9 @@ export function OrgRosterSegmentSchedule(props: {
             </label>
 
             <label className="grid gap-1">
-              <div className="text-sm font-medium">Start Date</div>
+              <div className="text-sm font-medium text-[var(--to-ink)]">Start Date</div>
               <input
-                className="rounded-md border px-3 py-2 text-sm"
-                style={{ borderColor: "var(--to-border)" }}
+                className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                 type="date"
                 value={scheduleDraft.start_date ?? ""}
                 onChange={(e) => setScheduleDraft((d) => ({ ...(d || {}), start_date: e.target.value }))}
@@ -467,10 +543,9 @@ export function OrgRosterSegmentSchedule(props: {
             </label>
 
             <label className="grid gap-1">
-              <div className="text-sm font-medium">End Date</div>
+              <div className="text-sm font-medium text-[var(--to-ink)]">End Date</div>
               <input
-                className="rounded-md border px-3 py-2 text-sm"
-                style={{ borderColor: "var(--to-border)" }}
+                className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                 type="date"
                 value={scheduleDraft.end_date ?? ""}
                 onChange={(e) => setScheduleDraft((d) => ({ ...(d || {}), end_date: e.target.value || null }))}
@@ -479,31 +554,25 @@ export function OrgRosterSegmentSchedule(props: {
             </label>
           </div>
 
-          <div className="mt-3 rounded-md border p-3" style={{ borderColor: "var(--to-border)" }}>
-            <div className="text-sm font-medium">Days</div>
+          <div className="mt-3 rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
+            <div className="text-sm font-medium text-[var(--to-ink)]">Days</div>
 
             <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
-              {(
-                [
-                  ["sun", "Sun"],
-                  ["mon", "Mon"],
-                  ["tue", "Tue"],
-                  ["wed", "Wed"],
-                  ["thu", "Thu"],
-                  ["fri", "Fri"],
-                  ["sat", "Sat"],
-                ] as const
-              ).map(([key, label]) => {
-                const hoursKey = `sch_hours_${key}` as const;
-                const unitsKey = `sch_units_${key}` as const;
+              {DAYS.map(([day, label]) => {
+                const hk = hoursKeyFor(day);
+                const uk = unitsKeyFor(day);
+
+                const enabled = !!(scheduleDraft as any)[day];
 
                 return (
-                  <div key={key} className="rounded-md border p-3" style={{ borderColor: "var(--to-border)" }}>
-                    <label className="flex items-center gap-2 text-sm">
+                  <div key={day} className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface-2)] p-3">
+                    <label className="flex items-center gap-2 text-sm text-[var(--to-ink)]">
                       <input
                         type="checkbox"
-                        checked={!!(scheduleDraft as any)[key]}
-                        onChange={(e) => setScheduleDraft((d) => ({ ...(d || {}), [key]: e.target.checked } as any))}
+                        checked={enabled}
+                        onChange={(e) =>
+                          setScheduleDraft((d) => ({ ...(d || {}), [day]: e.target.checked } as any))
+                        }
                         disabled={busy}
                       />
                       <span className="font-medium">{label}</span>
@@ -513,28 +582,26 @@ export function OrgRosterSegmentSchedule(props: {
                       <label className="grid gap-1">
                         <div className="text-xs text-[var(--to-ink-muted)]">Hours</div>
                         <input
-                          className="rounded-md border px-2 py-1 text-sm"
-                          style={{ borderColor: "var(--to-border)" }}
+                          className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                           type="number"
-                          value={String((scheduleDraft as any)[hoursKey] ?? 0)}
+                          value={String((scheduleDraft as any)[hk] ?? 0)}
                           onChange={(e) =>
-                            setScheduleDraft((d) => ({ ...(d || {}), [hoursKey]: Number(e.target.value) } as any))
+                            setScheduleDraft((d) => ({ ...(d || {}), [hk]: Number(e.target.value) } as any))
                           }
-                          disabled={busy}
+                          disabled={busy || !enabled}
                         />
                       </label>
 
                       <label className="grid gap-1">
                         <div className="text-xs text-[var(--to-ink-muted)]">Units</div>
                         <input
-                          className="rounded-md border px-2 py-1 text-sm"
-                          style={{ borderColor: "var(--to-border)" }}
+                          className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                           type="number"
-                          value={String((scheduleDraft as any)[unitsKey] ?? 0)}
+                          value={String((scheduleDraft as any)[uk] ?? 0)}
                           onChange={(e) =>
-                            setScheduleDraft((d) => ({ ...(d || {}), [unitsKey]: Number(e.target.value) } as any))
+                            setScheduleDraft((d) => ({ ...(d || {}), [uk]: Number(e.target.value) } as any))
                           }
-                          disabled={busy}
+                          disabled={busy || !enabled}
                         />
                       </label>
                     </div>
@@ -546,8 +613,7 @@ export function OrgRosterSegmentSchedule(props: {
 
           <div className="mt-3 flex items-center justify-end gap-2">
             <button
-              className="rounded-md border px-3 py-2 text-sm hover:bg-[var(--to-surface-2)]"
-              style={{ borderColor: "var(--to-border)" }}
+              className={cx(toBtnNeutral, "px-3 py-2 text-sm")}
               type="button"
               onClick={() => {
                 setScheduleOpen(false);
@@ -559,13 +625,15 @@ export function OrgRosterSegmentSchedule(props: {
             </button>
 
             <button
-              className={cx("rounded-md border px-3 py-2 text-sm", "bg-black text-white hover:opacity-90")}
-              style={{ borderColor: "var(--to-border)" }}
+              className={cx(
+                "rounded-md border border-[var(--to-border)] px-3 py-2 text-sm",
+                "bg-[var(--to-ink)] text-white hover:opacity-90"
+              )}
               type="button"
               onClick={saveSchedule}
               disabled={busy}
             >
-              {saving ? "Saving…" : "Save schedule"}
+              Save schedule
             </button>
           </div>
         </div>

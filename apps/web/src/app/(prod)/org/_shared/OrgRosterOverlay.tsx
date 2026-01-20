@@ -2,8 +2,9 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AdminOverlay from "../../_shared/AdminOverlay";
+import { toBtnNeutral } from "../../_shared/toStyles";
 import type { MasterRosterRow } from "./OrgRosterPanel";
 
 import { OrgRosterSegmentPerson } from "./OrgRosterSegmentPerson";
@@ -18,6 +19,10 @@ type PositionTitleRow = {
   sort_order?: number | null;
   active?: boolean | null;
 };
+
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
 
 function isoToday() {
   const d = new Date();
@@ -51,6 +56,37 @@ async function fetchJson<T = any>(input: RequestInfo, init?: RequestInit): Promi
     throw new Error((json && (json.error || json.message)) || `Request failed (${res.status})`);
   }
   return json;
+}
+
+function Pill(props: { children: React.ReactNode; tone?: "neutral" | "warn" | "ok" }) {
+  const { children, tone = "neutral" } = props;
+
+  const toneClass =
+    tone === "warn"
+      ? "border-[var(--to-border)] bg-[var(--to-amber-100)] text-[var(--to-ink)]"
+      : tone === "ok"
+      ? "border-[var(--to-border)] bg-[var(--to-green-100)] text-[var(--to-ink)]"
+      : "border-[var(--to-border)] bg-[var(--to-surface-2)] text-[var(--to-ink)]";
+
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+        toneClass
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ErrorBlock(props: { message: string }) {
+  return (
+    <div className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm">
+      <div className="font-semibold text-[var(--to-ink)]">Action needed</div>
+      <div className="mt-1 text-[var(--to-ink-muted)]">{props.message}</div>
+    </div>
+  );
 }
 
 export function OrgRosterOverlay(props: {
@@ -134,6 +170,21 @@ export function OrgRosterOverlay(props: {
   const missingTechId = !techId || techId.trim() === "";
   const schedulingLocked = !isAdd && isActive && isTech && missingTechId;
 
+  const title = isAdd ? "Add to Roster" : "Edit Roster Entry";
+  const subtitle = isAdd
+    ? "Select a person and create an assignment in this org."
+    : "Edit assignment details and person schedule.";
+
+  const headerRight = useMemo(() => {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {titlesLoading ? <Pill>Loading titles…</Pill> : null}
+        {saving ? <Pill tone="ok">Saving…</Pill> : null}
+        {schedulingLocked ? <Pill tone="warn">Schedule locked until Tech ID</Pill> : null}
+      </div>
+    );
+  }, [saving, schedulingLocked, titlesLoading]);
+
   async function submitAssignment() {
     if (!canEditAssignment) return;
 
@@ -197,11 +248,6 @@ export function OrgRosterOverlay(props: {
 
   if (!props.open) return null;
 
-  const title = isAdd ? "Add to Roster" : "Edit Roster Entry";
-  const subtitle = isAdd
-    ? "Select a person and create an assignment in this org."
-    : "Edit assignment details and person schedule.";
-
   return (
     <AdminOverlay
       open={props.open}
@@ -210,13 +256,33 @@ export function OrgRosterOverlay(props: {
       subtitle={subtitle}
       mode={isAdd ? "create" : "edit"}
       widthClassName="w-full max-w-4xl"
+      headerRight={headerRight}
+      footer={
+        <div className="flex w-full items-center justify-between gap-3">
+          <div className="text-xs text-[var(--to-ink-muted)]">
+            {props.row?.pc_org_name ? (
+              <>
+                Org: <span className="font-medium text-[var(--to-ink)]">{props.row.pc_org_name}</span>
+              </>
+            ) : (
+              <span />
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button onClick={props.onClose} className={cx(toBtnNeutral, "px-3 py-2")} disabled={saving}>
+              Close
+            </button>
+          </div>
+        </div>
+      }
     >
-      <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">Roster</div>
+      <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+        Roster
+      </div>
 
       <div className="space-y-6">
-        {error ? (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-        ) : null}
+        {error ? <ErrorBlock message={error} /> : null}
 
         {/* 1) Person */}
         <OrgRosterSegmentPerson

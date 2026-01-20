@@ -1,3 +1,5 @@
+//apps/web/src/app/(prod)/org/_shared/OrgRosterClient.tsx
+
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -18,10 +20,15 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+function includesCI(haystack: string, needle: string) {
+  return haystack.toLowerCase().includes(needle.toLowerCase());
+}
+
 export function OrgRosterClient(props: { rows: MasterRosterRow[]; pcOrgId: string }) {
   const router = useRouter();
 
   const [showOnlyActive, setShowOnlyActive] = useState(true);
+  const [q, setQ] = useState("");
 
   function isSchedulingLocked(r: MasterRosterRow) {
     const isActive = !!r.assignment_active;
@@ -35,9 +42,24 @@ export function OrgRosterClient(props: { rows: MasterRosterRow[]; pcOrgId: strin
   const [selectedRow, setSelectedRow] = useState<MasterRosterRow | null>(null);
 
   const filteredRows = useMemo(() => {
-    if (!showOnlyActive) return props.rows ?? [];
-    return (props.rows ?? []).filter((r) => r?.assignment_active === true);
-  }, [props.rows, showOnlyActive]);
+    const base = showOnlyActive ? (props.rows ?? []).filter((r) => r?.assignment_active === true) : (props.rows ?? []);
+
+    const needle = q.trim();
+    if (!needle) return base;
+
+    return base.filter((r) => {
+      const blob = [
+        r.full_name ?? "",
+        r.tech_id ?? "",
+        r.mobile ?? "",
+        r.reports_to_full_name ?? "",
+        r.co_name ?? "",
+        r.co_code ?? "",
+        r.position_title ?? "",
+      ].join(" | ");
+      return includesCI(blob, needle);
+    });
+  }, [props.rows, showOnlyActive, q]);
 
   function openAdd() {
     setSelectedRow(null);
@@ -58,10 +80,13 @@ export function OrgRosterClient(props: { rows: MasterRosterRow[]; pcOrgId: strin
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-sm text-[var(--to-ink-muted)]">Showing {filteredRows.length} row(s)</div>
+      {/* Controls */}
+      <div className="flex flex-col gap-2 rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="text-sm text-[var(--to-ink-muted)]">
+            Showing <span className="font-mono text-[var(--to-ink)]">{filteredRows.length}</span> row(s)
+          </div>
 
-        <div className="flex items-center gap-2">
           <button
             className={showOnlyActive ? toToggleOn : toToggleOff}
             onClick={() => setShowOnlyActive((v) => !v)}
@@ -69,6 +94,15 @@ export function OrgRosterClient(props: { rows: MasterRosterRow[]; pcOrgId: strin
           >
             {showOnlyActive ? "Active" : "All"}
           </button>
+        </div>
+
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <input
+            className="w-full rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))] sm:w-[320px]"
+            placeholder="Search roster…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
 
           <button className={toBtnPrimary} onClick={openAdd} type="button">
             + Onboard
@@ -76,51 +110,76 @@ export function OrgRosterClient(props: { rows: MasterRosterRow[]; pcOrgId: strin
         </div>
       </div>
 
-      {/* Roster table (human-readable) */}
+      {/* Roster table */}
       <div className={toTableWrap}>
-        <table className="min-w-full text-sm">
-          <thead className={toThead}>
+        <table className="min-w-full border-collapse text-sm">
+          <thead className={cx("sticky top-0 border-b border-[var(--to-border)]", toThead)}>
             <tr>
-              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Tech ID</th>
-              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Scheduling</th>
-              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Name</th>
-              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Mobile</th>
-              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Reports To</th>
-              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Company / Contractor</th>
-              <th className="whitespace-nowrap px-3 py-2 text-left font-medium">Active</th>
+              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                Tech ID
+              </th>
+              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                Scheduling
+              </th>
+              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                Name
+              </th>
+              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                Mobile
+              </th>
+              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                Reports To
+              </th>
+              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                Company / Contractor
+              </th>
+              <th className="whitespace-nowrap px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+                Active
+              </th>
             </tr>
           </thead>
+
           <tbody>
             {filteredRows.length === 0 ? (
               <tr>
-                <td className="px-3 py-3 text-[var(--to-ink-muted)]" colSpan={6}>
-                  No rows to display.
+                <td className="px-3 py-3 text-[var(--to-ink-muted)]" colSpan={7}>
+                  {q.trim()
+                    ? "No rows match your search."
+                    : showOnlyActive
+                    ? "No active rows to display."
+                    : "No rows to display."}
                 </td>
               </tr>
             ) : (
               filteredRows.map((r) => (
                 <tr
                   key={r.assignment_id}
-                  className={cx("border-t", "cursor-pointer hover:bg-black/5")}
+                  className={cx("cursor-pointer border-b border-[var(--to-border)]", toRowHover)}
                   onClick={() => openEdit(r)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openEdit(r);
+                    }
+                  }}
                   role="button"
                   tabIndex={0}
                 >
-                  <td className="whitespace-nowrap px-3 py-2">{r.tech_id || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-[var(--to-ink)]">{r.tech_id || "—"}</td>
+
                   <td className="whitespace-nowrap px-3 py-2">
                     {isSchedulingLocked(r) ? (
-                      <span className={toPillLocked}>
-                        Locked
-                      </span>
+                      <span className={toPillLocked}>Locked</span>
                     ) : (
                       <span className="text-xs text-[var(--to-ink-muted)]">—</span>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 font-medium">{r.full_name}</td>
-                  <td className="whitespace-nowrap px-3 py-2">{r.mobile || "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2">{r.reports_to_full_name || "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2">{r.co_name || r.co_code || "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2">{r.assignment_active ? "Yes" : "No"}</td>
+
+                  <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--to-ink)]">{r.full_name}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-[var(--to-ink)]">{r.mobile || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-[var(--to-ink)]">{r.reports_to_full_name || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-[var(--to-ink)]">{r.co_name || r.co_code || "—"}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-[var(--to-ink)]">{r.assignment_active ? "Yes" : "No"}</td>
                 </tr>
               ))
             )}

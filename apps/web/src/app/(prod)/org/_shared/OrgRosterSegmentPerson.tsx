@@ -1,9 +1,12 @@
+//apps/web/src/app/(prod)/org/_shared/OrgRosterSegmentPerson.tsx
+
 "use client";
 
 import { useMemo, useState } from "react";
 import type { MasterRosterRow } from "./OrgRosterPanel";
 import { createPerson } from "@/app/(prod)/person/person.api";
 import type { PersonRow } from "@/app/(prod)/person/person.types";
+import { toBtnNeutral } from "../../_shared/toStyles";
 
 type UnassignedPerson = {
   person_id: string;
@@ -15,6 +18,23 @@ type PersonMode = "select" | "create";
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
+}
+
+function Pill(props: { children: React.ReactNode; tone?: "neutral" | "warn" | "ok" }) {
+  const { children, tone = "neutral" } = props;
+
+  const toneClass =
+    tone === "warn"
+      ? "border-[var(--to-border)] bg-[var(--to-amber-100)] text-[var(--to-ink)]"
+      : tone === "ok"
+      ? "border-[var(--to-border)] bg-[var(--to-green-100)] text-[var(--to-ink)]"
+      : "border-[var(--to-border)] bg-[var(--to-surface-2)] text-[var(--to-ink)]";
+
+  return (
+    <span className={cx("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", toneClass)}>
+      {children}
+    </span>
+  );
 }
 
 async function fetchJson<T = any>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -162,24 +182,31 @@ export function OrgRosterSegmentPerson(props: {
     }
   }
 
+  const busy = saving || creating;
+
   if (!isAdd) {
     // edit mode: read-only person summary
     return (
-      <section className="rounded-2xl border p-5" style={{ borderColor: "var(--to-border)" }}>
-        <div className="text-sm font-semibold">Person</div>
+      <section className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="text-sm font-semibold text-[var(--to-ink)]">Person</div>
+          <Pill>Read-only</Pill>
+        </div>
 
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div className="rounded-md bg-black/5 px-3 py-2 text-sm">
+          <div className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface-2)] px-3 py-2 text-sm">
             <div className="text-xs text-[var(--to-ink-muted)]">Name</div>
-            <div className="font-medium">{row?.full_name || "—"}</div>
+            <div className="font-medium text-[var(--to-ink)]">{row?.full_name || "—"}</div>
           </div>
-          <div className="rounded-md bg-black/5 px-3 py-2 text-sm">
+
+          <div className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface-2)] px-3 py-2 text-sm">
             <div className="text-xs text-[var(--to-ink-muted)]">Mobile</div>
-            <div className="font-medium">{row?.mobile || "—"}</div>
+            <div className="font-medium text-[var(--to-ink)]">{row?.mobile || "—"}</div>
           </div>
-          <div className="rounded-md bg-black/5 px-3 py-2 text-sm md:col-span-2">
+
+          <div className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface-2)] px-3 py-2 text-sm md:col-span-2">
             <div className="text-xs text-[var(--to-ink-muted)]">Company / Contractor</div>
-            <div className="font-medium">{row?.co_name || row?.co_code || "—"}</div>
+            <div className="font-medium text-[var(--to-ink)]">{row?.co_name || row?.co_code || "—"}</div>
           </div>
         </div>
       </section>
@@ -187,23 +214,20 @@ export function OrgRosterSegmentPerson(props: {
   }
 
   const showCreateAffordance =
-    canCreatePerson &&
-    mode === "select" &&
-    !loadingPeople &&
-    people.length === 0 &&
-    (q.trim().length > 0 || people.length === 0);
-
-  const busy = saving || creating;
+    canCreatePerson && mode === "select" && !loadingPeople && people.length === 0 && q.trim().length > 0;
 
   return (
-    <section className="rounded-2xl border p-5" style={{ borderColor: "var(--to-border)" }}>
+    <section className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-5">
+      {/* Segment header */}
       <div className="flex items-start justify-between gap-3">
-        <div className="text-sm font-semibold">Person</div>
+        <div className="flex items-center gap-2">
+          <div className="text-sm font-semibold text-[var(--to-ink)]">Person</div>
+          {selectedPersonId ? <Pill tone="ok">Selected</Pill> : <Pill>Required</Pill>}
+        </div>
 
         {mode === "create" ? (
           <button
-            className="rounded-md border px-3 py-2 text-sm hover:bg-[var(--to-surface-2)]"
-            style={{ borderColor: "var(--to-border)" }}
+            className={cx(toBtnNeutral, "px-3 py-2 text-sm")}
             type="button"
             onClick={() => {
               setMode("select");
@@ -220,18 +244,17 @@ export function OrgRosterSegmentPerson(props: {
       <div className="mt-3 space-y-3">
         {mode === "select" ? (
           <>
+            {/* Search row */}
             <div className="flex items-center gap-2">
               <input
-                className="w-full rounded-md border px-3 py-2 text-sm"
-                style={{ borderColor: "var(--to-border)" }}
+                className="w-full rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                 placeholder="Search unassigned people…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 disabled={busy}
               />
               <button
-                className="rounded-md border px-3 py-2 text-sm hover:bg-[var(--to-surface-2)]"
-                style={{ borderColor: "var(--to-border)" }}
+                className={cx(toBtnNeutral, "px-3 py-2 text-sm")}
                 type="button"
                 onClick={() => loadPeople(q)}
                 disabled={loadingPeople || busy}
@@ -240,15 +263,19 @@ export function OrgRosterSegmentPerson(props: {
               </button>
             </div>
 
-            <div className="rounded-md border" style={{ borderColor: "var(--to-border)" }}>
+            {/* Results */}
+            <div className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)]">
               {people.length === 0 ? (
                 <div className="px-3 py-3 text-sm text-[var(--to-ink-muted)]">
-                  {loadingPeople ? "Loading…" : "No results."}
+                  {loadingPeople ? "Loading…" : q.trim() ? "No results." : "Search to find unassigned people."}
                 </div>
               ) : (
-                <ul className="max-h-64 overflow-auto divide-y">
+                <ul className="max-h-64 overflow-auto divide-y divide-[var(--to-border)]">
                   {people.map((p) => (
-                    <li key={p.person_id} className="px-3 py-2">
+                    <li
+                      key={p.person_id}
+                      className="px-3 py-2 transition hover:bg-[var(--to-surface-2)]"
+                    >
                       <label className="flex cursor-pointer items-start gap-2">
                         <input
                           type="radio"
@@ -259,7 +286,7 @@ export function OrgRosterSegmentPerson(props: {
                           disabled={busy}
                         />
                         <div className="min-w-0">
-                          <div className="truncate font-medium">{p.full_name}</div>
+                          <div className="truncate font-medium text-[var(--to-ink)]">{p.full_name}</div>
                           {p.emails ? (
                             <div className="truncate text-xs text-[var(--to-ink-muted)]">{p.emails}</div>
                           ) : null}
@@ -271,14 +298,14 @@ export function OrgRosterSegmentPerson(props: {
               )}
             </div>
 
+            {/* Create CTA */}
             {showCreateAffordance ? (
-              <div className="flex items-center justify-between gap-3 rounded-md border bg-black/5 px-3 py-2">
+              <div className="flex flex-col gap-2 rounded-md border border-[var(--to-border)] bg-[var(--to-surface-2)] px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-sm text-[var(--to-ink-muted)]">
                   No unassigned person found. You can create a new person record.
                 </div>
                 <button
-                  className="rounded-md border px-3 py-2 text-sm hover:bg-[var(--to-surface-2)]"
-                  style={{ borderColor: "var(--to-border)" }}
+                  className={cx(toBtnNeutral, "px-3 py-2 text-sm")}
                   type="button"
                   onClick={startCreateFromSearch}
                   disabled={busy}
@@ -289,28 +316,36 @@ export function OrgRosterSegmentPerson(props: {
             ) : null}
 
             {selectedPerson ? (
-              <div className="text-sm text-[var(--to-ink-muted)]">Selected: {selectedPerson.full_name}</div>
+              <div className="text-sm text-[var(--to-ink-muted)]">
+                Selected: <span className="font-medium text-[var(--to-ink)]">{selectedPerson.full_name}</span>
+              </div>
             ) : null}
           </>
         ) : (
-          <div className="rounded-md border p-3" style={{ borderColor: "var(--to-border)" }}>
-            <div className="text-sm font-semibold">Create Person</div>
-            <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
-              Creates a new person record, then you can assign them to this org.
-              {/* TODO(grants): gate create fields by edge task grants */}
+          <div className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-[var(--to-ink)]">Create Person</div>
+                <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
+                  Creates a new person record, then you can assign them to this org.
+                </div>
+              </div>
+              {creating ? <Pill tone="ok">Creating…</Pill> : <Pill>Draft</Pill>}
             </div>
 
+            {/* Duplicate advisory */}
             {dupMatches && dupMatches.length > 0 ? (
-              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                <div className="font-medium">Possible duplicate fuse_emp_id match</div>
-                <div className="mt-1 text-xs text-amber-900/80">
+              <div className="mt-3 rounded-md border border-[var(--to-border)] bg-[var(--to-amber-100)] px-3 py-2 text-sm">
+                <div className="font-medium text-[var(--to-ink)]">Possible duplicate fuse_emp_id match</div>
+                <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
                   Advisory only. You can create anyway or go back to search.
                 </div>
-                <ul className="mt-2 list-disc pl-5 text-xs">
+
+                <ul className="mt-2 list-disc pl-5 text-xs text-[var(--to-ink)]">
                   {dupMatches.slice(0, 5).map((m) => (
                     <li key={m.person_id}>
                       {m.full_name}{" "}
-                      <span className="text-amber-900/70">
+                      <span className="text-[var(--to-ink-muted)]">
                         · fuse_emp_id: {m.fuse_emp_id || "—"} · email: {m.emails || "—"}
                       </span>
                     </li>
@@ -319,8 +354,7 @@ export function OrgRosterSegmentPerson(props: {
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <button
-                    className="rounded-md border px-3 py-2 text-sm hover:bg-white"
-                    style={{ borderColor: "var(--to-border)" }}
+                    className={cx(toBtnNeutral, "px-3 py-2 text-sm")}
                     type="button"
                     onClick={() => {
                       setDupMatches(null);
@@ -332,8 +366,10 @@ export function OrgRosterSegmentPerson(props: {
                   </button>
 
                   <button
-                    className={cx("rounded-md border px-3 py-2 text-sm", "bg-black text-white hover:opacity-90")}
-                    style={{ borderColor: "var(--to-border)" }}
+                    className={cx(
+                      "rounded-md border border-[var(--to-border)] px-3 py-2 text-sm",
+                      "bg-[var(--to-ink)] text-white hover:opacity-90"
+                    )}
                     type="button"
                     onClick={() => {
                       setAllowDuplicateFuse(true);
@@ -347,12 +383,12 @@ export function OrgRosterSegmentPerson(props: {
               </div>
             ) : null}
 
+            {/* Form */}
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
               <label className="grid gap-1 md:col-span-2">
-                <div className="text-sm font-medium">Full Name</div>
+                <div className="text-sm font-medium text-[var(--to-ink)]">Full Name</div>
                 <input
-                  className="rounded-md border px-3 py-2 text-sm"
-                  style={{ borderColor: "var(--to-border)" }}
+                  className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                   value={draft.full_name}
                   onChange={(e) => setDraft((d) => ({ ...d, full_name: e.target.value }))}
                   disabled={busy}
@@ -360,10 +396,9 @@ export function OrgRosterSegmentPerson(props: {
               </label>
 
               <label className="grid gap-1">
-                <div className="text-sm font-medium">Emails</div>
+                <div className="text-sm font-medium text-[var(--to-ink)]">Emails</div>
                 <input
-                  className="rounded-md border px-3 py-2 text-sm"
-                  style={{ borderColor: "var(--to-border)" }}
+                  className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                   placeholder="comma-separated"
                   value={draft.emails}
                   onChange={(e) => setDraft((d) => ({ ...d, emails: e.target.value }))}
@@ -372,10 +407,9 @@ export function OrgRosterSegmentPerson(props: {
               </label>
 
               <label className="grid gap-1">
-                <div className="text-sm font-medium">Mobile</div>
+                <div className="text-sm font-medium text-[var(--to-ink)]">Mobile</div>
                 <input
-                  className="rounded-md border px-3 py-2 text-sm"
-                  style={{ borderColor: "var(--to-border)" }}
+                  className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                   value={draft.mobile}
                   onChange={(e) => setDraft((d) => ({ ...d, mobile: e.target.value }))}
                   disabled={busy}
@@ -383,10 +417,9 @@ export function OrgRosterSegmentPerson(props: {
               </label>
 
               <label className="grid gap-1">
-                <div className="text-sm font-medium">fuse_emp_id</div>
+                <div className="text-sm font-medium text-[var(--to-ink)]">fuse_emp_id</div>
                 <input
-                  className="rounded-md border px-3 py-2 text-sm"
-                  style={{ borderColor: "var(--to-border)" }}
+                  className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                   value={draft.fuse_emp_id}
                   onChange={(e) => setDraft((d) => ({ ...d, fuse_emp_id: e.target.value }))}
                   disabled={busy}
@@ -394,10 +427,9 @@ export function OrgRosterSegmentPerson(props: {
               </label>
 
               <label className="grid gap-1">
-                <div className="text-sm font-medium">NT Login</div>
+                <div className="text-sm font-medium text-[var(--to-ink)]">NT Login</div>
                 <input
-                  className="rounded-md border px-3 py-2 text-sm"
-                  style={{ borderColor: "var(--to-border)" }}
+                  className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                   value={draft.person_nt_login}
                   onChange={(e) => setDraft((d) => ({ ...d, person_nt_login: e.target.value }))}
                   disabled={busy}
@@ -405,10 +437,9 @@ export function OrgRosterSegmentPerson(props: {
               </label>
 
               <label className="grid gap-1">
-                <div className="text-sm font-medium">CSG ID</div>
+                <div className="text-sm font-medium text-[var(--to-ink)]">CSG ID</div>
                 <input
-                  className="rounded-md border px-3 py-2 text-sm"
-                  style={{ borderColor: "var(--to-border)" }}
+                  className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                   value={draft.person_csg_id}
                   onChange={(e) => setDraft((d) => ({ ...d, person_csg_id: e.target.value }))}
                   disabled={busy}
@@ -416,10 +447,9 @@ export function OrgRosterSegmentPerson(props: {
               </label>
 
               <label className="grid gap-1">
-                <div className="text-sm font-medium">Role</div>
+                <div className="text-sm font-medium text-[var(--to-ink)]">Role</div>
                 <input
-                  className="rounded-md border px-3 py-2 text-sm"
-                  style={{ borderColor: "var(--to-border)" }}
+                  className="rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                   value={draft.role}
                   onChange={(e) => setDraft((d) => ({ ...d, role: e.target.value }))}
                   disabled={busy}
@@ -427,10 +457,9 @@ export function OrgRosterSegmentPerson(props: {
               </label>
 
               <label className="grid gap-1 md:col-span-2">
-                <div className="text-sm font-medium">Notes</div>
+                <div className="text-sm font-medium text-[var(--to-ink)]">Notes</div>
                 <textarea
-                  className="min-h-[72px] rounded-md border px-3 py-2 text-sm"
-                  style={{ borderColor: "var(--to-border)" }}
+                  className="min-h-[72px] rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[var(--to-accent,var(--to-border))]"
                   value={draft.person_notes}
                   onChange={(e) => setDraft((d) => ({ ...d, person_notes: e.target.value }))}
                   disabled={busy}
@@ -438,10 +467,10 @@ export function OrgRosterSegmentPerson(props: {
               </label>
             </div>
 
-            <div className="mt-3 flex items-center justify-end gap-2">
+            {/* Footer actions */}
+            <div className="mt-3 flex flex-col items-stretch justify-end gap-2 sm:flex-row sm:items-center">
               <button
-                className="rounded-md border px-3 py-2 text-sm hover:bg-[var(--to-surface-2)]"
-                style={{ borderColor: "var(--to-border)" }}
+                className={cx(toBtnNeutral, "px-3 py-2 text-sm")}
                 type="button"
                 onClick={() => setMode("select")}
                 disabled={busy}
@@ -450,8 +479,10 @@ export function OrgRosterSegmentPerson(props: {
               </button>
 
               <button
-                className={cx("rounded-md border px-3 py-2 text-sm", "bg-black text-white hover:opacity-90")}
-                style={{ borderColor: "var(--to-border)" }}
+                className={cx(
+                  "rounded-md border border-[var(--to-border)] px-3 py-2 text-sm",
+                  "bg-[var(--to-ink)] text-white hover:opacity-90"
+                )}
                 type="button"
                 onClick={doCreatePerson}
                 disabled={busy}

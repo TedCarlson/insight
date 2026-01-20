@@ -6,13 +6,7 @@ export default function AssignmentPage() {
   return (
     <main className="flex h-full flex-col">
       {/* Header */}
-      <header
-        className="border-b px-6 py-4"
-        style={{
-          borderColor: 'var(--to-border)',
-          background: 'var(--to-header-bg)',
-        }}
-      >
+      <header className="border-b px-6 py-4 border-[var(--to-border)] bg-[var(--to-header-bg)]">
         <h1 className="text-lg font-semibold text-[var(--to-ink)]">
           Assignments
         </h1>

@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { cn } from '@/lib/utils'
 import AdminOverlay from '../_shared/AdminOverlay'
+import { toBtnNeutral, toBtnPrimary } from '../_shared/toStyles'
 import { fetchAssignmentReportingEdges } from './assignment.api'
 import type {
   AssignmentReportingEdge,
@@ -194,8 +196,7 @@ export default function AssignmentInspector({
         isCreate ? (
           <div className="flex justify-end gap-2">
             <button
-              className="rounded border px-3 py-1.5 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className={toBtnNeutral}
               onClick={() => onClose('cancel')}
               disabled={saving}
             >
@@ -203,7 +204,7 @@ export default function AssignmentInspector({
             </button>
 
             <button
-              className="rounded px-3 py-1.5 text-sm bg-[var(--to-blue-600)] text-white disabled:opacity-60"
+              className={cn(toBtnPrimary, "disabled:opacity-60")}
               disabled={!canCreate}
               onClick={handleCreate}
             >
@@ -221,8 +222,7 @@ export default function AssignmentInspector({
 
       {submitError && (
         <div
-          className="mb-4 rounded border px-3 py-2 text-sm bg-white"
-          style={{ borderColor: 'var(--to-border)', color: 'var(--to-ink)' }}
+          className="mb-4 rounded border px-3 py-2 text-sm border-[var(--to-border)] bg-[var(--to-surface)] text-[var(--to-ink)]"
         >
           <span className="font-semibold">Error:</span> {submitError}
         </div>
@@ -237,8 +237,7 @@ export default function AssignmentInspector({
 
           {isCreate ? (
             <select
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={draft.person_id ?? ''}
               onChange={(e) =>
                 setDraft({ ...draft, person_id: e.target.value || null })
@@ -255,8 +254,7 @@ export default function AssignmentInspector({
             </select>
           ) : (
             <select
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={assignment?.person_id ?? ''}
               onChange={(e) => {
                 if (!assignmentId) return
@@ -283,8 +281,7 @@ export default function AssignmentInspector({
 
           {isCreate ? (
             <select
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={draft.pc_org_id ?? ''}
               onChange={(e) =>
                 setDraft({ ...draft, pc_org_id: e.target.value || null })
@@ -302,8 +299,7 @@ export default function AssignmentInspector({
             </select>
           ) : (
             <select
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={assignment?.pc_org_id ?? ''}
               onChange={(e) => {
                 if (!assignmentId) return
@@ -331,8 +327,7 @@ export default function AssignmentInspector({
 
           {isCreate ? (
             <select
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={draft.position_title ?? ''}
               onChange={(e) =>
                 setDraft({
@@ -355,8 +350,7 @@ export default function AssignmentInspector({
             </select>
           ) : (
             <select
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={assignment?.position_title ?? ''}
               onChange={(e) => {
                 if (!assignmentId) return
@@ -386,16 +380,14 @@ export default function AssignmentInspector({
 
           {isCreate ? (
             <input
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               placeholder="Existing system tech id (optional)"
               value={draft.tech_id ?? ''}
               onChange={(e) => setDraft({ ...draft, tech_id: e.target.value })}
             />
           ) : (
             <input
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={assignment?.tech_id ?? ''}
               onChange={(e) => {
                 if (!assignmentId) return
@@ -418,8 +410,7 @@ export default function AssignmentInspector({
           {isCreate ? (
             <input
               type="date"
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={(draft.start_date ?? '').slice(0, 10)}
               onChange={(e) =>
                 setDraft({
@@ -431,8 +422,7 @@ export default function AssignmentInspector({
           ) : (
             <input
               type="date"
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={(assignment?.start_date ?? '').slice(0, 10)}
               onChange={(e) => {
                 if (!assignmentId) return
@@ -455,8 +445,7 @@ export default function AssignmentInspector({
           {isCreate ? (
             <input
               type="date"
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={(draft.end_date ?? '').slice(0, 10)}
               onChange={(e) =>
                 setDraft({
@@ -468,8 +457,7 @@ export default function AssignmentInspector({
           ) : (
             <input
               type="date"
-              className="w-full rounded border px-2 py-2 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="w-full rounded border px-2 py-2 text-sm bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
               value={(assignment?.end_date ?? '').slice(0, 10)}
               onChange={(e) => {
                 if (!assignmentId) return
@@ -487,11 +475,7 @@ export default function AssignmentInspector({
       {/* Reporting (read-only, v1) */}
       {!isCreate ? (
         <div
-          className="mt-6 rounded border p-4"
-          style={{
-            borderColor: 'var(--to-border)',
-            background: 'var(--to-surface)',
-          }}
+          className="mt-6 rounded border p-4 border-[var(--to-border)] bg-[var(--to-surface)]"
         >
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -510,11 +494,7 @@ export default function AssignmentInspector({
 
           {repError && (
             <div
-              className="mt-3 rounded border px-3 py-2 text-sm bg-white"
-              style={{
-                borderColor: 'var(--to-border)',
-                color: 'var(--to-ink)',
-              }}
+              className="mt-3 rounded border px-3 py-2 text-sm border-[var(--to-border)] bg-[var(--to-surface)] text-[var(--to-ink)]"
             >
               <span className="font-semibold">Error:</span> {repError}
             </div>
@@ -537,8 +517,7 @@ export default function AssignmentInspector({
                         e.assignment_leadership_id ??
                         `${e.parent_assignment_id}:${e.child_assignment_id}:${e.start_date}`
                       }
-                      className="rounded border px-3 py-2 bg-white"
-                      style={{ borderColor: 'var(--to-border)' }}
+                      className="rounded border px-3 py-2 bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                     >
                       <div className="text-sm font-medium text-[var(--to-ink)]">
                         {assignmentLabel(e.parent)}
@@ -569,8 +548,7 @@ export default function AssignmentInspector({
                         e.assignment_leadership_id ??
                         `${e.parent_assignment_id}:${e.child_assignment_id}:${e.start_date}`
                       }
-                      className="rounded border px-3 py-2 bg-white"
-                      style={{ borderColor: 'var(--to-border)' }}
+                      className="rounded border px-3 py-2 bg-[var(--to-surface)] border-[var(--to-border)] text-[var(--to-ink)] placeholder:text-[var(--to-ink-muted)]"
                     >
                       <div className="text-sm font-medium text-[var(--to-ink)]">
                         {assignmentLabel(e.child)}

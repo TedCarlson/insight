@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { RosterPageShell, type RosterRow } from "@/features/roster/RosterPageShell";
 import { OnboardDrawer, type UnassignedPersonRow } from "@/features/roster/OnboardDrawer";
+import { RosterRecordOverlay } from "@/features/roster/RosterRecordOverlay";
 
 export function RosterLeadPage(props: {
   rosterRows: RosterRow[];
@@ -10,7 +11,8 @@ export function RosterLeadPage(props: {
   unassigned: UnassignedPersonRow[];
   unassignedError: string | null;
 }) {
-  const [open, setOpen] = useState(false);
+  const [onboardOpen, setOnboardOpen] = useState(false);
+  const [selected, setSelected] = useState<RosterRow | null>(null);
 
   return (
     <>
@@ -18,15 +20,14 @@ export function RosterLeadPage(props: {
         surface="lead"
         rosterRows={props.rosterRows}
         rosterError={props.rosterError}
-        onOnboard={() => setOpen(true)}
         unassignedError={props.unassignedError}
+        onOnboard={() => setOnboardOpen(true)}
+        onSelectRow={(row) => setSelected(row)}
       />
 
-      <OnboardDrawer
-        open={open}
-        onClose={() => setOpen(false)}
-        unassigned={props.unassigned}
-      />
+      <OnboardDrawer open={onboardOpen} onClose={() => setOnboardOpen(false)} unassigned={props.unassigned} />
+
+      <RosterRecordOverlay open={Boolean(selected)} onClose={() => setSelected(null)} row={selected} />
     </>
   );
 }

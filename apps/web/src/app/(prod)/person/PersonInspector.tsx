@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { PersonRow } from './person.types'
 import type { CompanyOption } from '../_shared/dropdowns'
 import AdminOverlay from '../_shared/AdminOverlay'
+import { toBtnNeutral, toBtnPrimary, toPillActive, toPillInactive } from '../_shared/toStyles'
 
 export type PersonInspectorMode = 'create' | 'edit'
 
@@ -98,11 +99,9 @@ function TextField({
         className={cx(
           'w-full rounded border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-offset-0',
           disabled && 'bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)]',
-          !disabled && 'bg-white',
+          !disabled && 'bg-[var(--to-surface)]',
           'focus:ring-[var(--to-blue-600)] focus:border-[var(--to-blue-600)]'
-        )}
-        style={{ borderColor: 'var(--to-border)' }}
-        placeholder={placeholder}
+        )} placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -125,8 +124,7 @@ function TextAreaField({
     <div className="space-y-1">
       <FieldLabel>{label}</FieldLabel>
       <textarea
-        className="w-full rounded border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[var(--to-blue-600)] focus:border-[var(--to-blue-600)] bg-white"
-        style={{ borderColor: 'var(--to-border)' }}
+        className="w-full rounded border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[var(--to-blue-600)] focus:border-[var(--to-blue-600)] bg-[var(--to-surface)] border-[var(--to-border)]"
         rows={rows}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -307,8 +305,7 @@ export default function PersonInspector(props: {
         isCreate ? (
           <div className="flex items-center justify-between gap-3">
             <button
-              className="rounded border px-3 py-1.5 text-sm bg-white"
-              style={{ borderColor: 'var(--to-border)' }}
+              className={toBtnNeutral}
               onClick={() => onClose('cancel')}
               disabled={saving}
             >
@@ -316,14 +313,7 @@ export default function PersonInspector(props: {
             </button>
 
             <button
-              className={cx(
-                'rounded px-3 py-1.5 text-sm border',
-                saving
-                  ? 'bg-white text-[var(--to-ink-muted)]'
-                  : 'bg-[var(--to-blue-600)] text-white'
-              )}
-              style={{ borderColor: 'var(--to-btn-primary-border)' }}
-              onClick={handleSave}
+              className={cx(toBtnPrimary, saving && 'opacity-70')} onClick={handleSave}
               disabled={saving}
             >
               {saving ? 'Saving…' : 'Save & Close'}
@@ -332,7 +322,7 @@ export default function PersonInspector(props: {
         ) : null
       }
     >
-      {/* Body (original content; no longer forces bg-white on the entire panel) */}
+      {/* Body (original content; no longer forces bg-[var(--to-surface)] on the entire panel) */}
       <div className="space-y-6">
         {/* Identity */}
         <Section title="Identity">
@@ -398,8 +388,7 @@ export default function PersonInspector(props: {
             <FieldLabel>Company</FieldLabel>
             {isCreate ? (
               <select
-                className="w-full rounded border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[var(--to-blue-600)] focus:border-[var(--to-blue-600)] bg-white"
-                style={{ borderColor: 'var(--to-border)' }}
+                className="w-full rounded border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[var(--to-blue-600)] focus:border-[var(--to-blue-600)] bg-[var(--to-surface)] border-[var(--to-border)]"
                 value={draft.co_ref_id ?? ''}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, co_ref_id: e.target.value || null }))
@@ -414,8 +403,7 @@ export default function PersonInspector(props: {
               </select>
             ) : (
               <select
-                className="w-full rounded border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[var(--to-blue-600)] focus:border-[var(--to-blue-600)] bg-white"
-                style={{ borderColor: 'var(--to-border)' }}
+                className="w-full rounded border px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-offset-0 focus:ring-[var(--to-blue-600)] focus:border-[var(--to-blue-600)] bg-[var(--to-surface)] border-[var(--to-border)]"
                 value={person?.co_ref_id ?? ''}
                 onChange={(e) =>
                   person &&
@@ -435,8 +423,7 @@ export default function PersonInspector(props: {
           <div className="space-y-1">
             <FieldLabel>Company code (derived)</FieldLabel>
             <div
-              className="rounded border px-2 py-1.5 text-sm bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)]"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="rounded border px-2 py-1.5 text-sm bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)] border-[var(--to-border)]"
             >
               {isCreate ? displayCompanyForCreate ?? '—' : displayCompanyForEdit ?? '—'}
             </div>
@@ -508,14 +495,7 @@ export default function PersonInspector(props: {
               />
 
               {dupMatches.length > 0 ? (
-                <div
-                  className="rounded border px-3 py-2 text-xs"
-                  style={{
-                    borderColor: 'var(--to-pill-inactive-border)',
-                    background: 'var(--to-pill-inactive-bg)',
-                    color: 'var(--to-pill-inactive-text)',
-                  }}
-                >
+                <div className="rounded border px-3 py-2 text-xs border-[var(--to-pill-inactive-border)] bg-[var(--to-pill-inactive-bg)] text-[var(--to-pill-inactive-text)]">
                   <div className="font-semibold">Fuse ID already exists</div>
                   <div className="mt-1 text-[11px]">
                     Review the existing record before creating a duplicate.
@@ -525,8 +505,7 @@ export default function PersonInspector(props: {
                     {dupMatches.slice(0, 5).map((m) => (
                       <div
                         key={m.person_id}
-                        className="flex items-center justify-between gap-3 rounded border px-2 py-1.5 bg-white/70"
-                        style={{ borderColor: 'var(--to-border)' }}
+                        className="flex items-center justify-between gap-3 rounded border px-2 py-1.5 bg-[var(--to-surface)]/70 border-[var(--to-border)]"
                       >
                         <div className="min-w-0">
                           <div className="text-xs font-semibold text-[var(--to-ink)] truncate">
@@ -540,8 +519,7 @@ export default function PersonInspector(props: {
                         </div>
                         <StatusPill value={m.active ?? false} />
                         <button
-                          className="rounded border px-2 py-1 text-xs bg-white"
-                          style={{ borderColor: 'var(--to-border)' }}
+                          className={cx(toBtnNeutral, "px-2 py-1 text-xs")}
                           onClick={() => onReviewExisting(m.person_id)}
                         >
                           Review
@@ -552,15 +530,13 @@ export default function PersonInspector(props: {
 
                   <div className="mt-2 flex items-center gap-2">
                     <button
-                      className="rounded border px-2 py-1 text-xs bg-white"
-                      style={{ borderColor: 'var(--to-border)' }}
+                      className={cx(toBtnNeutral, "px-2 py-1 text-xs")}
                       onClick={() => setDupModalOpen(true)}
                     >
                       Resolve…
                     </button>
                     <button
-                      className="rounded border px-2 py-1 text-xs bg-white"
-                      style={{ borderColor: 'var(--to-border)' }}
+                      className={cx(toBtnNeutral, "px-2 py-1 text-xs")}
                       onClick={() => runFuseAdvisoryCheck(true)}
                     >
                       Re-check
@@ -628,14 +604,7 @@ export default function PersonInspector(props: {
         </Section>
 
         {submitError ? (
-          <div
-            className="rounded border px-3 py-2 text-xs"
-            style={{
-              borderColor: 'var(--to-pill-inactive-border)',
-              background: 'var(--to-pill-inactive-bg)',
-              color: 'var(--to-pill-inactive-text)',
-            }}
-          >
+          <div className="rounded border px-3 py-2 text-xs border-[var(--to-pill-inactive-border)] bg-[var(--to-pill-inactive-bg)] text-[var(--to-pill-inactive-text)]">
             {submitError}
           </div>
         ) : null}
@@ -646,10 +615,9 @@ export default function PersonInspector(props: {
         <div className="fixed inset-0 z-[60] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/35" />
           <div
-            className="relative w-[640px] max-w-[90%] rounded border bg-[var(--to-surface)] shadow-[var(--to-shadow-md)]"
-            style={{ borderColor: 'var(--to-border)' }}
+            className="relative w-[640px] max-w-[90%] rounded border bg-[var(--to-surface)] shadow-[var(--to-shadow-md)] border-[var(--to-border)]"
           >
-            <div className="border-b px-4 py-3" style={{ borderColor: 'var(--to-border)' }}>
+            <div className="border-b px-4 py-3 border-[var(--to-border)]">
               <div className="text-sm font-semibold text-[var(--to-ink)]">
                 Duplicate Fuse ID Detected
               </div>
@@ -662,8 +630,7 @@ export default function PersonInspector(props: {
               {dupMatches.map((m) => (
                 <button
                   key={m.person_id}
-                  className="w-full text-left rounded border px-3 py-2 bg-white hover:bg-[var(--to-blue-050)]"
-                  style={{ borderColor: 'var(--to-border)' }}
+                  className="w-full text-left rounded border px-3 py-2 bg-[var(--to-surface)] hover:bg-[var(--to-blue-050)] border-[var(--to-border)]"
                   onClick={() => onReviewExisting(m.person_id)}
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -682,20 +649,17 @@ export default function PersonInspector(props: {
             </div>
 
             <div
-              className="border-t px-4 py-3 flex items-center justify-between gap-2"
-              style={{ borderColor: 'var(--to-border)' }}
+              className="border-t px-4 py-3 flex items-center justify-between gap-2 border-[var(--to-border)]"
             >
               <button
-                className="rounded border px-3 py-1.5 text-sm bg-white"
-                style={{ borderColor: 'var(--to-border)' }}
+                className={toBtnNeutral}
                 onClick={() => setDupModalOpen(false)}
               >
                 Cancel
               </button>
 
               <button
-                className="rounded border px-3 py-1.5 text-sm bg-white"
-                style={{ borderColor: 'var(--to-border)' }}
+                className={toBtnNeutral}
                 onClick={() => {
                   setAllowDupFuse(true)
                   setDupModalOpen(false)
@@ -705,9 +669,7 @@ export default function PersonInspector(props: {
               </button>
 
               <button
-                className="rounded px-3 py-1.5 text-sm bg-[var(--to-blue-600)] text-white border"
-                style={{ borderColor: 'var(--to-btn-primary-border)' }}
-                onClick={() => {
+                className={toBtnPrimary} onClick={() => {
                   if (dupMatches[0]) onReviewExisting(dupMatches[0].person_id)
                 }}
               >

@@ -1,5 +1,3 @@
-//apps/web/src/features/planning/PlanningGrid.tsx
-
 "use client";
 
 import { useMemo, useState } from "react";
@@ -23,15 +21,36 @@ type PlanningMemberRow = {
 const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 type DayKey = (typeof DAYS)[number];
 
+const DAY_LABEL: Record<DayKey, string> = {
+  sun: "Sun",
+  mon: "Mon",
+  tue: "Tue",
+  wed: "Wed",
+  thu: "Thu",
+  fri: "Fri",
+  sat: "Sat",
+};
+
 const HOURS_PER_ON_DAY = 8;
 const UNITS_PER_HOUR = 12;
+const UNITS_PER_ON_DAY = HOURS_PER_ON_DAY * UNITS_PER_HOUR;
 
-function computeHoursUnits(on: boolean) {
-  const hours = on ? HOURS_PER_ON_DAY : 0;
-  return { hours, units: hours * UNITS_PER_HOUR };
+type Metric = "hours" | "units" | "techs";
+
+function metricLabel(m: Metric) {
+  if (m === "hours") return "Hours";
+  if (m === "units") return "Units";
+  return "Techs";
 }
 
-function TogglePill(props: { on: boolean; disabled?: boolean; onClick: () => void }) {
+function metricValueForDay(on: boolean, metric: Metric) {
+  if (!on) return 0;
+  if (metric === "hours") return HOURS_PER_ON_DAY;
+  if (metric === "units") return UNITS_PER_ON_DAY;
+  return 1; // techs
+}
+
+function TogglePill(props: { on: boolean; label: string; disabled?: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -45,15 +64,34 @@ function TogglePill(props: { on: boolean; disabled?: boolean; onClick: () => voi
         props.disabled ? "opacity-60 cursor-not-allowed" : "",
       ].join(" ")}
     >
-      {props.on ? "On" : "Off"}
+      {/* Confirmed display rule:
+          - planned=true => show weekday label
+          - planned=false => show "Off"
+      */}
+      {props.on ? props.label : "Off"}
+    </button>
+  );
+}
+
+function MetricPill(props: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className={[
+        "rounded-full border px-3 py-1 text-xs",
+        props.active
+          ? "border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink)]"
+          : "border-[var(--to-border)] bg-[var(--to-surface)] text-[var(--to-ink-muted)] hover:bg-[var(--to-surface-soft)]",
+      ].join(" ")}
+    >
+      {props.label}
     </button>
   );
 }
 
 function safeUuid() {
-  // modern browsers support this; fallback is only for extreme cases
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  // minimal fallback (not RFC perfect, but avoids hard failure)
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === "x" ? r : (r & 0x3) | 0x8;
@@ -77,16 +115,19 @@ type Props = {
   pcOrgId: string;
   rows: PlanningMemberRow[];
 
-  // Week window for the schedule rows we are editing
   weekStart: string; // YYYY-MM-DD
   weekEnd: string; // YYYY-MM-DD
   scheduleName: string;
 
-  // Existing schedule rows for this window/name (if any)
   scheduleSeeds: ScheduleSeed[];
 };
 
+// STEP 1.3: flat quota placeholder (straight comparison)
+// Change this later when we wire real imports.
+const QUOTA_TECHS_PER_DAY = 10;
+
 export function PlanningGrid(props: Props) {
+  const [metric, setMetric] = useState<Metric>("techs"); // default: Techs (confirmed)
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -116,8 +157,7 @@ export function PlanningGrid(props: Props) {
     for (const r of props.rows) {
       const assignmentId = r.assignment_id ?? null;
 
-      // default behavior (no existing schedule):
-      // keep your original UX default (On for all days)
+      // default behavior (no existing schedule): default = On for all days
       const defaultDays: Record<DayKey, boolean> = {
         sun: true,
         mon: true,
@@ -128,7 +168,8 @@ export function PlanningGrid(props: Props) {
         sat: true,
       };
 
-      seed[r.person_pc_org_id] = assignmentId && byAssignmentDays[assignmentId] ? byAssignmentDays[assignmentId] : defaultDays;
+      seed[r.person_pc_org_id] =
+        assignmentId && byAssignmentDays[assignmentId] ? byAssignmentDays[assignmentId] : defaultDays;
     }
 
     return seed;
@@ -136,38 +177,80 @@ export function PlanningGrid(props: Props) {
 
   const [byMembership, setByMembership] = useState<Record<string, Record<DayKey, boolean>>>(initialByMembership);
 
-  const totals = useMemo(() => {
-    let totalHours = 0;
-    let totalUnits = 0;
+  const plannedTotalsByDay = useMemo(() => {
+    const out: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
 
     for (const r of props.rows) {
+      // Do not count rows that cannot be scheduled (no assignment)
+      if (!r.assignment_id) continue;
+
       const row = byMembership[r.person_pc_org_id];
       if (!row) continue;
 
       for (const d of DAYS) {
-        const { hours, units } = computeHoursUnits(Boolean(row[d]));
-        totalHours += hours;
-        totalUnits += units;
+        out[d] += metricValueForDay(Boolean(row[d]), metric);
       }
     }
 
-    return { totalHours, totalUnits };
-  }, [props.rows, byMembership]);
+    return out;
+  }, [props.rows, byMembership, metric]);
+
+  const plannedWeekTotal = useMemo(() => {
+    let sum = 0;
+
+    for (const r of props.rows) {
+      if (!r.assignment_id) continue;
+
+      const row = byMembership[r.person_pc_org_id];
+      if (!row) continue;
+
+      for (const d of DAYS) {
+        sum += metricValueForDay(Boolean(row[d]), metric);
+      }
+    }
+
+    return sum;
+  }, [props.rows, byMembership, metric]);
+
+  // STEP 1.3: quota placeholder derived from a flat Techs/day target
+  const quotaTotalsByDay = useMemo(() => {
+    const out: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
+
+    const dailyTechs = QUOTA_TECHS_PER_DAY;
+
+    for (const d of DAYS) {
+      if (metric === "techs") out[d] = dailyTechs;
+      else if (metric === "hours") out[d] = dailyTechs * HOURS_PER_ON_DAY;
+      else out[d] = dailyTechs * UNITS_PER_ON_DAY;
+    }
+
+    return out;
+  }, [metric]);
+
+  const quotaWeekTotal = useMemo(() => {
+    return DAYS.reduce((sum, d) => sum + quotaTotalsByDay[d], 0);
+  }, [quotaTotalsByDay]);
+
+  const varianceByDay = useMemo(() => {
+    const out: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
+    for (const d of DAYS) out[d] = plannedTotalsByDay[d] - quotaTotalsByDay[d];
+    return out;
+  }, [plannedTotalsByDay, quotaTotalsByDay]);
+
+  const varianceWeek = plannedWeekTotal - quotaWeekTotal;
 
   async function save() {
     setSaveState("saving");
     setSaveError(null);
 
-    // Lazy import to avoid bringing supabase client into server bundles accidentally
     const { createClient } = await import("@/app/(prod)/_shared/supabase");
     const supabase = createClient();
 
-    // Build schedule rows keyed by assignment_id for this week + scheduleName
     const rowsToWrite: any[] = [];
 
     for (const r of props.rows) {
       const assignmentId = r.assignment_id ?? null;
-      if (!assignmentId) continue; // no assignment => cannot write schedule
+      if (!assignmentId) continue;
 
       const days = byMembership[r.person_pc_org_id];
       const scheduleId = scheduleIdByAssignment[assignmentId] ?? safeUuid();
@@ -180,13 +263,13 @@ export function PlanningGrid(props: Props) {
       const fri = Boolean(days?.fri);
       const sat = Boolean(days?.sat);
 
-      const hs = computeHoursUnits(sun);
-      const hm = computeHoursUnits(mon);
-      const ht = computeHoursUnits(tue);
-      const hw = computeHoursUnits(wed);
-      const hth = computeHoursUnits(thu);
-      const hf = computeHoursUnits(fri);
-      const hsa = computeHoursUnits(sat);
+      const hs = { hours: sun ? HOURS_PER_ON_DAY : 0, units: sun ? UNITS_PER_ON_DAY : 0 };
+      const hm = { hours: mon ? HOURS_PER_ON_DAY : 0, units: mon ? UNITS_PER_ON_DAY : 0 };
+      const ht = { hours: tue ? HOURS_PER_ON_DAY : 0, units: tue ? UNITS_PER_ON_DAY : 0 };
+      const hw = { hours: wed ? HOURS_PER_ON_DAY : 0, units: wed ? UNITS_PER_ON_DAY : 0 };
+      const hth = { hours: thu ? HOURS_PER_ON_DAY : 0, units: thu ? UNITS_PER_ON_DAY : 0 };
+      const hf = { hours: fri ? HOURS_PER_ON_DAY : 0, units: fri ? UNITS_PER_ON_DAY : 0 };
+      const hsa = { hours: sat ? HOURS_PER_ON_DAY : 0, units: sat ? UNITS_PER_ON_DAY : 0 };
 
       rowsToWrite.push({
         schedule_id: scheduleId,
@@ -228,7 +311,6 @@ export function PlanningGrid(props: Props) {
       return;
     }
 
-    // Upsert on PK (schedule_id). For new schedules we generated a schedule_id.
     const { error } = await supabase.from("schedule").upsert(rowsToWrite, { onConflict: "schedule_id" });
 
     if (error) {
@@ -248,7 +330,7 @@ export function PlanningGrid(props: Props) {
           <div>
             <div className="text-sm font-semibold">Planning</div>
             <div className="mt-1 text-sm text-[var(--to-ink-muted)]">
-              On = {HOURS_PER_ON_DAY}h = {HOURS_PER_ON_DAY * UNITS_PER_HOUR} units (units = hours * {UNITS_PER_HOUR}).
+              On = {HOURS_PER_ON_DAY}h = {UNITS_PER_ON_DAY} units (units = hours * {UNITS_PER_HOUR}).
             </div>
             <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
               Week: <code className="text-xs">{props.weekStart}</code> → <code className="text-xs">{props.weekEnd}</code> •{" "}
@@ -285,9 +367,85 @@ export function PlanningGrid(props: Props) {
 
       <div className="overflow-hidden rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)]">
         <div className="border-b border-[var(--to-border)] p-4">
-          <div className="text-sm font-semibold">Weekly grid</div>
-          <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-            Persisted to <code className="text-xs">public.schedule</code> (assignment_id + week).
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">Weekly grid</div>
+              <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
+                Persisted to <code className="text-xs">public.schedule</code> (assignment_id + week).
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <MetricPill active={metric === "hours"} label="Hours" onClick={() => setMetric("hours")} />
+              <MetricPill active={metric === "units"} label="Units" onClick={() => setMetric("units")} />
+              <MetricPill active={metric === "techs"} label="Techs" onClick={() => setMetric("techs")} />
+            </div>
+          </div>
+
+          {/* STEP 1.3: Quota placeholder card */}
+          <div className="mt-4 rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface-soft)] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-semibold">Quota (placeholder)</div>
+                <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
+                  Flat target: {QUOTA_TECHS_PER_DAY} Techs/day (derived to Hours/Units when metric changes).
+                </div>
+              </div>
+
+              <div className="text-xs">
+                <span className="text-[var(--to-ink-muted)]">Week variance:</span>{" "}
+                <span className="font-semibold">{varianceWeek}</span>
+              </div>
+            </div>
+
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="text-left">
+                  <tr className="text-[var(--to-ink-muted)]">
+                    <th className="py-2 pr-3">Type</th>
+                    {DAYS.map((d) => (
+                      <th key={d} className="py-2 px-2">
+                        {DAY_LABEL[d]}
+                      </th>
+                    ))}
+                    <th className="py-2 pl-3">Week</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="py-2 pr-3 font-semibold">Planned</td>
+                    {DAYS.map((d) => (
+                      <td key={d} className="py-2 px-2">
+                        {plannedTotalsByDay[d]}
+                      </td>
+                    ))}
+                    <td className="py-2 pl-3 font-semibold">{plannedWeekTotal}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 pr-3 font-semibold">Quota</td>
+                    {DAYS.map((d) => (
+                      <td key={d} className="py-2 px-2">
+                        {quotaTotalsByDay[d]}
+                      </td>
+                    ))}
+                    <td className="py-2 pl-3 font-semibold">{quotaWeekTotal}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 pr-3 font-semibold">Variance</td>
+                    {DAYS.map((d) => (
+                      <td key={d} className="py-2 px-2">
+                        {varianceByDay[d]}
+                      </td>
+                    ))}
+                    <td className="py-2 pl-3 font-semibold">{varianceWeek}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
+              Display metric: <span className="font-semibold">{metricLabel(metric)}</span>
+            </div>
           </div>
         </div>
 
@@ -298,12 +456,22 @@ export function PlanningGrid(props: Props) {
                 <th className="px-4 py-3 font-semibold">Member</th>
                 <th className="px-4 py-3 font-semibold">Role</th>
                 <th className="px-4 py-3 font-semibold">Position</th>
+
                 {DAYS.map((d) => (
-                  <th key={d} className="px-4 py-3 font-semibold uppercase text-xs">
-                    {d}
+                  <th key={d} className="px-4 py-3 font-semibold">
+                    <div className="flex flex-col items-start leading-tight">
+                      <div className="text-sm font-semibold">{plannedTotalsByDay[d]}</div>
+                      <div className="text-[10px] uppercase text-[var(--to-ink-muted)]">{DAY_LABEL[d]}</div>
+                    </div>
                   </th>
                 ))}
-                <th className="px-4 py-3 font-semibold">Week Units</th>
+
+                <th className="px-4 py-3 font-semibold">
+                  <div className="flex flex-col items-start leading-tight">
+                    <div className="text-sm font-semibold">{plannedWeekTotal}</div>
+                    <div className="text-[10px] uppercase text-[var(--to-ink-muted)]">Week {metricLabel(metric)}</div>
+                  </div>
+                </th>
               </tr>
             </thead>
 
@@ -312,7 +480,8 @@ export function PlanningGrid(props: Props) {
                 const days = byMembership[r.person_pc_org_id];
                 const hasAssignment = Boolean(r.assignment_id);
 
-                const weekUnits = days ? DAYS.reduce((sum, d) => sum + computeHoursUnits(Boolean(days[d])).units, 0) : 0;
+                const rowTotal =
+                  !hasAssignment || !days ? 0 : DAYS.reduce((sum, d) => sum + metricValueForDay(Boolean(days[d]), metric), 0);
 
                 return (
                   <tr key={r.person_pc_org_id} className="border-t border-[var(--to-border)]">
@@ -330,6 +499,7 @@ export function PlanningGrid(props: Props) {
                       <td key={d} className="px-4 py-3">
                         <TogglePill
                           on={Boolean(days?.[d])}
+                          label={DAY_LABEL[d]}
                           disabled={!hasAssignment}
                           onClick={() => {
                             if (!hasAssignment) return;
@@ -356,7 +526,7 @@ export function PlanningGrid(props: Props) {
                       </td>
                     ))}
 
-                    <td className="px-4 py-3 font-medium">{weekUnits}</td>
+                    <td className="px-4 py-3 font-medium">{rowTotal}</td>
                   </tr>
                 );
               })}
@@ -373,7 +543,7 @@ export function PlanningGrid(props: Props) {
         </div>
 
         <div className="border-t border-[var(--to-border)] bg-[var(--to-surface-soft)] p-4 text-sm">
-          <span className="font-semibold">Totals:</span> {totals.totalUnits} units • {totals.totalHours} hours
+          <span className="font-semibold">Totals:</span> {plannedWeekTotal} {metricLabel(metric)}
         </div>
       </div>
     </div>

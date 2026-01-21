@@ -11,6 +11,7 @@ import type { PersonRow } from "@/app/(prod)/person/person.types";
 
 import { fetchAssignmentsByIds } from "@/app/(prod)/assignment/assignment.api";
 import type { AssignmentRow } from "@/app/(prod)/assignment/assignment.types";
+import { DAYS as MIRROR_DAYS, DEFAULT_DAYS_ALL_ON, type DayKey, useScheduleMirrorOptional } from "@/features/planning/scheduleMirror.store";
 
 type TabKey = "person" | "org" | "assignments" | "leadership" | "schedule";
 type TabStatus = "pending" | "ready" | "attention" | "locked";
@@ -46,32 +47,8 @@ type LeadershipRow = {
   active: boolean | null;
 };
 
-type StagedScheduleDraft = {
-  version: "staged_schedule_v1";
-  person_pc_org_id: string;
-  pc_org_id: string;
-  person_id: string;
-  assignment_id: string | null;
-  schedule_name: string; // placeholder for later alignment; not persisted to DB here
-  week_start: string | null; // placeholder for later alignment; not persisted to DB here
-  days: {
-    sun: boolean;
-    mon: boolean;
-    tue: boolean;
-    wed: boolean;
-    thu: boolean;
-    fri: boolean;
-    sat: boolean;
-  };
-  planning_math: {
-    units_per_hour: 12;
-    on_shift_hours: 8;
-    on_shift_units: 96;
-  };
-  updated_at: string;
-};
 
-const DAYS: Array<{ key: keyof StagedScheduleDraft["days"]; label: string; short: string }> = [
+const DAYS_UI: Array<{ key: DayKey; label: string; short: string }> = [
   { key: "sun", label: "Sunday", short: "Sun" },
   { key: "mon", label: "Monday", short: "Mon" },
   { key: "tue", label: "Tuesday", short: "Tue" },
@@ -80,6 +57,10 @@ const DAYS: Array<{ key: keyof StagedScheduleDraft["days"]; label: string; short
   { key: "fri", label: "Friday", short: "Fri" },
   { key: "sat", label: "Saturday", short: "Sat" },
 ];
+
+function countOnDays(days: Record<DayKey, boolean>) {
+  return MIRROR_DAYS.reduce((acc, d) => acc + (days[d] ? 1 : 0), 0);
+}
 
 const supabase = createClient();
 
@@ -183,17 +164,10 @@ async function fetchLeadershipForChildAssignment(assignmentId: string): Promise<
   return (data ?? []) as LeadershipRow[];
 }
 
-function stagedKeyFor(personPcOrgId: string) {
-  return `to:v2:staged_schedule:${personPcOrgId}`;
-}
-
-function countOnDays(draft: StagedScheduleDraft | null) {
-  if (!draft) return 0;
-  return DAYS.reduce((acc, d) => acc + (draft.days[d.key] ? 1 : 0), 0);
-}
-
 export function RosterRecordOverlay(props: { open: boolean; onClose: () => void; row: RosterRow | null }) {
   const [tab, setTab] = useState<TabKey>("person");
+
+  const mirror = useScheduleMirrorOptional();
 
   const [person, setPerson] = useState<PersonRow | null>(null);
   const [companyOptions, setCompanyOptions] = useState<CompanyOption[]>([]);
@@ -214,9 +188,6 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
   const [leaderParentsById, setLeaderParentsById] = useState<Record<string, AssignmentRow>>({});
 
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
-  const [copyStageState, setCopyStageState] = useState<"idle" | "copied" | "error">("idle");
-
-  const [stagedDraft, setStagedDraft] = useState<StagedScheduleDraft | null>(null);
 
   // Lint rule requires we avoid synchronous setState inside effect bodies.
   const defer = (fn: () => void) => {
@@ -229,42 +200,7 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
     defer(() => setTab("person"));
   }, [props.open, props.row?.person_pc_org_id]);
 
-  // Load staged schedule draft for the selected membership (local only)
-  useEffect(() => {
-    const personPcOrgId = props.row?.person_pc_org_id;
-
-    if (!props.open || !personPcOrgId) {
-      defer(() => setStagedDraft(null));
-      return;
-    }
-
-    let parsed: StagedScheduleDraft | null = null;
-    try {
-      const raw = localStorage.getItem(stagedKeyFor(personPcOrgId));
-      if (raw) parsed = JSON.parse(raw);
-    } catch {
-      parsed = null;
-    }
-
-    defer(() => setStagedDraft(parsed));
-  }, [props.open, props.row?.person_pc_org_id]);
-
-  // Persist staged schedule draft changes (local only)
-  useEffect(() => {
-    const personPcOrgId = props.row?.person_pc_org_id;
-    if (!props.open || !personPcOrgId) return;
-
-    try {
-      if (!stagedDraft) {
-        localStorage.removeItem(stagedKeyFor(personPcOrgId));
-        return;
-      }
-      localStorage.setItem(stagedKeyFor(personPcOrgId), JSON.stringify(stagedDraft));
-    } catch {
-      // ignore storage failures
-    }
-  }, [props.open, props.row?.person_pc_org_id, stagedDraft]);
-
+  
   // Load person + company/contractor options when overlay opens
   useEffect(() => {
     const personId = props.row?.person_id;
@@ -533,8 +469,10 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
       assignmentStatus === "ready" &&
       leadershipStatus === "ready";
 
-    // Once unlocked: pending until we have a staged draft for this membership, then ready.
-    const scheduleStatus: TabStatus = !coreReady ? "locked" : stagedDraft ? "ready" : "pending";
+    // Once unlocked: Schedule is Ready (staged draft is optional and does not affect tab readiness).
+    const scheduleStatus: TabStatus = !coreReady ? "locked" : "ready";
+    
+
 
     return {
       person: personStatus,
@@ -543,7 +481,7 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
       leadership: leadershipStatus,
       schedule: scheduleStatus,
     };
-  }, [props.row, person, orgCtx, orgError, assignmentError, leadershipError, currentLeaderEdge, stagedDraft]);
+  }, [props.row, person, orgCtx, orgError, assignmentError, leadershipError, currentLeaderEdge]);
 
   // Disable tabs based on prerequisite readiness (unlock chain)
   const disabled: Record<TabKey, boolean> = {
@@ -566,105 +504,10 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
 
   const eligibleForScheduleOps = blockers.length === 0;
 
-  const schedulePrepPayload = useMemo(() => {
-    const r = props.row;
-    if (!r) return null;
-
-    const role = (person?.role ?? r.person_role ?? null) as string | null;
-
-    return {
-      version: "schedule_prep_v1",
-      generated_at: new Date().toISOString(),
-      canonical_identity: {
-        person_pc_org_id: r.person_pc_org_id,
-        person_id: r.person_id,
-        pc_org_id: r.pc_org_id,
-      },
-      person: {
-        full_name: r.full_name ?? null,
-        role,
-        active: r.person_active ?? null,
-        affiliation: {
-          co_ref_id: person?.co_ref_id ?? null,
-          co_code: (person as any)?.co_code ?? null,
-        },
-      },
-      org_context: orgCtx
-        ? {
-            pc_org_id: orgCtx.pc_org_id,
-            pc_org_name: orgCtx.pc_org_name ?? null,
-            pc_number: orgCtx.pc_number ?? null,
-            division_id: orgCtx.division_id ?? null,
-            division_name: orgCtx.division_name ?? null,
-            region_id: orgCtx.region_id ?? null,
-            region_name: orgCtx.region_name ?? null,
-            mso_id: orgCtx.mso_id ?? null,
-            mso_name: orgCtx.mso_name ?? null,
-          }
-        : null,
-      assignment: r.assignment_id
-        ? {
-            assignment_id: r.assignment_id,
-            position_title: r.position_title ?? null,
-            assignment_active: r.assignment_active ?? null,
-            tech_id: assignment?.tech_id ?? null,
-            start_date: assignment?.start_date ?? null,
-            end_date: assignment?.end_date ?? null,
-            pc_org_name: assignment?.pc_org_name ?? null,
-          }
-        : null,
-      leadership: {
-        current_leader: currentLeaderEdge
-          ? {
-              assignment_reporting_id: currentLeaderEdge.assignment_reporting_id ?? null,
-              parent_assignment_id: currentLeaderEdge.parent_assignment_id ?? null,
-              leader_label: currentLeaderParent
-                ? `${currentLeaderParent.full_name ?? "—"} • ${currentLeaderParent.position_title ?? "—"}`
-                : currentLeaderEdge.parent_assignment_id ?? null,
-              start_date: currentLeaderEdge.start_date ?? null,
-              end_date: currentLeaderEdge.end_date ?? null,
-              active: currentLeaderEdge.active ?? null,
-            }
-          : null,
-        total_links: leadership.length,
-      },
-      planning_math: {
-        units_per_hour: 12,
-        on_shift_hours: 8,
-        on_shift_units: 96,
-      },
-      eligibility: {
-        eligible_for_schedule_ops: eligibleForScheduleOps,
-        blockers,
-      },
-      staged_schedule: stagedDraft
-        ? {
-            version: stagedDraft.version,
-            updated_at: stagedDraft.updated_at,
-            days: stagedDraft.days,
-          }
-        : null,
-    };
-  }, [
-    props.row,
-    person,
-    orgCtx,
-    assignment,
-    currentLeaderEdge,
-    currentLeaderParent,
-    leadership.length,
-    eligibleForScheduleOps,
-    blockers,
-    stagedDraft,
-  ]);
-
   const title = props.row?.full_name ? `Roster: ${props.row.full_name}` : "Roster Record";
 
   const selectedAffiliation =
     person?.co_ref_id ? companyOptions.find((o) => o.id === person.co_ref_id) : null;
-
-  const stagedOnDays = useMemo(() => countOnDays(stagedDraft), [stagedDraft]);
-  const stagedUnits = stagedOnDays * 96;
 
   return (
     <Drawer
@@ -739,204 +582,139 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
       </div>
 
       {/* Tab content */}
-      {tab === "schedule" ? (
-        <div className="mt-4 space-y-3">
-          {/* STAGED toggles panel */}
-          <div className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-sm font-semibold">Schedule (Staged)</div>
-                <div className="mt-1 text-sm text-[var(--to-ink-muted)]">
-                  This is a temporary stop-gap for single-person schedule staging. No database writes occur here.
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={!eligibleForScheduleOps || !stagedDraft}
-                  onClick={async () => {
-                    try {
-                      setCopyStageState("idle");
-                      const txt = JSON.stringify(stagedDraft, null, 2);
-                      await navigator.clipboard.writeText(txt);
-                      setCopyStageState("copied");
-                      setTimeout(() => setCopyStageState("idle"), 1200);
-                    } catch {
-                      setCopyStageState("error");
-                      setTimeout(() => setCopyStageState("idle"), 1500);
-                    }
-                  }}
-                  className={[
-                    "rounded-xl px-3 py-2 text-sm",
-                    eligibleForScheduleOps && stagedDraft
-                      ? "bg-[var(--to-ink)] text-[var(--to-surface)]"
-                      : "border border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)] cursor-not-allowed",
-                  ].join(" ")}
-                >
-                  {copyStageState === "copied"
-                    ? "Copied"
-                    : copyStageState === "error"
-                      ? "Copy failed"
-                      : "Copy Staged JSON"}
-                </button>
-
-                <button
-                  type="button"
-                  disabled={!stagedDraft}
-                  onClick={() => {
-                    setStagedDraft(null);
-                  }}
-                  className={[
-                    "rounded-xl px-3 py-2 text-sm",
-                    stagedDraft
-                      ? "border border-[var(--to-border)] bg-[var(--to-surface-soft)] hover:bg-[var(--to-surface)]"
-                      : "border border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)] cursor-not-allowed",
-                  ].join(" ")}
-                >
-                  Clear staged
-                </button>
-              </div>
-            </div>
-
-            {!eligibleForScheduleOps ? (
-              <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
-                This section is locked until Person, Org Context, Assignments, and Leadership are all Ready.
-              </div>
-            ) : null}
-
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="On days (staged)" value={String(stagedOnDays)} />
-              <Field label="Units (staged)" value={String(stagedUnits)} />
-            </div>
-
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-[var(--to-surface-soft)] text-left">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Day</th>
-                    <th className="px-4 py-3 font-semibold">Planned</th>
-                    <th className="px-4 py-3 font-semibold">Units</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {DAYS.map((d) => {
-                    const planned = stagedDraft?.days[d.key] ?? false;
-                    const units = planned ? 96 : 0;
-
-                    return (
-                      <tr key={d.key}>
-                        <td className="px-4 py-3 border-t border-[var(--to-border)]">{d.label}</td>
-                        <td className="px-4 py-3 border-t border-[var(--to-border)]">
-                          <button
-                            type="button"
-                            disabled={!eligibleForScheduleOps}
-                            onClick={() => {
-                              const r = props.row;
-                              if (!r) return;
-
-                              const next: StagedScheduleDraft =
-                                stagedDraft ??
-                                {
-                                  version: "staged_schedule_v1",
-                                  person_pc_org_id: r.person_pc_org_id,
-                                  pc_org_id: r.pc_org_id,
-                                  person_id: r.person_id,
-                                  assignment_id: r.assignment_id ?? null,
-                                  // placeholders for later alignment to Planning week controls:
-                                  schedule_name: "staged_from_roster_overlay",
-                                  week_start: null,
-                                  days: { sun: false, mon: false, tue: false, wed: false, thu: false, fri: false, sat: false },
-                                  planning_math: { units_per_hour: 12, on_shift_hours: 8, on_shift_units: 96 },
-                                  updated_at: new Date().toISOString(),
-                                };
-
-                              setStagedDraft({
-                                ...next,
-                                days: { ...next.days, [d.key]: !planned },
-                                updated_at: new Date().toISOString(),
-                              });
-                            }}
-                            className={[
-                              "inline-flex items-center rounded-xl border px-3 py-2 text-sm",
-                              planned
-                                ? "border-green-600/40 bg-green-600/10 text-green-900"
-                                : "border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink)]",
-                              !eligibleForScheduleOps ? "opacity-60 cursor-not-allowed" : "hover:bg-[var(--to-surface)]",
-                            ].join(" ")}
-                          >
-                            {planned ? "On" : "Off"}
-                          </button>
-                        </td>
-                        <td className="px-4 py-3 border-t border-[var(--to-border)]">{String(units)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-4">
-              <div className="text-xs font-semibold">Staged payload (read-only)</div>
-              <pre className="mt-2 max-h-64 overflow-auto rounded-xl border border-[var(--to-border)] bg-[var(--to-surface-soft)] p-3 text-xs">
-                {stagedDraft ? JSON.stringify(stagedDraft, null, 2) : "{\n  \"status\": \"no staged draft for this person\"\n}"}
-              </pre>
-            </div>
+      
+{tab === "schedule" ? (
+  <div className="mt-4 space-y-3">
+    <div className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold">Schedule</div>
+          <div className="mt-1 text-sm text-[var(--to-ink-muted)]">
+            Two-way mirror with Planning Grid when opened from Planning. No local draft/staging.
           </div>
+        </div>
 
-          {/* Existing schedule prep payload panel */}
-          <div className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-sm font-semibold">Schedule Prep</div>
-                <div className="mt-1 text-sm text-[var(--to-ink-muted)]">
-                  Produces a single-person schedule output payload. Planning details remain in the Planning portal.
-                </div>
-              </div>
+        <button
+          type="button"
+          disabled={!eligibleForScheduleOps || !mirror || !props.row}
+          onClick={async () => {
+            try {
+              setCopyState("idle");
+              if (!props.row || !mirror) return;
+              const days = mirror.getDays(props.row.person_pc_org_id);
+              const txt = JSON.stringify({ person_pc_org_id: props.row.person_pc_org_id, days }, null, 2);
+              await navigator.clipboard.writeText(txt);
+              setCopyState("copied");
+              setTimeout(() => setCopyState("idle"), 1200);
+            } catch {
+              setCopyState("error");
+              setTimeout(() => setCopyState("idle"), 1500);
+            }
+          }}
+          className={[
+            "rounded-xl px-3 py-2 text-sm",
+            eligibleForScheduleOps && mirror && props.row
+              ? "bg-[var(--to-ink)] text-[var(--to-surface)]"
+              : "border border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)] cursor-not-allowed",
+          ].join(" ")}
+        >
+          {copyState === "copied" ? "Copied" : copyState === "error" ? "Copy failed" : "Copy JSON"}
+        </button>
+      </div>
 
-              <button
-                type="button"
-                disabled={!eligibleForScheduleOps || !schedulePrepPayload}
-                onClick={async () => {
-                  try {
-                    setCopyState("idle");
-                    const txt = JSON.stringify(schedulePrepPayload, null, 2);
-                    await navigator.clipboard.writeText(txt);
-                    setCopyState("copied");
-                    setTimeout(() => setCopyState("idle"), 1200);
-                  } catch {
-                    setCopyState("error");
-                    setTimeout(() => setCopyState("idle"), 1500);
-                  }
-                }}
-                className={[
-                  "rounded-xl px-3 py-2 text-sm",
-                  eligibleForScheduleOps && schedulePrepPayload
-                    ? "bg-[var(--to-ink)] text-[var(--to-surface)]"
-                    : "border border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)] cursor-not-allowed",
-                ].join(" ")}
-              >
-                {copyState === "copied" ? "Copied" : copyState === "error" ? "Copy failed" : "Copy JSON"}
-              </button>
-            </div>
+      {!eligibleForScheduleOps ? (
+        <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
+          This tab is locked until Person, Org Context, Assignments, and Leadership are all Ready.
+        </div>
+      ) : null}
 
-            {!eligibleForScheduleOps ? (
-              <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
-                This tab is locked until Person, Org Context, Assignments, and Leadership are all Ready.
-              </div>
-            ) : null}
-
-            <div className="mt-3">
-              <div className="text-xs font-semibold">Output payload (read-only)</div>
-              <pre className="mt-2 max-h-80 overflow-auto rounded-xl border border-[var(--to-border)] bg-[var(--to-surface-soft)] p-3 text-xs">
-                {schedulePrepPayload ? JSON.stringify(schedulePrepPayload, null, 2) : "{\n  \"status\": \"no row selected\"\n}"}
-              </pre>
-            </div>
+      {eligibleForScheduleOps && !mirror ? (
+        <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          <div className="font-semibold">Mirror unavailable on this page</div>
+          <div className="mt-1 opacity-90">
+            Open this person from the Planning page to edit schedule days. (Roster page does not own a week/schedule scope.)
           </div>
         </div>
       ) : null}
 
-      {tab === "person" ? (
+      <div className="mt-4 overflow-x-auto">
+        <div className="min-w-[950px] rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface-soft)] p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold">Route</span>
+              <select
+                className="rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-xs"
+                disabled
+                value=""
+                onChange={() => {}}
+              >
+                <option value="">— Select —</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {DAYS_UI.map((d) => {
+                const canToggle = eligibleForScheduleOps && Boolean(mirror) && Boolean(props.row?.person_pc_org_id);
+                const days = props.row?.person_pc_org_id && mirror ? mirror.getDays(props.row.person_pc_org_id) : DEFAULT_DAYS_ALL_ON;
+                const planned = Boolean(days[d.key]);
+
+                return (
+                  <button
+                    key={d.key}
+                    type="button"
+                    disabled={!canToggle}
+                    onClick={() => {
+                      if (!canToggle || !props.row || !mirror) return;
+                      mirror.toggleDay(props.row.person_pc_org_id, d.key);
+                    }}
+                    className={[
+                      "inline-flex items-center justify-center rounded-xl border px-3 py-2 text-xs",
+                      planned
+                        ? "border-green-600/40 bg-green-600/10 text-green-900"
+                        : "border-[var(--to-border)] bg-[var(--to-surface)] text-[var(--to-ink-muted)]",
+                      !canToggle ? "opacity-60 cursor-not-allowed" : "",
+                    ].join(" ")}
+                  >
+                    {planned ? d.short : "Off"}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="ml-auto flex flex-wrap items-center gap-3 text-xs">
+              {(() => {
+                const days = props.row?.person_pc_org_id && mirror ? mirror.getDays(props.row.person_pc_org_id) : DEFAULT_DAYS_ALL_ON;
+                const onDays = countOnDays(days);
+                const units = onDays * 96;
+
+                return (
+                  <>
+                    <span className="text-[var(--to-ink-muted)]">
+                      Days: <span className="font-semibold text-[var(--to-ink)]">{onDays}</span>
+                    </span>
+                    <span className="text-[var(--to-ink-muted)]">
+                      Hours: <span className="font-semibold text-[var(--to-ink)]">{onDays * 8}</span>
+                    </span>
+                    <span className="text-[var(--to-ink-muted)]">
+                      Units: <span className="font-semibold text-[var(--to-ink)]">{units}</span>
+                    </span>
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+
+          <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
+            Toggle rule matches Planning: <span className="font-semibold">On → weekday label</span>,{" "}
+            <span className="font-semibold">Off → “Off”</span>.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+) : null}
+
+{tab === "person" ? (
         <div className="mt-4 space-y-3">
           {personError ? (
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm">

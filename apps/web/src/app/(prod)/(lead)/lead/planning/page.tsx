@@ -1,5 +1,7 @@
+//apps/web/src/app/%28prod%29/%28lead%29/lead/planning/page.tsx
+
 import Link from "next/link";
-import { PlanningGrid } from "@/features/planning/PlanningGrid";
+import { PlanningPageClient } from "@/features/planning/PlanningPageClient";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 import { supabaseServer } from "@/lib/supabase/server";
 
@@ -102,7 +104,7 @@ export default async function LeadPlanningPage(props: { searchParams?: Promise<a
         ).data ?? [];
 
   return (
-    <PlanningGrid
+    <PlanningPageClient
       pcOrgId={pcOrgId}
       rows={rosterRows as any[]}
       weekStart={win.start}

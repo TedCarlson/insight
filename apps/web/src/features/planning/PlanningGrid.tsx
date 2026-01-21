@@ -1,6 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+  DAYS,
+  DEFAULT_DAYS_ALL_ON,
+  ScheduleMirrorProvider,
+  type DayKey,
+  type DaysMap,
+  useScheduleMirror,
+  useScheduleMirrorOptional,
+} from "@/features/planning/scheduleMirror.store";
 
 type PlanningMemberRow = {
   person_pc_org_id: string;
@@ -17,9 +26,6 @@ type PlanningMemberRow = {
   position_title: string | null;
   assignment_id: string | null;
 };
-
-const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
-type DayKey = (typeof DAYS)[number];
 
 const DAY_LABEL: Record<DayKey, string> = {
   sun: "Sun",
@@ -64,10 +70,6 @@ function TogglePill(props: { on: boolean; label: string; disabled?: boolean; onC
         props.disabled ? "opacity-60 cursor-not-allowed" : "",
       ].join(" ")}
     >
-      {/* Confirmed display rule:
-          - planned=true => show weekday label
-          - planned=false => show "Off"
-      */}
       {props.on ? props.label : "Off"}
     </button>
   );
@@ -120,13 +122,59 @@ type Props = {
   scheduleName: string;
 
   scheduleSeeds: ScheduleSeed[];
+
+  /** Optional: click a row to open an overlay (RosterRecordOverlay) */
+  onSelectRow?: (row: PlanningMemberRow) => void;
 };
 
 // STEP 1.3: flat quota placeholder (straight comparison)
-// Change this later when we wire real imports.
 const QUOTA_TECHS_PER_DAY = 10;
 
+function buildInitialByMembership(rows: PlanningMemberRow[], seeds: ScheduleSeed[]) {
+  const byAssignmentDays: Record<string, DaysMap> = {};
+  for (const s of seeds) {
+    byAssignmentDays[s.assignment_id] = {
+      sun: Boolean(s.sun),
+      mon: Boolean(s.mon),
+      tue: Boolean(s.tue),
+      wed: Boolean(s.wed),
+      thu: Boolean(s.thu),
+      fri: Boolean(s.fri),
+      sat: Boolean(s.sat),
+    };
+  }
+
+  const seed: Record<string, DaysMap> = {};
+  for (const r of rows) {
+    const assignmentId = r.assignment_id ?? null;
+    seed[r.person_pc_org_id] =
+      assignmentId && byAssignmentDays[assignmentId] ? byAssignmentDays[assignmentId] : DEFAULT_DAYS_ALL_ON;
+  }
+  return seed;
+}
+
 export function PlanningGrid(props: Props) {
+  // If PlanningGrid is used without the provider, we automatically wrap it.
+  const mirror = useScheduleMirrorOptional();
+  const initialByMembership = useMemo(
+    () => buildInitialByMembership(props.rows, props.scheduleSeeds),
+    [props.rows, props.scheduleSeeds]
+  );
+
+  if (!mirror) {
+    return (
+      <ScheduleMirrorProvider initialByMember={initialByMembership}>
+        <PlanningGridInner {...props} />
+      </ScheduleMirrorProvider>
+    );
+  }
+
+  return <PlanningGridInner {...props} />;
+}
+
+function PlanningGridInner(props: Props) {
+  const mirror = useScheduleMirror();
+
   const [metric, setMetric] = useState<Metric>("techs"); // default: Techs (confirmed)
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -139,53 +187,13 @@ export function PlanningGrid(props: Props) {
     return map;
   }, [props.scheduleSeeds]);
 
-  const initialByMembership = useMemo(() => {
-    const byAssignmentDays: Record<string, Record<DayKey, boolean>> = {};
-    for (const s of props.scheduleSeeds) {
-      byAssignmentDays[s.assignment_id] = {
-        sun: Boolean(s.sun),
-        mon: Boolean(s.mon),
-        tue: Boolean(s.tue),
-        wed: Boolean(s.wed),
-        thu: Boolean(s.thu),
-        fri: Boolean(s.fri),
-        sat: Boolean(s.sat),
-      };
-    }
-
-    const seed: Record<string, Record<DayKey, boolean>> = {};
-    for (const r of props.rows) {
-      const assignmentId = r.assignment_id ?? null;
-
-      // default behavior (no existing schedule): default = On for all days
-      const defaultDays: Record<DayKey, boolean> = {
-        sun: true,
-        mon: true,
-        tue: true,
-        wed: true,
-        thu: true,
-        fri: true,
-        sat: true,
-      };
-
-      seed[r.person_pc_org_id] =
-        assignmentId && byAssignmentDays[assignmentId] ? byAssignmentDays[assignmentId] : defaultDays;
-    }
-
-    return seed;
-  }, [props.rows, props.scheduleSeeds]);
-
-  const [byMembership, setByMembership] = useState<Record<string, Record<DayKey, boolean>>>(initialByMembership);
-
   const plannedTotalsByDay = useMemo(() => {
     const out: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
 
     for (const r of props.rows) {
-      // Do not count rows that cannot be scheduled (no assignment)
       if (!r.assignment_id) continue;
 
-      const row = byMembership[r.person_pc_org_id];
-      if (!row) continue;
+      const row = mirror.getDays(r.person_pc_org_id);
 
       for (const d of DAYS) {
         out[d] += metricValueForDay(Boolean(row[d]), metric);
@@ -193,7 +201,7 @@ export function PlanningGrid(props: Props) {
     }
 
     return out;
-  }, [props.rows, byMembership, metric]);
+  }, [props.rows, mirror, metric]);
 
   const plannedWeekTotal = useMemo(() => {
     let sum = 0;
@@ -201,8 +209,7 @@ export function PlanningGrid(props: Props) {
     for (const r of props.rows) {
       if (!r.assignment_id) continue;
 
-      const row = byMembership[r.person_pc_org_id];
-      if (!row) continue;
+      const row = mirror.getDays(r.person_pc_org_id);
 
       for (const d of DAYS) {
         sum += metricValueForDay(Boolean(row[d]), metric);
@@ -210,7 +217,7 @@ export function PlanningGrid(props: Props) {
     }
 
     return sum;
-  }, [props.rows, byMembership, metric]);
+  }, [props.rows, mirror, metric]);
 
   // STEP 1.3: quota placeholder derived from a flat Techs/day target
   const quotaTotalsByDay = useMemo(() => {
@@ -252,7 +259,7 @@ export function PlanningGrid(props: Props) {
       const assignmentId = r.assignment_id ?? null;
       if (!assignmentId) continue;
 
-      const days = byMembership[r.person_pc_org_id];
+      const days = mirror.getDays(r.person_pc_org_id);
       const scheduleId = scheduleIdByAssignment[assignmentId] ?? safeUuid();
 
       const sun = Boolean(days?.sun);
@@ -339,6 +346,11 @@ export function PlanningGrid(props: Props) {
             <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
               PC Org: <code className="text-xs">{props.pcOrgId}</code>
             </div>
+            {props.onSelectRow ? (
+              <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
+                Tip: click a member name to open the roster overlay (two-way mirror).
+              </div>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-2">
@@ -382,7 +394,6 @@ export function PlanningGrid(props: Props) {
             </div>
           </div>
 
-          {/* STEP 1.3: Quota placeholder card */}
           <div className="mt-4 rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface-soft)] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -477,7 +488,7 @@ export function PlanningGrid(props: Props) {
 
             <tbody>
               {props.rows.map((r) => {
-                const days = byMembership[r.person_pc_org_id];
+                const days = mirror.getDays(r.person_pc_org_id);
                 const hasAssignment = Boolean(r.assignment_id);
 
                 const rowTotal =
@@ -486,7 +497,18 @@ export function PlanningGrid(props: Props) {
                 return (
                   <tr key={r.person_pc_org_id} className="border-t border-[var(--to-border)]">
                     <td className="px-4 py-3">
-                      <div className="font-medium">{r.full_name ?? "—"}</div>
+                      {props.onSelectRow ? (
+                        <button
+                          type="button"
+                          onClick={() => props.onSelectRow?.(r)}
+                          className="font-medium underline underline-offset-2"
+                        >
+                          {r.full_name ?? "—"}
+                        </button>
+                      ) : (
+                        <div className="font-medium">{r.full_name ?? "—"}</div>
+                      )}
+
                       <div className="text-xs text-[var(--to-ink-muted)]">
                         {r.membership_active ? "Active" : "Inactive"} • {r.membership_status ?? "—"}
                         {!hasAssignment ? " • No assignment (cannot schedule)" : null}
@@ -503,24 +525,7 @@ export function PlanningGrid(props: Props) {
                           disabled={!hasAssignment}
                           onClick={() => {
                             if (!hasAssignment) return;
-                            setByMembership((prev) => {
-                              const cur = prev[r.person_pc_org_id] ?? {
-                                sun: true,
-                                mon: true,
-                                tue: true,
-                                wed: true,
-                                thu: true,
-                                fri: true,
-                                sat: true,
-                              };
-                              return {
-                                ...prev,
-                                [r.person_pc_org_id]: {
-                                  ...cur,
-                                  [d]: !cur[d],
-                                },
-                              };
-                            });
+                            mirror.toggleDay(r.person_pc_org_id, d);
                           }}
                         />
                       </td>

@@ -1,3 +1,5 @@
+//apps/web/src/app/(prod)/(lead)/lead/page.tsx
+
 import Link from "next/link";
 
 export default function LeadHomePage() {
@@ -5,7 +7,7 @@ export default function LeadHomePage() {
     <div className="mt-6 rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-4">
       <div className="text-sm font-semibold">Leadership Home</div>
       <div className="mt-1 text-sm text-[var(--to-ink-muted)]">
-        This is the new entry point for Leadership. We’ll wire Roster/Planning here next.
+        This is the new entry point for Leadership. Phase 1 Roster/Planning in progress here. Phase 2 Metrics to follow.
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">

@@ -148,11 +148,7 @@ async function fetchLeadershipForChildAssignment(assignmentId: string): Promise<
   return (data ?? []) as LeadershipRow[];
 }
 
-export function RosterRecordOverlay(props: {
-  open: boolean;
-  onClose: () => void;
-  row: RosterRow | null;
-}) {
+export function RosterRecordOverlay(props: { open: boolean; onClose: () => void; row: RosterRow | null }) {
   const [tab, setTab] = useState<TabKey>("person");
 
   const [person, setPerson] = useState<PersonRow | null>(null);
@@ -350,11 +346,7 @@ export function RosterRecordOverlay(props: {
         setLeadership(rows);
 
         const parentIds = Array.from(
-          new Set(
-            (rows ?? [])
-              .map((r) => r.parent_assignment_id)
-              .filter((id): id is string => Boolean(id))
-          )
+          new Set((rows ?? []).map((r) => r.parent_assignment_id).filter((id): id is string => Boolean(id)))
         );
 
         if (parentIds.length === 0) {

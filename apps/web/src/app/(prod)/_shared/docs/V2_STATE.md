@@ -1,7 +1,9 @@
 # UI/UX Restructure v2 — State Snapshot
 
-## Branch
-- ui-ux-restructure-v2
+## Branch on Laptop
+- laptop
+## Branch on Office
+- office
 
 ## Locked product contracts
 - Primary work views: Roster, Planning (Metrics later)
@@ -23,7 +25,7 @@
 ## DB changes done (verified)
 - Table: public.person_pc_org created
 - Backfill from assignment: 15 active memberships
-- Views:
+- Views (migration-backed / versioned in repo):
   - public.v_roster_active (15 rows; membership + person + current assignment summary)
   - public.v_people_unassigned (136 rows)
 
@@ -35,9 +37,29 @@
 - Shared features skeleton:
   - apps/web/src/features/{roster,planning,ui,data}
 
+## Lead surface scoping (DONE — drift fix)
+Goal: lead surfaces must scope to the user’s selected pc_org (e.g., active login under pc_org 410 funnels views exclusively to that org).
+
+- /lead/roster:
+  - now scopes via user_profile.selected_pc_org_id (bootstrapProfileServer)
+  - applies query filter: v_roster_active.eq("pc_org_id", selected_pc_org_id)
+  - removes reliance on URL param pc_org_id
+
+- /lead/planning:
+  - now scopes via user_profile.selected_pc_org_id (bootstrapProfileServer)
+  - applies query filter: v_roster_active.eq("pc_org_id", selected_pc_org_id)
+  - adds Technician-only constraint at source:
+    - v_roster_active.ilike("position_title", "%Technician%")
+  - keeps optional query override (?pc_org_id=...) for testing, but default is selected pc_org
+
+- Drift control improvement:
+  - introduced shared server helper to centralize scoping:
+    - apps/web/src/lib/auth/requireSelectedPcOrg.server.ts
+  - lead roster + planning now consume the helper to avoid duplicated scope logic
+
 ## Roster v2 progress (functional)
 - /lead/roster:
-  - loads v_roster_active and renders a table
+  - loads v_roster_active and renders a table (now scoped to selected pc_org)
   - “+ Onboard” drawer exists:
     - shows unassigned people from v_people_unassigned
     - New Person tab includes duplicate heads-up (UI-only)
@@ -49,6 +71,16 @@
       - assignments locked until Org Context ready
       - leadership locked until Assignments ready
       - schedule locked until Person+Org+Assignments+Leadership are all Ready
+
+## Planning feature v2 progress (functional)
+- /lead/planning:
+  - loads roster rows from v_roster_active (scoped to selected pc_org)
+  - filters roster set to Technician by position_title (source query filter)
+  - grid interaction:
+    - On/Off toggles by day
+    - On = 8 hours = 96 units (units = hours * 12)
+  - schedule seed load:
+    - pulls schedule rows by assignment_id + week start + schedule_name
 
 ## Overlay segments — real joined data wired
 - Person tab:
@@ -76,12 +108,14 @@
 - Schedule tab:
   - appears as its own segment in tab lineup
   - locked until the first 4 segments are all Ready
-  - when unlocked, status becomes **Ready** (payload is available)
+  - when unlocked, status becomes Ready (payload is available)
   - when unlocked, shows Schedule Prep JSON payload (read-only) + Copy JSON
-
 
 ## Notes (drift control)
 - zsh: quote paths containing “(prod)” when running sed/ls to avoid globbing issues
+- Lead scoping drift fix:
+  - avoid using browser supabase client inside Server Components
+  - use bootstrapProfileServer + server client, centralized in requireSelectedPcOrg.server.ts
 
 ## Commits (high value)
 - baseline before restructure v2
@@ -90,3 +124,6 @@
 - features skeleton committed
 - lead roster loads v_roster_active
 - overlay segments wired end-to-end + schedule tab gated + schedule prep payload
+- v2 DB contract migration-backed (person_pc_org + v_roster_active + v_people_unassigned)
+- lead surface scoping restored (selected pc_org) + planning Technician filter enforced
+- scoping helper added to prevent drift (requireSelectedPcOrg.server.ts)

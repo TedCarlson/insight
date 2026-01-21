@@ -1,3 +1,5 @@
+//apps/web/src/features/planning/PlanningGrid.tsx
+
 "use client";
 
 import { useMemo, useState } from "react";

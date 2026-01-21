@@ -1,5 +1,3 @@
-//apps/web/src/app/%28prod%29/%28lead%29/lead/planning/page.tsx
-
 import Link from "next/link";
 import { PlanningPageClient } from "@/features/planning/PlanningPageClient";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
@@ -55,7 +53,6 @@ export default async function LeadPlanningPage(props: { searchParams?: Promise<a
     );
   }
 
-  // Optional query override (useful for testing / admin links), but default is selected pc org.
   const pcOrgIdRaw = sp?.pc_org_id as string | string[] | undefined;
   const pcOrgIdFromQuery = Array.isArray(pcOrgIdRaw) ? pcOrgIdRaw[0] : pcOrgIdRaw;
   const pcOrgId = pcOrgIdFromQuery || scope.selected_pc_org_id;
@@ -87,9 +84,34 @@ export default async function LeadPlanningPage(props: { searchParams?: Promise<a
 
   const rosterRows = (rosterRes.data ?? []) as any[];
 
-  const assignmentIds = Array.from(
-    new Set(rosterRows.map((r: any) => r.assignment_id).filter((id: any) => Boolean(id)))
-  ) as string[];
+  const assignmentIds = Array.from(new Set(rosterRows.map((r: any) => r.assignment_id).filter(Boolean))) as string[];
+
+  // --- NEW: tech_id lookup (assignment_admin_v) ---
+  const techIdByAssignment: Record<string, string | null> = {};
+  if (assignmentIds.length > 0) {
+    const assignmentRes = await supabase
+      .from("assignment_admin_v")
+      .select("assignment_id,tech_id")
+      .in("assignment_id", assignmentIds);
+
+    if (!assignmentRes.error) {
+      for (const a of assignmentRes.data ?? []) {
+        const aid = (a as any)?.assignment_id;
+        if (aid) techIdByAssignment[String(aid)] = ((a as any)?.tech_id ?? null) as any;
+      }
+    } else {
+      // non-fatal: planning can still run without tech_id
+      console.warn("LeadPlanningPage: assignment_admin_v tech_id lookup failed", assignmentRes.error);
+    }
+  }
+
+  const rosterRowsWithTechId = rosterRows.map((r: any) => {
+    const aid = r.assignment_id ? String(r.assignment_id) : null;
+    return {
+      ...r,
+      tech_id: aid ? techIdByAssignment[aid] ?? null : null,
+    };
+  });
 
   const scheduleSeeds =
     assignmentIds.length === 0
@@ -97,7 +119,7 @@ export default async function LeadPlanningPage(props: { searchParams?: Promise<a
       : (
           await supabase
             .from("schedule")
-            .select("schedule_id,assignment_id,sun,mon,tue,wed,thu,fri,sat")
+            .select("schedule_id,assignment_id,default_route_id,sun,mon,tue,wed,thu,fri,sat")
             .in("assignment_id", assignmentIds)
             .eq("start_date", win.start)
             .eq("schedule_name", scheduleName)
@@ -106,7 +128,7 @@ export default async function LeadPlanningPage(props: { searchParams?: Promise<a
   return (
     <PlanningPageClient
       pcOrgId={pcOrgId}
-      rows={rosterRows as any[]}
+      rows={rosterRowsWithTechId as any[]}
       weekStart={win.start}
       weekEnd={win.end}
       scheduleName={scheduleName}

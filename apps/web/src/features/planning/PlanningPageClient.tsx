@@ -2,7 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { PlanningGrid } from "@/features/planning/PlanningGrid";
-import { ScheduleMirrorProvider, DEFAULT_DAYS_ALL_ON, type DaysMap } from "@/features/planning/scheduleMirror.store";
+import {
+  ScheduleMirrorProvider,
+  DEFAULT_DAYS_ALL_ON,
+  type DaysMap,
+} from "@/features/planning/scheduleMirror.store";
 import { RosterRecordOverlay } from "@/features/roster/RosterRecordOverlay";
 import type { RosterRow } from "@/features/roster/RosterPageShell";
 
@@ -36,7 +40,9 @@ function buildInitialByMembership(rows: RosterRow[], seeds: ScheduleSeed[]) {
   for (const r of rows) {
     const assignmentId = r.assignment_id ?? null;
     seed[r.person_pc_org_id] =
-      assignmentId && byAssignmentDays[assignmentId] ? byAssignmentDays[assignmentId] : DEFAULT_DAYS_ALL_ON;
+      assignmentId && byAssignmentDays[assignmentId]
+        ? byAssignmentDays[assignmentId]
+        : DEFAULT_DAYS_ALL_ON;
   }
   return seed;
 }
@@ -56,21 +62,36 @@ export function PlanningPageClient(props: {
     [props.rows, props.scheduleSeeds]
   );
 
-  return (
-    <>
-      <ScheduleMirrorProvider initialByMember={initialByMember}>
-        <PlanningGrid
-          pcOrgId={props.pcOrgId}
-          rows={props.rows as any[]}
-          weekStart={props.weekStart}
-          weekEnd={props.weekEnd}
-          scheduleName={props.scheduleName}
-          scheduleSeeds={props.scheduleSeeds as any[]}
-          onSelectRow={(row) => setSelected(row as any)}
-        />
+  const scheduleIdByAssignment = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of props.scheduleSeeds ?? []) {
+      if (s.assignment_id) map[s.assignment_id] = s.schedule_id;
+    }
+    return map;
+  }, [props.scheduleSeeds]);
 
-        <RosterRecordOverlay open={Boolean(selected)} onClose={() => setSelected(null)} row={selected} />
-      </ScheduleMirrorProvider>
-    </>
+  return (
+    <ScheduleMirrorProvider initialByMember={initialByMember} initialScheduleIdByAssignment={scheduleIdByAssignment}>
+      <PlanningGrid
+        pcOrgId={props.pcOrgId}
+        rows={props.rows as any[]}
+        weekStart={props.weekStart}
+        weekEnd={props.weekEnd}
+        scheduleName={props.scheduleName}
+        scheduleSeeds={props.scheduleSeeds as any[]}
+        onSelectRow={(row) => setSelected(row as any)}
+      />
+
+      <RosterRecordOverlay
+        open={Boolean(selected)}
+        onClose={() => setSelected(null)}
+        row={selected}
+        scheduleScope={{
+          weekStart: props.weekStart,
+          weekEnd: props.weekEnd,
+          scheduleName: props.scheduleName,
+        }}
+      />
+    </ScheduleMirrorProvider>
   );
 }

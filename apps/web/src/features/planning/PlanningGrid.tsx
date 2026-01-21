@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DAYS,
   DEFAULT_DAYS_ALL_ON,
@@ -10,6 +10,10 @@ import {
   useScheduleMirror,
   useScheduleMirrorOptional,
 } from "@/features/planning/scheduleMirror.store";
+
+import { useRouter } from "next/navigation";
+
+import { fetchRouteOptions, type DropdownOption } from "@/app/(prod)/_shared/dropdowns";
 
 type PlanningMemberRow = {
   person_pc_org_id: string;
@@ -25,6 +29,9 @@ type PlanningMemberRow = {
 
   position_title: string | null;
   assignment_id: string | null;
+
+  // NEW (seeded in lead/planning/page.tsx)
+  tech_id?: string | null;
 };
 
 const DAY_LABEL: Record<DayKey, string> = {
@@ -53,7 +60,7 @@ function metricValueForDay(on: boolean, metric: Metric) {
   if (!on) return 0;
   if (metric === "hours") return HOURS_PER_ON_DAY;
   if (metric === "units") return UNITS_PER_ON_DAY;
-  return 1; // techs
+  return 1;
 }
 
 function TogglePill(props: { on: boolean; label: string; disabled?: boolean; onClick: () => void }) {
@@ -92,18 +99,10 @@ function MetricPill(props: { active: boolean; label: string; onClick: () => void
   );
 }
 
-function safeUuid() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
 type ScheduleSeed = {
   schedule_id: string;
   assignment_id: string;
+  default_route_id?: string | null;
   sun: boolean | null;
   mon: boolean | null;
   tue: boolean | null;
@@ -123,16 +122,16 @@ type Props = {
 
   scheduleSeeds: ScheduleSeed[];
 
-  /** Optional: click a row to open an overlay (RosterRecordOverlay) */
+  // Ignored now on purpose (no drilldown from planning grid)
   onSelectRow?: (row: PlanningMemberRow) => void;
 };
 
-// STEP 1.3: flat quota placeholder (straight comparison)
+// keep placeholder quota (fine for now)
 const QUOTA_TECHS_PER_DAY = 10;
 
 function buildInitialByMembership(rows: PlanningMemberRow[], seeds: ScheduleSeed[]) {
   const byAssignmentDays: Record<string, DaysMap> = {};
-  for (const s of seeds) {
+  for (const s of seeds ?? []) {
     byAssignmentDays[s.assignment_id] = {
       sun: Boolean(s.sun),
       mon: Boolean(s.mon),
@@ -153,17 +152,47 @@ function buildInitialByMembership(rows: PlanningMemberRow[], seeds: ScheduleSeed
   return seed;
 }
 
+function StatusPill(props: { state: "idle" | "saving" | "saved" | "error"; error?: string | null }) {
+  if (props.state === "idle") return null;
+
+  if (props.state === "saving") {
+    return (
+      <span className="rounded-full bg-[var(--to-surface-soft)] px-3 py-2 text-xs text-[var(--to-ink-muted)]">
+        Saving…
+      </span>
+    );
+  }
+
+  if (props.state === "saved") {
+    return <span className="rounded-full bg-green-600/10 px-3 py-2 text-xs text-green-900">Saved</span>;
+  }
+
+  return (
+    <span className="rounded-full bg-amber-500/10 px-3 py-2 text-xs text-amber-900">
+      {props.error ?? "Save failed"}
+    </span>
+  );
+}
+
 export function PlanningGrid(props: Props) {
-  // If PlanningGrid is used without the provider, we automatically wrap it.
   const mirror = useScheduleMirrorOptional();
   const initialByMembership = useMemo(
     () => buildInitialByMembership(props.rows, props.scheduleSeeds),
     [props.rows, props.scheduleSeeds]
   );
 
+  const initialScheduleIdByAssignment = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of props.scheduleSeeds ?? []) {
+      if (!s.assignment_id) continue;
+      map[s.assignment_id] = s.schedule_id;
+    }
+    return map;
+  }, [props.scheduleSeeds]);
+
   if (!mirror) {
     return (
-      <ScheduleMirrorProvider initialByMember={initialByMembership}>
+      <ScheduleMirrorProvider initialByMember={initialByMembership} initialScheduleIdByAssignment={initialScheduleIdByAssignment}>
         <PlanningGridInner {...props} />
       </ScheduleMirrorProvider>
     );
@@ -174,55 +203,88 @@ export function PlanningGrid(props: Props) {
 
 function PlanningGridInner(props: Props) {
   const mirror = useScheduleMirror();
+  const router = useRouter();
 
-  const [metric, setMetric] = useState<Metric>("techs"); // default: Techs (confirmed)
+  const [metric, setMetric] = useState<Metric>("techs");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const scheduleIdByAssignment = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const s of props.scheduleSeeds) {
-      map[s.assignment_id] = s.schedule_id;
+  // ROUTES
+  const [routeOptions, setRouteOptions] = useState<DropdownOption[]>([]);
+  const [routesLoading, setRoutesLoading] = useState(false);
+  const [routesError, setRoutesError] = useState<string | null>(null);
+
+  // assignment_id -> route_id | null
+  const [routeByAssignment, setRouteByAssignment] = useState<Record<string, string | null>>({});
+
+  // per-assignment debounce timers
+  const timersRef = useRef<Record<string, any>>({});
+  // Seed route values from seeds
+  useEffect(() => {
+    const routes: Record<string, string | null> = {};
+    for (const s of props.scheduleSeeds ?? []) {
+      if (!s.assignment_id) continue;
+      routes[s.assignment_id] = s.default_route_id ?? null;
     }
-    return map;
+    setRouteByAssignment(routes);
   }, [props.scheduleSeeds]);
+
+  // Load routes
+  useEffect(() => {
+    let cancelled = false;
+    setRoutesLoading(true);
+    setRoutesError(null);
+
+    fetchRouteOptions()
+      .then((opts) => {
+        if (cancelled) return;
+
+        // filter to pc org when meta.pc_org_id exists
+        const filtered = (opts ?? []).filter((o) => {
+          const pcOrgId = (o.meta as any)?.pc_org_id ?? null;
+          if (!pcOrgId) return true;
+          return String(pcOrgId) === String(props.pcOrgId);
+        });
+
+        setRouteOptions(filtered);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setRoutesError(err?.message ?? "Failed to load routes");
+        setRouteOptions([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setRoutesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [props.pcOrgId]);
 
   const plannedTotalsByDay = useMemo(() => {
     const out: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
-
     for (const r of props.rows) {
       if (!r.assignment_id) continue;
-
       const row = mirror.getDays(r.person_pc_org_id);
-
-      for (const d of DAYS) {
-        out[d] += metricValueForDay(Boolean(row[d]), metric);
-      }
+      for (const d of DAYS) out[d] += metricValueForDay(Boolean(row[d]), metric);
     }
-
     return out;
   }, [props.rows, mirror, metric]);
 
   const plannedWeekTotal = useMemo(() => {
     let sum = 0;
-
     for (const r of props.rows) {
       if (!r.assignment_id) continue;
-
       const row = mirror.getDays(r.person_pc_org_id);
-
-      for (const d of DAYS) {
-        sum += metricValueForDay(Boolean(row[d]), metric);
-      }
+      for (const d of DAYS) sum += metricValueForDay(Boolean(row[d]), metric);
     }
-
     return sum;
   }, [props.rows, mirror, metric]);
 
-  // STEP 1.3: quota placeholder derived from a flat Techs/day target
   const quotaTotalsByDay = useMemo(() => {
     const out: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
-
     const dailyTechs = QUOTA_TECHS_PER_DAY;
 
     for (const d of DAYS) {
@@ -234,9 +296,7 @@ function PlanningGridInner(props: Props) {
     return out;
   }, [metric]);
 
-  const quotaWeekTotal = useMemo(() => {
-    return DAYS.reduce((sum, d) => sum + quotaTotalsByDay[d], 0);
-  }, [quotaTotalsByDay]);
+  const quotaWeekTotal = useMemo(() => DAYS.reduce((sum, d) => sum + quotaTotalsByDay[d], 0), [quotaTotalsByDay]);
 
   const varianceByDay = useMemo(() => {
     const out: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
@@ -246,79 +306,71 @@ function PlanningGridInner(props: Props) {
 
   const varianceWeek = plannedWeekTotal - quotaWeekTotal;
 
-  async function save() {
+  async function upsertOne(params: { assignmentId: string; personPcOrgId: string }) {
     setSaveState("saving");
     setSaveError(null);
 
     const { createClient } = await import("@/app/(prod)/_shared/supabase");
     const supabase = createClient();
 
-    const rowsToWrite: any[] = [];
+    const assignmentId = params.assignmentId;
+    const personPcOrgId = params.personPcOrgId;
 
-    for (const r of props.rows) {
-      const assignmentId = r.assignment_id ?? null;
-      if (!assignmentId) continue;
+    const days = mirror.getDays(personPcOrgId);
+    const scheduleId = mirror.ensureScheduleId(assignmentId);
 
-      const days = mirror.getDays(r.person_pc_org_id);
-      const scheduleId = scheduleIdByAssignment[assignmentId] ?? safeUuid();
+    const sun = Boolean(days?.sun);
+    const mon = Boolean(days?.mon);
+    const tue = Boolean(days?.tue);
+    const wed = Boolean(days?.wed);
+    const thu = Boolean(days?.thu);
+    const fri = Boolean(days?.fri);
+    const sat = Boolean(days?.sat);
 
-      const sun = Boolean(days?.sun);
-      const mon = Boolean(days?.mon);
-      const tue = Boolean(days?.tue);
-      const wed = Boolean(days?.wed);
-      const thu = Boolean(days?.thu);
-      const fri = Boolean(days?.fri);
-      const sat = Boolean(days?.sat);
+    const hs = { hours: sun ? HOURS_PER_ON_DAY : 0, units: sun ? UNITS_PER_ON_DAY : 0 };
+    const hm = { hours: mon ? HOURS_PER_ON_DAY : 0, units: mon ? UNITS_PER_ON_DAY : 0 };
+    const ht = { hours: tue ? HOURS_PER_ON_DAY : 0, units: tue ? UNITS_PER_ON_DAY : 0 };
+    const hw = { hours: wed ? HOURS_PER_ON_DAY : 0, units: wed ? UNITS_PER_ON_DAY : 0 };
+    const hth = { hours: thu ? HOURS_PER_ON_DAY : 0, units: thu ? UNITS_PER_ON_DAY : 0 };
+    const hf = { hours: fri ? HOURS_PER_ON_DAY : 0, units: fri ? UNITS_PER_ON_DAY : 0 };
+    const hsa = { hours: sat ? HOURS_PER_ON_DAY : 0, units: sat ? UNITS_PER_ON_DAY : 0 };
 
-      const hs = { hours: sun ? HOURS_PER_ON_DAY : 0, units: sun ? UNITS_PER_ON_DAY : 0 };
-      const hm = { hours: mon ? HOURS_PER_ON_DAY : 0, units: mon ? UNITS_PER_ON_DAY : 0 };
-      const ht = { hours: tue ? HOURS_PER_ON_DAY : 0, units: tue ? UNITS_PER_ON_DAY : 0 };
-      const hw = { hours: wed ? HOURS_PER_ON_DAY : 0, units: wed ? UNITS_PER_ON_DAY : 0 };
-      const hth = { hours: thu ? HOURS_PER_ON_DAY : 0, units: thu ? UNITS_PER_ON_DAY : 0 };
-      const hf = { hours: fri ? HOURS_PER_ON_DAY : 0, units: fri ? UNITS_PER_ON_DAY : 0 };
-      const hsa = { hours: sat ? HOURS_PER_ON_DAY : 0, units: sat ? UNITS_PER_ON_DAY : 0 };
+    const default_route_id = routeByAssignment[assignmentId] ?? null;
 
-      rowsToWrite.push({
-        schedule_id: scheduleId,
-        assignment_id: assignmentId,
-        schedule_name: props.scheduleName,
-        start_date: props.weekStart,
-        end_date: props.weekEnd,
-        default_route_id: null,
+    const rowToWrite: any = {
+      schedule_id: scheduleId,
+      assignment_id: assignmentId,
+      schedule_name: props.scheduleName,
+      start_date: props.weekStart,
+      end_date: props.weekEnd,
+      default_route_id,
 
-        sun,
-        mon,
-        tue,
-        wed,
-        thu,
-        fri,
-        sat,
+      sun,
+      mon,
+      tue,
+      wed,
+      thu,
+      fri,
+      sat,
 
-        sch_hours_sun: hs.hours,
-        sch_hours_mon: hm.hours,
-        sch_hours_tue: ht.hours,
-        sch_hours_wed: hw.hours,
-        sch_hours_thu: hth.hours,
-        sch_hours_fri: hf.hours,
-        sch_hours_sat: hsa.hours,
+      sch_hours_sun: hs.hours,
+      sch_hours_mon: hm.hours,
+      sch_hours_tue: ht.hours,
+      sch_hours_wed: hw.hours,
+      sch_hours_thu: hth.hours,
+      sch_hours_fri: hf.hours,
+      sch_hours_sat: hsa.hours,
 
-        sch_units_sun: hs.units,
-        sch_units_mon: hm.units,
-        sch_units_tue: ht.units,
-        sch_units_wed: hw.units,
-        sch_units_thu: hth.units,
-        sch_units_fri: hf.units,
-        sch_units_sat: hsa.units,
-      });
-    }
+      sch_units_sun: hs.units,
+      sch_units_mon: hm.units,
+      sch_units_tue: ht.units,
+      sch_units_wed: hw.units,
+      sch_units_thu: hth.units,
+      sch_units_fri: hf.units,
+      sch_units_sat: hsa.units,
+    };
 
-    if (rowsToWrite.length === 0) {
-      setSaveState("error");
-      setSaveError("No rows with assignment_id were available to save.");
-      return;
-    }
-
-    const { error } = await supabase.from("schedule").upsert(rowsToWrite, { onConflict: "schedule_id" });
+    const { error } = await supabase.from("schedule").upsert([rowToWrite], { onConflict: "schedule_id" });
 
     if (error) {
       setSaveState("error");
@@ -327,7 +379,26 @@ function PlanningGridInner(props: Props) {
     }
 
     setSaveState("saved");
-    setTimeout(() => setSaveState("idle"), 1000);
+    setTimeout(() => setSaveState("idle"), 800);
+  }
+
+  function queueAutosave(params: { assignmentId: string; personPcOrgId: string }) {
+    const key = params.assignmentId;
+
+    // clear existing timer
+    if (timersRef.current[key]) clearTimeout(timersRef.current[key]);
+
+    timersRef.current[key] = setTimeout(() => {
+      upsertOne(params).catch((err: any) => {
+        setSaveState("error");
+        setSaveError(err?.message ?? "Save failed");
+      });
+    }, 350);
+  }
+
+  function setAllDays(personPcOrgId: string, val: boolean) {
+    const next: DaysMap = { sun: val, mon: val, tue: val, wed: val, thu: val, fri: val, sat: val };
+    mirror.setDays(personPcOrgId, next);
   }
 
   return (
@@ -340,39 +411,29 @@ function PlanningGridInner(props: Props) {
               On = {HOURS_PER_ON_DAY}h = {UNITS_PER_ON_DAY} units (units = hours * {UNITS_PER_HOUR}).
             </div>
             <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
-              Week: <code className="text-xs">{props.weekStart}</code> → <code className="text-xs">{props.weekEnd}</code> •{" "}
-              <span className="opacity-80">schedule_name:</span> <code className="text-xs">{props.scheduleName}</code>
+              Week: <code className="text-xs">{props.weekStart}</code> → <code className="text-xs">{props.weekEnd}</code>{" "}
+              • <span className="opacity-80">schedule_name:</span> <code className="text-xs">{props.scheduleName}</code>
             </div>
             <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
               PC Org: <code className="text-xs">{props.pcOrgId}</code>
             </div>
-            {props.onSelectRow ? (
-              <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
-                Tip: click a member name to open the roster overlay (two-way mirror).
+            {routesError ? (
+              <div className="mt-2 inline-block rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900">
+                Routes: {routesError}
               </div>
             ) : null}
           </div>
 
+          {/* Header actions */}
           <div className="flex items-center gap-2">
-            {saveError ? (
-              <span className="text-xs text-amber-900 border border-amber-500/40 bg-amber-500/10 rounded-xl px-3 py-2">
-                {saveError}
-              </span>
-            ) : null}
-
             <button
               type="button"
-              disabled={saveState === "saving"}
-              onClick={save}
-              className={[
-                "rounded-xl px-3 py-2 text-sm",
-                saveState === "saving"
-                  ? "border border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)] cursor-not-allowed"
-                  : "bg-[var(--to-ink)] text-[var(--to-surface)]",
-              ].join(" ")}
+              onClick={() => router.refresh()}
+              className="rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-xs hover:bg-[var(--to-surface-soft)]"
             >
-              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : "Save"}
+              Refresh
             </button>
+            <StatusPill state={saveState} error={saveError} />
           </div>
         </div>
       </div>
@@ -461,12 +522,11 @@ function PlanningGridInner(props: Props) {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-[1100px] w-full text-sm">
+          <table className="min-w-[1250px] w-full text-sm">
             <thead className="bg-[var(--to-surface-soft)] text-left">
               <tr>
                 <th className="px-4 py-3 font-semibold">Member</th>
-                <th className="px-4 py-3 font-semibold">Role</th>
-                <th className="px-4 py-3 font-semibold">Position</th>
+                <th className="px-4 py-3 font-semibold">Tech ID</th>
 
                 {DAYS.map((d) => (
                   <th key={d} className="px-4 py-3 font-semibold">
@@ -483,39 +543,58 @@ function PlanningGridInner(props: Props) {
                     <div className="text-[10px] uppercase text-[var(--to-ink-muted)]">Week {metricLabel(metric)}</div>
                   </div>
                 </th>
+
+                {/* quick row actions */}
+                <th className="px-4 py-3 font-semibold" />
               </tr>
             </thead>
 
             <tbody>
               {props.rows.map((r) => {
-                const days = mirror.getDays(r.person_pc_org_id);
                 const hasAssignment = Boolean(r.assignment_id);
+                const assignmentId = r.assignment_id ?? null;
+
+                const days = mirror.getDays(r.person_pc_org_id);
 
                 const rowTotal =
                   !hasAssignment || !days ? 0 : DAYS.reduce((sum, d) => sum + metricValueForDay(Boolean(days[d]), metric), 0);
 
+                const selectedRouteId = assignmentId ? routeByAssignment[assignmentId] ?? null : null;
+
                 return (
                   <tr key={r.person_pc_org_id} className="border-t border-[var(--to-border)]">
                     <td className="px-4 py-3">
-                      {props.onSelectRow ? (
-                        <button
-                          type="button"
-                          onClick={() => props.onSelectRow?.(r)}
-                          className="font-medium underline underline-offset-2"
-                        >
-                          {r.full_name ?? "—"}
-                        </button>
-                      ) : (
-                        <div className="font-medium">{r.full_name ?? "—"}</div>
-                      )}
+                      <div className="font-medium">{r.full_name ?? "—"}</div>
 
-                      <div className="text-xs text-[var(--to-ink-muted)]">
-                        {r.membership_active ? "Active" : "Inactive"} • {r.membership_status ?? "—"}
-                        {!hasAssignment ? " • No assignment (cannot schedule)" : null}
+                      <div className="mt-2">
+                        <select
+                          className="w-full max-w-[340px] rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-xs"
+                          disabled={!hasAssignment || routesLoading}
+                          value={selectedRouteId ?? ""}
+                          onChange={(e) => {
+                            if (!assignmentId) return;
+                            const v = e.target.value;
+                            setRouteByAssignment((prev) => ({ ...prev, [assignmentId]: v ? v : null }));
+                            queueAutosave({ assignmentId, personPcOrgId: r.person_pc_org_id });
+                          }}
+                        >
+                          <option value="">{routesLoading ? "Loading routes…" : "— Unassigned route —"}</option>
+                          {routeOptions.map((opt) => (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+
+                        {!hasAssignment ? (
+                          <div className="mt-1 text-[10px] text-[var(--to-ink-muted)]">No assignment (cannot set route)</div>
+                        ) : null}
                       </div>
                     </td>
-                    <td className="px-4 py-3">{r.person_role ?? "—"}</td>
-                    <td className="px-4 py-3">{r.position_title ?? "—"}</td>
+
+                    <td className="px-4 py-3">
+                      <div className="text-xs">{r.tech_id ?? "—"}</div>
+                    </td>
 
                     {DAYS.map((d) => (
                       <td key={d} className="px-4 py-3">
@@ -524,14 +603,53 @@ function PlanningGridInner(props: Props) {
                           label={DAY_LABEL[d]}
                           disabled={!hasAssignment}
                           onClick={() => {
-                            if (!hasAssignment) return;
+                            if (!hasAssignment || !assignmentId) return;
                             mirror.toggleDay(r.person_pc_org_id, d);
+                            queueAutosave({ assignmentId, personPcOrgId: r.person_pc_org_id });
                           }}
                         />
                       </td>
                     ))}
 
                     <td className="px-4 py-3 font-medium">{rowTotal}</td>
+
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="button"
+                          disabled={!hasAssignment || !assignmentId}
+                          onClick={() => {
+                            if (!hasAssignment || !assignmentId) return;
+                            setAllDays(r.person_pc_org_id, false);
+                            queueAutosave({ assignmentId, personPcOrgId: r.person_pc_org_id });
+                          }}
+                          className={[
+                            "rounded-xl border px-3 py-2 text-xs",
+                            "border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)] hover:bg-[var(--to-surface)]",
+                            !hasAssignment ? "opacity-60 cursor-not-allowed" : "",
+                          ].join(" ")}
+                        >
+                          All Off
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={!hasAssignment || !assignmentId}
+                          onClick={() => {
+                            if (!hasAssignment || !assignmentId) return;
+                            setAllDays(r.person_pc_org_id, true);
+                            queueAutosave({ assignmentId, personPcOrgId: r.person_pc_org_id });
+                          }}
+                          className={[
+                            "rounded-xl border px-3 py-2 text-xs",
+                            "border-green-600/40 bg-green-600/10 text-green-900 hover:bg-green-600/15",
+                            !hasAssignment ? "opacity-60 cursor-not-allowed" : "",
+                          ].join(" ")}
+                        >
+                          All On
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -548,7 +666,7 @@ function PlanningGridInner(props: Props) {
         </div>
 
         <div className="border-t border-[var(--to-border)] bg-[var(--to-surface-soft)] p-4 text-sm">
-          <span className="font-semibold">Totals:</span> {plannedWeekTotal} {metricLabel(metric)}
+          <span className="font-semibold">Weekly Roll-ups:</span> {plannedWeekTotal} {metricLabel(metric)}
         </div>
       </div>
     </div>

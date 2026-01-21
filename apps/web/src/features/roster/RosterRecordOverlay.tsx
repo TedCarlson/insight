@@ -11,7 +11,13 @@ import type { PersonRow } from "@/app/(prod)/person/person.types";
 
 import { fetchAssignmentsByIds } from "@/app/(prod)/assignment/assignment.api";
 import type { AssignmentRow } from "@/app/(prod)/assignment/assignment.types";
-import { DAYS as MIRROR_DAYS, DEFAULT_DAYS_ALL_ON, type DayKey, useScheduleMirrorOptional } from "@/features/planning/scheduleMirror.store";
+
+import {
+  DAYS as MIRROR_DAYS,
+  DEFAULT_DAYS_ALL_ON,
+  type DayKey,
+  useScheduleMirrorOptional,
+} from "@/features/planning/scheduleMirror.store";
 
 type TabKey = "person" | "org" | "assignments" | "leadership" | "schedule";
 type TabStatus = "pending" | "ready" | "attention" | "locked";
@@ -47,7 +53,6 @@ type LeadershipRow = {
   active: boolean | null;
 };
 
-
 const DAYS_UI: Array<{ key: DayKey; label: string; short: string }> = [
   { key: "sun", label: "Sunday", short: "Sun" },
   { key: "mon", label: "Monday", short: "Mon" },
@@ -60,6 +65,15 @@ const DAYS_UI: Array<{ key: DayKey; label: string; short: string }> = [
 
 function countOnDays(days: Record<DayKey, boolean>) {
   return MIRROR_DAYS.reduce((acc, d) => acc + (days[d] ? 1 : 0), 0);
+}
+
+function safeUuid() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 const supabase = createClient();
@@ -77,20 +91,10 @@ function StatusPill({ status }: { status: TabStatus }) {
 
   const c = cfg[status];
 
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${c.cls}`}>
-      {c.label}
-    </span>
-  );
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${c.cls}`}>{c.label}</span>;
 }
 
-function TabButton(props: {
-  active: boolean;
-  disabled?: boolean;
-  label: string;
-  status: TabStatus;
-  onClick: () => void;
-}) {
+function TabButton(props: { active: boolean; disabled?: boolean; label: string; status: TabStatus; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -164,7 +168,14 @@ async function fetchLeadershipForChildAssignment(assignmentId: string): Promise<
   return (data ?? []) as LeadershipRow[];
 }
 
-export function RosterRecordOverlay(props: { open: boolean; onClose: () => void; row: RosterRow | null }) {
+export function RosterRecordOverlay(props: {
+  open: boolean;
+  onClose: () => void;
+  row: RosterRow | null;
+
+  /** required for persisting schedule */
+  scheduleScope?: { weekStart: string; weekEnd: string; scheduleName: string };
+}) {
   const [tab, setTab] = useState<TabKey>("person");
 
   const mirror = useScheduleMirrorOptional();
@@ -187,7 +198,11 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
   const [leadershipError, setLeadershipError] = useState<string | null>(null);
   const [leaderParentsById, setLeaderParentsById] = useState<Record<string, AssignmentRow>>({});
 
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const [scheduleSaveState, setScheduleSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [scheduleSaveError, setScheduleSaveError] = useState<string | null>(null);
+
+  const [scheduleHydrateState, setScheduleHydrateState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [scheduleHydrateError, setScheduleHydrateError] = useState<string | null>(null);
 
   // Lint rule requires we avoid synchronous setState inside effect bodies.
   const defer = (fn: () => void) => {
@@ -200,7 +215,6 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
     defer(() => setTab("person"));
   }, [props.open, props.row?.person_pc_org_id]);
 
-  
   // Load person + company/contractor options when overlay opens
   useEffect(() => {
     const personId = props.row?.person_id;
@@ -426,53 +440,23 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
       };
     }
 
-    // Person readiness requires Company/Contractor affiliation (co_ref_id)
-    const personStatus: TabStatus =
-      r.person_active === false ? "attention" : person?.co_ref_id ? "ready" : "pending";
+    const personStatus: TabStatus = r.person_active === false ? "attention" : person?.co_ref_id ? "ready" : "pending";
 
-    // Org Context readiness requires division/region/office (MSO) present
     const orgRequiredReady = Boolean(orgCtx?.division_id && orgCtx?.region_id && orgCtx?.mso_id);
     const orgStatus: TabStatus =
-      personStatus !== "ready"
-        ? "locked"
-        : orgError
-          ? "attention"
-          : orgRequiredReady
-            ? "ready"
-            : "pending";
+      personStatus !== "ready" ? "locked" : orgError ? "attention" : orgRequiredReady ? "ready" : "pending";
 
-    // Assignments readiness: requires assignment_id; if load fails/missing -> attention
     const hasAssignment = Boolean(r.assignment_id);
     const assignmentStatus: TabStatus =
-      orgStatus !== "ready"
-        ? "locked"
-        : !hasAssignment
-          ? "pending"
-          : assignmentError
-            ? "attention"
-            : "ready";
+      orgStatus !== "ready" ? "locked" : !hasAssignment ? "pending" : assignmentError ? "attention" : "ready";
 
-    // Leadership readiness: requires assignments ready; if load error -> attention; if active edge exists -> ready; else pending
     const leadershipStatus: TabStatus =
-      assignmentStatus !== "ready"
-        ? "locked"
-        : leadershipError
-          ? "attention"
-          : currentLeaderEdge
-            ? "ready"
-            : "pending";
+      assignmentStatus !== "ready" ? "locked" : leadershipError ? "attention" : currentLeaderEdge ? "ready" : "pending";
 
-    // Schedule tab: locked until core tabs are all ready
     const coreReady =
-      personStatus === "ready" &&
-      orgStatus === "ready" &&
-      assignmentStatus === "ready" &&
-      leadershipStatus === "ready";
+      personStatus === "ready" && orgStatus === "ready" && assignmentStatus === "ready" && leadershipStatus === "ready";
 
-    // Once unlocked: Schedule is Ready (staged draft is optional and does not affect tab readiness).
     const scheduleStatus: TabStatus = !coreReady ? "locked" : "ready";
-    
-
 
     return {
       person: personStatus,
@@ -483,7 +467,6 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
     };
   }, [props.row, person, orgCtx, orgError, assignmentError, leadershipError, currentLeaderEdge]);
 
-  // Disable tabs based on prerequisite readiness (unlock chain)
   const disabled: Record<TabKey, boolean> = {
     person: false,
     org: tabState.person !== "ready",
@@ -492,22 +475,147 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
     schedule: tabState.leadership !== "ready",
   };
 
-  // Eligibility derived from the first four tabs only
-  const blockers = useMemo(() => {
-    const b: string[] = [];
-    if (tabState.person !== "ready") b.push("Person must be Ready (Affiliation required; Role derived).");
-    if (tabState.org !== "ready") b.push("Org Context must be Ready (Division, Region, Office/MSO).");
-    if (tabState.assignments !== "ready") b.push("Assignments must be Ready (active assignment + details).");
-    if (tabState.leadership !== "ready") b.push("Leadership must be Ready (active leader link).");
-    return b;
-  }, [tabState]);
-
-  const eligibleForScheduleOps = blockers.length === 0;
+  const eligibleForScheduleOps = tabState.schedule === "ready";
 
   const title = props.row?.full_name ? `Roster: ${props.row.full_name}` : "Roster Record";
 
-  const selectedAffiliation =
-    person?.co_ref_id ? companyOptions.find((o) => o.id === person.co_ref_id) : null;
+  const selectedAffiliation = person?.co_ref_id ? companyOptions.find((o) => o.id === person.co_ref_id) : null;
+
+  async function hydrateScheduleFromDb() {
+    try {
+      setScheduleHydrateState("loading");
+      setScheduleHydrateError(null);
+
+      if (!props.open) return;
+      if (tab !== "schedule") return;
+      if (!props.row) throw new Error("No person selected.");
+      if (!props.row.assignment_id) throw new Error("No assignment_id (cannot hydrate schedule).");
+      if (!props.scheduleScope) throw new Error("Missing schedule scope.");
+      if (!mirror) throw new Error("Mirror not available.");
+
+      const { data, error } = await supabase
+        .from("schedule")
+        .select("schedule_id, default_route_id, sun, mon, tue, wed, thu, fri, sat")
+        .eq("assignment_id", props.row.assignment_id)
+        .eq("schedule_name", props.scheduleScope.scheduleName)
+        .eq("start_date", props.scheduleScope.weekStart)
+        .eq("end_date", props.scheduleScope.weekEnd)
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      // If we found a saved row, make mirror reflect DB (read-first)
+      if (data?.schedule_id) {
+        mirror.setScheduleId(props.row.assignment_id, data.schedule_id);
+
+        mirror.setDays(props.row.person_pc_org_id, {
+          sun: Boolean(data.sun),
+          mon: Boolean(data.mon),
+          tue: Boolean(data.tue),
+          wed: Boolean(data.wed),
+          thu: Boolean(data.thu),
+          fri: Boolean(data.fri),
+          sat: Boolean(data.sat),
+        });
+      }
+
+      setScheduleHydrateState("ready");
+    } catch (err: any) {
+      setScheduleHydrateState("error");
+      setScheduleHydrateError(err?.message ?? "Failed to load schedule");
+    }
+  }
+
+  // ✅ Top-level hook: auto-hydrate when Schedule tab becomes active
+  useEffect(() => {
+    if (!props.open) return;
+    if (tab !== "schedule") return;
+    hydrateScheduleFromDb();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    props.open,
+    tab,
+    props.row?.assignment_id,
+    props.row?.person_pc_org_id,
+    props.scheduleScope?.weekStart,
+    props.scheduleScope?.weekEnd,
+    props.scheduleScope?.scheduleName,
+  ]);
+
+  async function saveSchedule() {
+    try {
+      setScheduleSaveState("saving");
+      setScheduleSaveError(null);
+
+      if (!eligibleForScheduleOps) throw new Error("Schedule is locked.");
+      if (!props.row) throw new Error("No person selected.");
+      if (!mirror) throw new Error("Mirror not available.");
+      if (!props.scheduleScope) throw new Error("Missing schedule scope.");
+      if (!props.row.assignment_id) throw new Error("No assignment_id (cannot schedule).");
+
+      const assignmentId = props.row.assignment_id;
+      const scope = props.scheduleScope;
+
+      const scheduleId = mirror ? mirror.ensureScheduleId(assignmentId) : safeUuid();
+
+      const days = mirror.getDays(props.row.person_pc_org_id);
+
+      const sun = Boolean(days.sun);
+      const mon = Boolean(days.mon);
+      const tue = Boolean(days.tue);
+      const wed = Boolean(days.wed);
+      const thu = Boolean(days.thu);
+      const fri = Boolean(days.fri);
+      const sat = Boolean(days.sat);
+
+      const HOURS_PER_ON_DAY = 8;
+      const UNITS_PER_HOUR = 12;
+      const UNITS_PER_ON_DAY = HOURS_PER_ON_DAY * UNITS_PER_HOUR;
+
+      const rowToWrite = {
+        schedule_id: scheduleId,
+        assignment_id: assignmentId,
+        schedule_name: scope.scheduleName,
+        start_date: scope.weekStart,
+        end_date: scope.weekEnd,
+        default_route_id: null,
+
+        sun,
+        mon,
+        tue,
+        wed,
+        thu,
+        fri,
+        sat,
+
+        sch_hours_sun: sun ? HOURS_PER_ON_DAY : 0,
+        sch_hours_mon: mon ? HOURS_PER_ON_DAY : 0,
+        sch_hours_tue: tue ? HOURS_PER_ON_DAY : 0,
+        sch_hours_wed: wed ? HOURS_PER_ON_DAY : 0,
+        sch_hours_thu: thu ? HOURS_PER_ON_DAY : 0,
+        sch_hours_fri: fri ? HOURS_PER_ON_DAY : 0,
+        sch_hours_sat: sat ? HOURS_PER_ON_DAY : 0,
+
+        sch_units_sun: sun ? UNITS_PER_ON_DAY : 0,
+        sch_units_mon: mon ? UNITS_PER_ON_DAY : 0,
+        sch_units_tue: tue ? UNITS_PER_ON_DAY : 0,
+        sch_units_wed: wed ? UNITS_PER_ON_DAY : 0,
+        sch_units_thu: thu ? UNITS_PER_ON_DAY : 0,
+        sch_units_fri: fri ? UNITS_PER_ON_DAY : 0,
+        sch_units_sat: sat ? UNITS_PER_ON_DAY : 0,
+      };
+
+      const { error } = await supabase.from("schedule").upsert([rowToWrite], { onConflict: "schedule_id" });
+      if (error) throw new Error(error.message);
+
+      setScheduleSaveState("saved");
+      setTimeout(() => setScheduleSaveState("idle"), 1000);
+    } catch (e: any) {
+      setScheduleSaveState("error");
+      setScheduleSaveError(e?.message ?? "Save failed");
+    }
+  }
 
   return (
     <Drawer
@@ -548,173 +656,176 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
         />
       </div>
 
-      {/* Eligibility panel (core 4 tabs) */}
-      <div className="mt-4 rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface-soft)] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-xs font-semibold">Eligibility</div>
-            <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-              Scheduling/Operations is available when Person, Org Context, Assignments, and Leadership are all Ready.
+      {/* Schedule tab */}
+      {tab === "schedule" ? (
+        <div className="mt-4 space-y-3">
+          <div className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold">Schedule</div>
+                <div className="mt-1 text-sm text-[var(--to-ink-muted)]">
+                  Flat weekday on/off. Uses the same state mirror as Planning.
+                </div>
+                {props.scheduleScope ? (
+                  <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
+                    Week: <code className="text-xs">{props.scheduleScope.weekStart}</code> →{" "}
+                    <code className="text-xs">{props.scheduleScope.weekEnd}</code> •{" "}
+                    <span className="opacity-80">schedule_name:</span>{" "}
+                    <code className="text-xs">{props.scheduleScope.scheduleName}</code>
+                  </div>
+                ) : (
+                  <div className="mt-1 text-xs text-[var(--to-ink-muted)]">Week scope not provided.</div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* ✅ Hydrate status */}
+                {scheduleHydrateState === "loading" ? (
+                  <span className="rounded-full bg-[var(--to-surface-soft)] px-3 py-2 text-xs text-[var(--to-ink-muted)]">
+                    Loading…
+                  </span>
+                ) : scheduleHydrateState === "error" ? (
+                  <span className="rounded-full bg-amber-500/10 px-3 py-2 text-xs text-amber-900">
+                    {scheduleHydrateError ?? "Load failed"}
+                  </span>
+                ) : null}
+
+                {/* ✅ Manual hydrate */}
+                <button
+                  type="button"
+                  onClick={hydrateScheduleFromDb}
+                  disabled={!mirror || !props.row?.assignment_id || !props.scheduleScope || scheduleHydrateState === "loading"}
+                  className="rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-xs hover:bg-[var(--to-surface-soft)] disabled:opacity-60"
+                >
+                  Reload
+                </button>
+
+                {scheduleSaveError ? (
+                  <span className="text-xs text-amber-900 border border-amber-500/40 bg-amber-500/10 rounded-xl px-3 py-2">
+                    {scheduleSaveError}
+                  </span>
+                ) : null}
+
+                <button
+                  type="button"
+                  disabled={
+                    !eligibleForScheduleOps ||
+                    !mirror ||
+                    !props.row?.assignment_id ||
+                    !props.scheduleScope ||
+                    scheduleSaveState === "saving"
+                  }
+                  onClick={saveSchedule}
+                  className={[
+                    "rounded-xl px-3 py-2 text-sm",
+                    !eligibleForScheduleOps ||
+                    !mirror ||
+                    !props.row?.assignment_id ||
+                    !props.scheduleScope ||
+                    scheduleSaveState === "saving"
+                      ? "border border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)] cursor-not-allowed"
+                      : "bg-[var(--to-ink)] text-[var(--to-surface)]",
+                  ].join(" ")}
+                >
+                  {scheduleSaveState === "saving" ? "Saving…" : scheduleSaveState === "saved" ? "Saved" : "Save"}
+                </button>
+              </div>
+            </div>
+
+            {!eligibleForScheduleOps ? (
+              <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
+                This tab is locked until Person, Org Context, Assignments, and Leadership are all Ready.
+              </div>
+            ) : null}
+
+            {!mirror && eligibleForScheduleOps ? (
+              <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+                <div className="font-semibold">Mirror unavailable</div>
+                <div className="mt-1 opacity-90">Schedule mirror provider is missing above this overlay.</div>
+              </div>
+            ) : null}
+
+            <div className="mt-4 overflow-x-auto">
+              <div className="min-w-[950px] rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface-soft)] p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold">Route</span>
+                    <select
+                      className="rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-xs"
+                      disabled
+                      value=""
+                      onChange={() => {}}
+                    >
+                      <option value="">— Select —</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {DAYS_UI.map((d) => {
+                      const canToggle = eligibleForScheduleOps && Boolean(mirror) && Boolean(props.row?.person_pc_org_id);
+                      const days =
+                        props.row?.person_pc_org_id && mirror ? mirror.getDays(props.row.person_pc_org_id) : DEFAULT_DAYS_ALL_ON;
+                      const planned = Boolean(days[d.key]);
+
+                      return (
+                        <button
+                          key={d.key}
+                          type="button"
+                          disabled={!canToggle}
+                          onClick={() => {
+                            if (!canToggle || !props.row || !mirror) return;
+                            mirror.toggleDay(props.row.person_pc_org_id, d.key);
+                          }}
+                          className={[
+                            "inline-flex items-center justify-center rounded-xl border px-3 py-2 text-xs",
+                            planned
+                              ? "border-green-600/40 bg-green-600/10 text-green-900"
+                              : "border-[var(--to-border)] bg-[var(--to-surface)] text-[var(--to-ink-muted)]",
+                            !canToggle ? "opacity-60 cursor-not-allowed" : "",
+                          ].join(" ")}
+                        >
+                          {planned ? d.short : "Off"}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="ml-auto flex flex-wrap items-center gap-3 text-xs">
+                    {(() => {
+                      const days =
+                        props.row?.person_pc_org_id && mirror ? mirror.getDays(props.row.person_pc_org_id) : DEFAULT_DAYS_ALL_ON;
+                      const onDays = countOnDays(days);
+                      const units = onDays * 96;
+
+                      return (
+                        <>
+                          <span className="text-[var(--to-ink-muted)]">
+                            Days: <span className="font-semibold text-[var(--to-ink)]">{onDays}</span>
+                          </span>
+                          <span className="text-[var(--to-ink-muted)]">
+                            Hours: <span className="font-semibold text-[var(--to-ink)]">{onDays * 8}</span>
+                          </span>
+                          <span className="text-[var(--to-ink-muted)]">
+                            Units: <span className="font-semibold text-[var(--to-ink)]">{units}</span>
+                          </span>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
+                  Toggle rule matches Planning: <span className="font-semibold">On → weekday label</span>,{" "}
+                  <span className="font-semibold">Off → “Off”</span>.
+                </div>
+              </div>
             </div>
           </div>
-
-          <span
-            className={[
-              "inline-flex items-center rounded-full border px-2 py-0.5 text-xs",
-              eligibleForScheduleOps
-                ? "border-green-600/40 bg-green-600/10 text-green-900"
-                : "border-amber-600/40 bg-amber-600/10 text-amber-900",
-            ].join(" ")}
-          >
-            {eligibleForScheduleOps ? "Eligible for Schedule/Ops" : "Not eligible"}
-          </span>
-        </div>
-
-        {!eligibleForScheduleOps ? (
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-[var(--to-ink-muted)]">
-            {blockers.map((b) => (
-              <li key={b}>{b}</li>
-            ))}
-          </ul>
-        ) : (
-          <div className="mt-2 text-xs text-[var(--to-ink-muted)]">All prerequisites are Ready.</div>
-        )}
-      </div>
-
-      {/* Tab content */}
-      
-{tab === "schedule" ? (
-  <div className="mt-4 space-y-3">
-    <div className="rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface)] p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-sm font-semibold">Schedule</div>
-          <div className="mt-1 text-sm text-[var(--to-ink-muted)]">
-            Two-way mirror with Planning Grid when opened from Planning. No local draft/staging.
-          </div>
-        </div>
-
-        <button
-          type="button"
-          disabled={!eligibleForScheduleOps || !mirror || !props.row}
-          onClick={async () => {
-            try {
-              setCopyState("idle");
-              if (!props.row || !mirror) return;
-              const days = mirror.getDays(props.row.person_pc_org_id);
-              const txt = JSON.stringify({ person_pc_org_id: props.row.person_pc_org_id, days }, null, 2);
-              await navigator.clipboard.writeText(txt);
-              setCopyState("copied");
-              setTimeout(() => setCopyState("idle"), 1200);
-            } catch {
-              setCopyState("error");
-              setTimeout(() => setCopyState("idle"), 1500);
-            }
-          }}
-          className={[
-            "rounded-xl px-3 py-2 text-sm",
-            eligibleForScheduleOps && mirror && props.row
-              ? "bg-[var(--to-ink)] text-[var(--to-surface)]"
-              : "border border-[var(--to-border)] bg-[var(--to-surface-soft)] text-[var(--to-ink-muted)] cursor-not-allowed",
-          ].join(" ")}
-        >
-          {copyState === "copied" ? "Copied" : copyState === "error" ? "Copy failed" : "Copy JSON"}
-        </button>
-      </div>
-
-      {!eligibleForScheduleOps ? (
-        <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
-          This tab is locked until Person, Org Context, Assignments, and Leadership are all Ready.
         </div>
       ) : null}
 
-      {eligibleForScheduleOps && !mirror ? (
-        <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-          <div className="font-semibold">Mirror unavailable on this page</div>
-          <div className="mt-1 opacity-90">
-            Open this person from the Planning page to edit schedule days. (Roster page does not own a week/schedule scope.)
-          </div>
-        </div>
-      ) : null}
-
-      <div className="mt-4 overflow-x-auto">
-        <div className="min-w-[950px] rounded-2xl border border-[var(--to-border)] bg-[var(--to-surface-soft)] p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold">Route</span>
-              <select
-                className="rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-xs"
-                disabled
-                value=""
-                onChange={() => {}}
-              >
-                <option value="">— Select —</option>
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {DAYS_UI.map((d) => {
-                const canToggle = eligibleForScheduleOps && Boolean(mirror) && Boolean(props.row?.person_pc_org_id);
-                const days = props.row?.person_pc_org_id && mirror ? mirror.getDays(props.row.person_pc_org_id) : DEFAULT_DAYS_ALL_ON;
-                const planned = Boolean(days[d.key]);
-
-                return (
-                  <button
-                    key={d.key}
-                    type="button"
-                    disabled={!canToggle}
-                    onClick={() => {
-                      if (!canToggle || !props.row || !mirror) return;
-                      mirror.toggleDay(props.row.person_pc_org_id, d.key);
-                    }}
-                    className={[
-                      "inline-flex items-center justify-center rounded-xl border px-3 py-2 text-xs",
-                      planned
-                        ? "border-green-600/40 bg-green-600/10 text-green-900"
-                        : "border-[var(--to-border)] bg-[var(--to-surface)] text-[var(--to-ink-muted)]",
-                      !canToggle ? "opacity-60 cursor-not-allowed" : "",
-                    ].join(" ")}
-                  >
-                    {planned ? d.short : "Off"}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="ml-auto flex flex-wrap items-center gap-3 text-xs">
-              {(() => {
-                const days = props.row?.person_pc_org_id && mirror ? mirror.getDays(props.row.person_pc_org_id) : DEFAULT_DAYS_ALL_ON;
-                const onDays = countOnDays(days);
-                const units = onDays * 96;
-
-                return (
-                  <>
-                    <span className="text-[var(--to-ink-muted)]">
-                      Days: <span className="font-semibold text-[var(--to-ink)]">{onDays}</span>
-                    </span>
-                    <span className="text-[var(--to-ink-muted)]">
-                      Hours: <span className="font-semibold text-[var(--to-ink)]">{onDays * 8}</span>
-                    </span>
-                    <span className="text-[var(--to-ink-muted)]">
-                      Units: <span className="font-semibold text-[var(--to-ink)]">{units}</span>
-                    </span>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-
-          <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
-            Toggle rule matches Planning: <span className="font-semibold">On → weekday label</span>,{" "}
-            <span className="font-semibold">Off → “Off”</span>.
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-) : null}
-
-{tab === "person" ? (
+      {/* Person tab */}
+      {tab === "person" ? (
         <div className="mt-4 space-y-3">
           {personError ? (
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
@@ -741,23 +852,12 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
                   const value = e.target.value;
                   const selected = companyOptions.find((o) => o.id === value) ?? null;
 
-                  // Auto-derive role based on selection type
                   const derivedRole =
-                    selected?.source_type === "company"
-                      ? "Hires"
-                      : selected?.source_type === "contractor"
-                        ? "Contractors"
-                        : null;
+                    selected?.source_type === "company" ? "Hires" : selected?.source_type === "contractor" ? "Contractors" : null;
 
-                  // optimistic UI
                   setPerson((prev) =>
                     prev
-                      ? {
-                          ...prev,
-                          co_ref_id: value ? value : null,
-                          co_code: selected?.code ?? null,
-                          role: derivedRole ?? prev.role,
-                        }
+                      ? { ...prev, co_ref_id: value ? value : null, co_code: selected?.code ?? null, role: derivedRole ?? prev.role }
                       : prev
                   );
 
@@ -801,6 +901,7 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
         </div>
       ) : null}
 
+      {/* Org tab */}
       {tab === "org" ? (
         <div className="mt-4 space-y-3">
           {orgError ? (
@@ -833,6 +934,7 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
         </div>
       ) : null}
 
+      {/* Assignments tab */}
       {tab === "assignments" ? (
         <div className="mt-4 space-y-3">
           {assignmentError ? (
@@ -845,7 +947,7 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Assignment ID" value={props.row?.assignment_id ?? ""} />
             <Field label="Position title" value={props.row?.position_title ?? ""} />
-            <Field label="Assignment active" value={String(props.row?.assignment_active ?? "")} />
+            <Field label="Assignment active" value={String((props.row as any)?.assignment_active ?? "")} />
 
             <Field label="Tech ID" value={assignment?.tech_id ?? ""} />
             <Field label="Start date" value={assignment?.start_date ?? ""} />
@@ -865,6 +967,7 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
         </div>
       ) : null}
 
+      {/* Leadership tab */}
       {tab === "leadership" ? (
         <div className="mt-4 space-y-3">
           {leadershipError ? (
@@ -922,9 +1025,7 @@ export function RosterRecordOverlay(props: { open: boolean; onClose: () => void;
                 <tbody>
                   {leadership.map((e) => {
                     const parent = e.parent_assignment_id ? leaderParentsById[e.parent_assignment_id] : null;
-                    const parentLabel = parent
-                      ? `${parent.full_name ?? "—"} • ${parent.position_title ?? "—"}`
-                      : e.parent_assignment_id ?? "—";
+                    const parentLabel = parent ? `${parent.full_name ?? "—"} • ${parent.position_title ?? "—"}` : e.parent_assignment_id ?? "—";
 
                     return (
                       <tr key={e.assignment_reporting_id ?? `${e.parent_assignment_id}-${e.start_date}-${e.created_at}`}>

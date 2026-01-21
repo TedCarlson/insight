@@ -8,5 +8,5 @@ Backed by DB views:
 
 UI contract:
 - Table (quick reference)
-- Row overlay with ordered tabs: Person → Org Context → Assignments → Leadership
+- Row overlay with ordered tabs: Person → Org Context → Assignments → Leadership → Schedule
 - + Onboard flow: unassigned people picker + new person + dup warnings

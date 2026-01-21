@@ -1,3 +1,5 @@
+//apps/web/src/features/planning/scheduleMirror.store.ts
+
 "use client";
 
 import * as React from "react";
@@ -16,16 +18,37 @@ export const DEFAULT_DAYS_ALL_ON: DaysMap = {
   sat: true,
 };
 
+function safeUuid() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export type ScheduleMirrorState = {
   /** person_pc_org_id -> days */
   byMember: Record<string, DaysMap>;
+  /** assignment_id -> schedule_id (per-scope/week) */
+  scheduleIdByAssignment: Record<string, string>;
 };
 
 export type ScheduleMirrorApi = {
+  // days
   getDays: (personPcOrgId: string) => DaysMap;
   setDays: (personPcOrgId: string, days: DaysMap) => void;
   toggleDay: (personPcOrgId: string, day: DayKey) => void;
   ensureMember: (personPcOrgId: string, initialDays?: DaysMap) => void;
+
+  // schedule_id mapping
+  getScheduleId: (assignmentId: string) => string | null;
+  setScheduleId: (assignmentId: string, scheduleId: string) => void;
+  /**
+   * Returns the stable schedule_id for an assignment_id.
+   * If missing, will adopt seedId (if provided) or mint a new uuid and store it.
+   */
+  ensureScheduleId: (assignmentId: string, seedId?: string | null) => string;
 };
 
 const ScheduleMirrorContext = React.createContext<ScheduleMirrorApi | null>(null);
@@ -43,16 +66,27 @@ export function useScheduleMirror() {
 export function ScheduleMirrorProvider(props: {
   /** Initial seed; typically computed from scheduleSeeds + defaults */
   initialByMember: Record<string, DaysMap>;
+  /** Initial seed; typically computed from scheduleSeeds (assignment_id -> schedule_id) */
+  initialScheduleIdByAssignment?: Record<string, string>;
   children: React.ReactNode;
 }) {
   const [state, setState] = React.useState<ScheduleMirrorState>(() => ({
     byMember: props.initialByMember ?? {},
+    scheduleIdByAssignment: props.initialScheduleIdByAssignment ?? {},
   }));
 
   // Keep membership keys up-to-date if caller changes seeds (eg, new week / org)
+  // NOTE: we intentionally *merge* scheduleIdByAssignment to avoid losing minted ids
+  // in cases where the server-provided seeds lag behind local writes.
   React.useEffect(() => {
-    setState({ byMember: props.initialByMember ?? {} });
-  }, [props.initialByMember]);
+    setState((prev) => ({
+      byMember: props.initialByMember ?? {},
+      scheduleIdByAssignment: {
+        ...(prev.scheduleIdByAssignment ?? {}),
+        ...(props.initialScheduleIdByAssignment ?? {}),
+      },
+    }));
+  }, [props.initialByMember, props.initialScheduleIdByAssignment]);
 
   const api = React.useMemo<ScheduleMirrorApi>(() => {
     function getDays(personPcOrgId: string) {
@@ -61,6 +95,7 @@ export function ScheduleMirrorProvider(props: {
 
     function setDays(personPcOrgId: string, days: DaysMap) {
       setState((prev) => ({
+        ...prev,
         byMember: {
           ...prev.byMember,
           [personPcOrgId]: days,
@@ -72,6 +107,7 @@ export function ScheduleMirrorProvider(props: {
       setState((prev) => {
         const cur = prev.byMember[personPcOrgId] ?? DEFAULT_DAYS_ALL_ON;
         return {
+          ...prev,
           byMember: {
             ...prev.byMember,
             [personPcOrgId]: { ...cur, [day]: !cur[day] },
@@ -84,6 +120,7 @@ export function ScheduleMirrorProvider(props: {
       setState((prev) => {
         if (prev.byMember[personPcOrgId]) return prev;
         return {
+          ...prev,
           byMember: {
             ...prev.byMember,
             [personPcOrgId]: initialDays ?? DEFAULT_DAYS_ALL_ON,
@@ -92,8 +129,41 @@ export function ScheduleMirrorProvider(props: {
       });
     }
 
-    return { getDays, setDays, toggleDay, ensureMember };
-  }, [state.byMember]);
+    function getScheduleId(assignmentId: string) {
+      return state.scheduleIdByAssignment[assignmentId] ?? null;
+    }
+
+    function setScheduleId(assignmentId: string, scheduleId: string) {
+      setState((prev) => ({
+        ...prev,
+        scheduleIdByAssignment: {
+          ...prev.scheduleIdByAssignment,
+          [assignmentId]: scheduleId,
+        },
+      }));
+    }
+
+    function ensureScheduleId(assignmentId: string, seedId?: string | null) {
+      const existing = state.scheduleIdByAssignment[assignmentId] ?? null;
+      if (existing) return existing;
+
+      const minted = seedId ?? safeUuid();
+      setState((prev) => {
+        if (prev.scheduleIdByAssignment[assignmentId]) return prev;
+        return {
+          ...prev,
+          scheduleIdByAssignment: {
+            ...prev.scheduleIdByAssignment,
+            [assignmentId]: minted,
+          },
+        };
+      });
+
+      return minted;
+    }
+
+    return { getDays, setDays, toggleDay, ensureMember, getScheduleId, setScheduleId, ensureScheduleId };
+  }, [state.byMember, state.scheduleIdByAssignment]);
 
   // IMPORTANT: no JSX in .ts files; use createElement
   return React.createElement(ScheduleMirrorContext.Provider, { value: api }, props.children);

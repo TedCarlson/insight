@@ -148,11 +148,7 @@ async function fetchLeadershipForChildAssignment(assignmentId: string): Promise<
   return (data ?? []) as LeadershipRow[];
 }
 
-export function RosterRecordOverlay(props: {
-  open: boolean;
-  onClose: () => void;
-  row: RosterRow | null;
-}) {
+export function RosterRecordOverlay(props: { open: boolean; onClose: () => void; row: RosterRow | null }) {
   const [tab, setTab] = useState<TabKey>("person");
 
   const [person, setPerson] = useState<PersonRow | null>(null);
@@ -350,11 +346,7 @@ export function RosterRecordOverlay(props: {
         setLeadership(rows);
 
         const parentIds = Array.from(
-          new Set(
-            (rows ?? [])
-              .map((r) => r.parent_assignment_id)
-              .filter((id): id is string => Boolean(id))
-          )
+          new Set((rows ?? []).map((r) => r.parent_assignment_id).filter((id): id is string => Boolean(id)))
         );
 
         if (parentIds.length === 0) {
@@ -416,17 +408,30 @@ export function RosterRecordOverlay(props: {
     }
 
     // Person readiness requires Company/Contractor affiliation (co_ref_id)
-    const personStatus: TabStatus = r.person_active === false ? "attention" : person?.co_ref_id ? "ready" : "pending";
+    const personStatus: TabStatus =
+      r.person_active === false ? "attention" : person?.co_ref_id ? "ready" : "pending";
 
     // Org Context readiness requires division/region/office (MSO) present
     const orgRequiredReady = Boolean(orgCtx?.division_id && orgCtx?.region_id && orgCtx?.mso_id);
     const orgStatus: TabStatus =
-      personStatus !== "ready" ? "locked" : orgError ? "attention" : orgRequiredReady ? "ready" : "pending";
+      personStatus !== "ready"
+        ? "locked"
+        : orgError
+          ? "attention"
+          : orgRequiredReady
+            ? "ready"
+            : "pending";
 
     // Assignments readiness: requires assignment_id; if load fails/missing -> attention
     const hasAssignment = Boolean(r.assignment_id);
     const assignmentStatus: TabStatus =
-      orgStatus !== "ready" ? "locked" : !hasAssignment ? "pending" : assignmentError ? "attention" : "ready";
+      orgStatus !== "ready"
+        ? "locked"
+        : !hasAssignment
+          ? "pending"
+          : assignmentError
+            ? "attention"
+            : "ready";
 
     // Leadership readiness: requires assignments ready; if load error -> attention; if active edge exists -> ready; else pending
     const leadershipStatus: TabStatus =
@@ -440,9 +445,12 @@ export function RosterRecordOverlay(props: {
 
     // Schedule tab is a new segment: locked until the first four segments are all ready
     const coreReady =
-      personStatus === "ready" && orgStatus === "ready" && assignmentStatus === "ready" && leadershipStatus === "ready";
+      personStatus === "ready" &&
+      orgStatus === "ready" &&
+      assignmentStatus === "ready" &&
+      leadershipStatus === "ready";
 
-    // Re-applied "A" safely: once unlocked, Schedule is Ready (payload exists)
+    // Once unlocked, Schedule is Ready (payload exists)
     const scheduleStatus: TabStatus = coreReady ? "ready" : "locked";
 
     return {
@@ -463,7 +471,7 @@ export function RosterRecordOverlay(props: {
     schedule: tabState.leadership !== "ready",
   };
 
-  // Step 2.7: Eligibility derived from the first four tabs only
+  // Eligibility derived from the first four tabs only
   const blockers = useMemo(() => {
     const b: string[] = [];
     if (tabState.person !== "ready") b.push("Person must be Ready (Affiliation required; Role derived).");
@@ -561,16 +569,46 @@ export function RosterRecordOverlay(props: {
 
   const title = props.row?.full_name ? `Roster: ${props.row.full_name}` : "Roster Record";
 
-  const selectedAffiliation = person?.co_ref_id ? companyOptions.find((o) => o.id === person.co_ref_id) : null;
+  const selectedAffiliation =
+    person?.co_ref_id ? companyOptions.find((o) => o.id === person.co_ref_id) : null;
 
   return (
-    <Drawer open={props.open} onClose={props.onClose} title={title} description="Segmented record view (v2). Tabs follow the validation chain.">
+    <Drawer
+      open={props.open}
+      onClose={props.onClose}
+      title={title}
+      description="Segmented record view (v2). Tabs follow the validation chain."
+    >
       <div className="flex flex-wrap gap-2">
         <TabButton active={tab === "person"} label="Person" status={tabState.person} onClick={() => setTab("person")} />
-        <TabButton active={tab === "org"} label="Org Context" status={tabState.org} disabled={disabled.org} onClick={() => setTab("org")} />
-        <TabButton active={tab === "assignments"} label="Assignments" status={tabState.assignments} disabled={disabled.assignments} onClick={() => setTab("assignments")} />
-        <TabButton active={tab === "leadership"} label="Leadership" status={tabState.leadership} disabled={disabled.leadership} onClick={() => setTab("leadership")} />
-        <TabButton active={tab === "schedule"} label="Schedule" status={tabState.schedule} disabled={disabled.schedule} onClick={() => setTab("schedule")} />
+        <TabButton
+          active={tab === "org"}
+          label="Org Context"
+          status={tabState.org}
+          disabled={disabled.org}
+          onClick={() => setTab("org")}
+        />
+        <TabButton
+          active={tab === "assignments"}
+          label="Assignments"
+          status={tabState.assignments}
+          disabled={disabled.assignments}
+          onClick={() => setTab("assignments")}
+        />
+        <TabButton
+          active={tab === "leadership"}
+          label="Leadership"
+          status={tabState.leadership}
+          disabled={disabled.leadership}
+          onClick={() => setTab("leadership")}
+        />
+        <TabButton
+          active={tab === "schedule"}
+          label="Schedule"
+          status={tabState.schedule}
+          disabled={disabled.schedule}
+          onClick={() => setTab("schedule")}
+        />
       </div>
 
       {/* Eligibility panel (core 4 tabs) */}
@@ -653,7 +691,9 @@ export function RosterRecordOverlay(props: {
             <div className="mt-3">
               <div className="text-xs font-semibold">Output payload (read-only)</div>
               <pre className="mt-2 max-h-80 overflow-auto rounded-xl border border-[var(--to-border)] bg-[var(--to-surface-soft)] p-3 text-xs">
-                {schedulePrepPayload ? JSON.stringify(schedulePrepPayload, null, 2) : '{\n  "status": "no row selected"\n}'}
+                {schedulePrepPayload
+                  ? JSON.stringify(schedulePrepPayload, null, 2)
+                  : "{\n  \"status\": \"no row selected\"\n}"}
               </pre>
             </div>
           </div>

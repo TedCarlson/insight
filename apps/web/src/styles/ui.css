@@ -1,0 +1,316 @@
+/* apps/web/src/styles/ui.css */
+/* Layout */
+.to-page {
+  @apply mx-auto max-w-5xl space-y-6;
+}
+
+.to-header {
+  @apply flex items-start justify-between gap-4;
+}
+
+.to-h1 {
+  @apply text-2xl font-semibold;
+}
+
+.to-subtitle {
+  color: var(--to-ink-muted);
+  @apply text-sm;
+}
+
+/* Kit helpers */
+.to-kit-console {
+  background: var(--to-surface-soft);
+  @apply sticky top-0 z-20 p-3;
+}
+
+.to-grid-3 {
+  @apply grid gap-3 md:grid-cols-3;
+}
+
+.to-ring {
+  outline: 2px solid var(--to-accent);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+/* Card */
+.to-card {
+  border-color: var(--to-border);
+  background: transparent;
+  @apply rounded border p-4;
+}
+
+.to-card--default {
+  background: transparent;
+  box-shadow: none;
+}
+
+.to-card--subtle {
+  background: var(--to-surface);
+  box-shadow: none;
+}
+
+.to-card--elevated {
+  background: var(--to-surface);
+  /* Slight top highlight for "glass" feel; falls back to var(--to-surface). */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--to-surface) 88%, var(--to-surface-2) 12%),
+    var(--to-surface)
+  );
+  box-shadow: var(--to-shadow-sm);
+}
+
+/* Button */
+.to-btn {
+  @apply rounded px-3 py-2 text-sm font-medium;
+}
+
+.to-btn:disabled {
+  @apply opacity-60 cursor-not-allowed;
+}
+
+.to-btn--secondary {
+  border-color: var(--to-border);
+  @apply border hover:bg-[var(--to-surface-2)];
+}
+
+.to-btn--primary {
+  background: var(--to-accent);
+  @apply font-semibold text-white hover:opacity-90;
+}
+
+.to-btn--ghost {
+  @apply underline underline-offset-4 hover:opacity-80;
+}
+
+/* Field */
+.to-label {
+  color: var(--to-ink-muted);
+  @apply text-xs;
+}
+
+/* Inputs */
+.to-input,
+.to-select {
+  border-color: var(--to-border);
+  background: var(--to-surface);
+  @apply h-10 w-full rounded border px-3 text-sm outline-none;
+}
+
+.to-input:focus,
+.to-select:focus {
+  @apply ring-2;
+}
+
+/* Pill */
+.to-pill {
+  border-color: var(--to-border);
+  @apply rounded-full border px-3 py-1 text-sm hover:bg-[var(--to-surface-2)];
+}
+
+.to-pill--active {
+  @apply font-semibold;
+}
+
+/* Tooltip */
+.to-tooltip {
+  @apply relative inline-flex;
+}
+
+.to-tooltip__content {
+  border-color: var(--to-border);
+  background: var(--to-surface);
+  color: var(--to-ink);
+  box-shadow: var(--to-shadow-sm);
+  @apply absolute z-50 rounded border px-2 py-1 text-xs leading-snug;
+  @apply opacity-0 pointer-events-none select-none;
+  @apply transition-opacity duration-150 ease-out;
+}
+
+.to-tooltip__content[data-open="true"] {
+  @apply opacity-100 pointer-events-auto;
+}
+
+/* Positioning */
+.to-tooltip__content[data-side="top"] {
+  bottom: calc(100% + var(--to-tooltip-offset, 8px));
+}
+
+.to-tooltip__content[data-side="bottom"] {
+  top: calc(100% + var(--to-tooltip-offset, 8px));
+}
+
+.to-tooltip__content[data-side="left"] {
+  right: calc(100% + var(--to-tooltip-offset, 8px));
+}
+
+.to-tooltip__content[data-side="right"] {
+  left: calc(100% + var(--to-tooltip-offset, 8px));
+}
+
+/* Align + transforms (closed -> open) */
+.to-tooltip__content[data-side="top"][data-align="center"],
+.to-tooltip__content[data-side="bottom"][data-align="center"] {
+  left: 50%;
+  transform: translateX(-50%) translateY(6px);
+}
+
+.to-tooltip__content[data-side="top"][data-open="true"][data-align="center"],
+.to-tooltip__content[data-side="bottom"][data-open="true"][data-align="center"] {
+  transform: translateX(-50%) translateY(0);
+}
+
+.to-tooltip__content[data-side="top"][data-align="start"],
+.to-tooltip__content[data-side="bottom"][data-align="start"] {
+  left: 0;
+  transform: translateY(6px);
+}
+
+.to-tooltip__content[data-side="top"][data-open="true"][data-align="start"],
+.to-tooltip__content[data-side="bottom"][data-open="true"][data-align="start"] {
+  transform: translateY(0);
+}
+
+.to-tooltip__content[data-side="top"][data-align="end"],
+.to-tooltip__content[data-side="bottom"][data-align="end"] {
+  right: 0;
+  transform: translateY(6px);
+}
+
+.to-tooltip__content[data-side="top"][data-open="true"][data-align="end"],
+.to-tooltip__content[data-side="bottom"][data-open="true"][data-align="end"] {
+  transform: translateY(0);
+}
+
+.to-tooltip__content[data-side="left"][data-align="center"],
+.to-tooltip__content[data-side="right"][data-align="center"] {
+  top: 50%;
+  transform: translateY(-50%) translateX(6px);
+}
+
+.to-tooltip__content[data-side="left"][data-open="true"][data-align="center"],
+.to-tooltip__content[data-side="right"][data-open="true"][data-align="center"] {
+  transform: translateY(-50%) translateX(0);
+}
+
+.to-tooltip__content[data-side="left"][data-align="start"],
+.to-tooltip__content[data-side="right"][data-align="start"] {
+  top: 0;
+  transform: translateX(6px);
+}
+
+.to-tooltip__content[data-side="left"][data-open="true"][data-align="start"],
+.to-tooltip__content[data-side="right"][data-open="true"][data-align="start"] {
+  transform: translateX(0);
+}
+
+.to-tooltip__content[data-side="left"][data-align="end"],
+.to-tooltip__content[data-side="right"][data-align="end"] {
+  bottom: 0;
+  transform: translateX(6px);
+}
+
+.to-tooltip__content[data-side="left"][data-open="true"][data-align="end"],
+.to-tooltip__content[data-side="right"][data-open="true"][data-align="end"] {
+  transform: translateX(0);
+}
+
+/* Arrow */
+.to-tooltip__content::before {
+  content: "";
+  background: var(--to-surface);
+  border-color: var(--to-border);
+  @apply absolute h-2 w-2 rotate-45 border;
+}
+
+.to-tooltip__content[data-side="top"]::before {
+  left: 50%;
+  bottom: -5px;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.to-tooltip__content[data-side="bottom"]::before {
+  left: 50%;
+  top: -5px;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.to-tooltip__content[data-side="left"]::before {
+  top: 50%;
+  right: -5px;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.to-tooltip__content[data-side="right"]::before {
+  top: 50%;
+  left: -5px;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+
+/* DropdownMenu */
+.to-menu {
+  @apply relative inline-flex;
+}
+
+.to-menu__triggerWrap {
+  @apply inline-flex;
+}
+
+.to-menu__content {
+  @apply absolute z-[60] min-w-[12rem] rounded-xl border p-1 text-sm shadow-[var(--to-shadow-md)];
+  background: var(--to-surface);
+  border-color: var(--to-border);
+}
+
+.to-menu__content[data-open="false"] {
+  @apply hidden;
+}
+
+.to-menu__content[data-open="true"] {
+  @apply block;
+}
+
+.to-menu__content[data-side="bottom"] {
+  top: calc(100% + var(--to-menu-offset, 8px));
+}
+
+.to-menu__content[data-side="top"] {
+  bottom: calc(100% + var(--to-menu-offset, 8px));
+}
+
+.to-menu__content[data-align="start"] {
+  left: 0;
+}
+
+.to-menu__content[data-align="center"] {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.to-menu__content[data-align="end"] {
+  right: 0;
+}
+
+.to-menu__label {
+  @apply px-2 py-1 text-xs font-semibold text-[var(--to-ink-muted)];
+}
+
+.to-menu__sep {
+  @apply my-1 h-px;
+  background: var(--to-border);
+}
+
+.to-menu__item {
+  @apply w-full rounded-lg px-2 py-2 text-left text-[var(--to-ink)] hover:bg-[var(--to-surface-2)] focus:outline-none focus-visible:ring-2;
+  ring-color: var(--to-focus);
+}
+
+.to-menu__item--danger {
+  @apply text-[var(--to-danger)];
+}
+
+.to-menu__item--disabled {
+  @apply cursor-not-allowed opacity-50;
+}

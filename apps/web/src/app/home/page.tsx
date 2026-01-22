@@ -1,8 +1,11 @@
 // apps/web/src/app/home/page.tsx
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+
+import { PageHeader, PageShell } from "@/components/ui/PageShell";
+import { Card } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
 
 export default async function HomePage() {
   const cookieStore = await cookies();
@@ -20,7 +23,7 @@ export default async function HomePage() {
         return cookieStore.getAll();
       },
       setAll() {
-        /* noop */
+        /* noop (middleware handles refresh/write) */
       },
     },
   });
@@ -33,37 +36,33 @@ export default async function HomePage() {
   if (!user || error) redirect("/login");
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
-      <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Insight</h1>
-      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-        Roster Management • Planning • Metrics Visibility
-      </p>
+    <PageShell>
+      <PageHeader
+        title="Insight"
+        subtitle="Roster Management • Route Lock Planning • Metrics Visibility"
+      />
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-3">
-        <Link
-          href="/org?tab=roster"
-          className="rounded border px-4 py-3 text-sm font-medium hover:bg-[var(--to-surface-2)]"
-          style={{ borderColor: "var(--to-border)" }}
-        >
-          Roster
-        </Link>
+      <Card>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Button type="button" variant="secondary" disabled className="px-4 py-3">
+            Roster
+          </Button>
 
-        <Link
-          href="/org?tab=planning"
-          className="rounded border px-4 py-3 text-sm font-medium hover:bg-[var(--to-surface-2)]"
-          style={{ borderColor: "var(--to-border)" }}
-        >
-          Planning
-        </Link>
+          <Button type="button" variant="secondary" disabled className="px-4 py-3">
+            Route Lock
+          </Button>
 
-        <Link
-          href="/org?tab=metrics"
-          className="rounded border px-4 py-3 text-sm font-medium hover:bg-[var(--to-surface-2)]"
-          style={{ borderColor: "var(--to-border)" }}
-        >
-          Metrics
-        </Link>
-      </div>
-    </main>
+          <Button type="button" variant="secondary" disabled className="px-4 py-3">
+            Metrics
+          </Button>
+        </div>
+      </Card>
+
+      <Card>
+        <p className="text-sm text-[var(--to-ink-muted)]">
+          This is a placeholder landing page. Next we’ll wire each module to real routes and data.
+        </p>
+      </Card>
+    </PageShell>
   );
 }

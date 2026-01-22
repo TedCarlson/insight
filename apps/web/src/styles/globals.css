@@ -9,6 +9,7 @@
 /* --- CORE IMPORTS --- */
 @import "./tokens.css";
 
+@import "./ui.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

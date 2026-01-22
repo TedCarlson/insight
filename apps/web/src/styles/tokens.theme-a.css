@@ -1,0 +1,18 @@
+/* apps/web/src/styles/tokens.theme-a.css */
+/* Theme A: applied only within elements that have data-theme="theme-a" */
+
+:root[data-theme="theme-a"],
+[data-theme="theme-a"] {
+  --to-surface: #0b1220;
+  --to-surface-2: #0f1a2e;
+  --to-surface-soft: #070c14;
+
+  --to-ink: #e9eefc;
+  --to-ink-muted: #aab6da;
+
+  --to-border: rgba(255, 255, 255, 0.10);
+
+  --to-accent: #4f7cff;
+
+  --to-shadow-sm: 0 1px 10px rgba(0, 0, 0, 0.25);
+}

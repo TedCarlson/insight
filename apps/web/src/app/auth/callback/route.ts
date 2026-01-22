@@ -8,7 +8,7 @@ function pickNext(u: URL) {
   // choose the last next if multiple exist
   const n = all.length ? all[all.length - 1] : null;
   // only allow internal paths
-  if (!n || !n.startsWith("/")) return "/home";
+  if (!n || !n.startsWith("/")) return "/";
   return n;
 }
 
@@ -109,8 +109,8 @@ export async function GET(req: Request) {
       try {
         var params = new URLSearchParams(window.location.search);
         var nextAll = params.getAll("next");
-        var next = (nextAll.length ? nextAll[nextAll.length - 1] : "/home") || "/home";
-        if (typeof next !== "string" || next[0] !== "/") next = "/home";
+        var next = (nextAll.length ? nextAll[nextAll.length - 1] : "/") || "/";
+        if (typeof next !== "string" || next[0] !== "/") next = "/";
         // Preserve fragment tokens
         var hash = window.location.hash || "";
         window.location.replace(next + hash);

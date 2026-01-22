@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/app/(prod)/_shared/supabase";
+import { createClient } from "@/lib/supabase/client";
+import { normalizeNext } from "@/lib/navigation/next";
 
 function getHashParams() {
   if (typeof window === "undefined") return new URLSearchParams();
@@ -20,12 +21,23 @@ type BootstrapResponse = {
   created: boolean;
   hydrated: boolean;
   notes?: string[];
+  error?: string;
 };
 
 async function callBootstrap(): Promise<BootstrapResponse | null> {
   try {
-    const res = await fetch("/api/auth/bootstrap", { method: "POST" });
+    const res = await fetch("/api/auth/bootstrap", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+
     const json = (await res.json()) as BootstrapResponse;
+
+    // If API returns non-200 but still JSON, preserve it.
+    if (!res.ok) {
+      return { ...json, ok: false, error: json.error ?? `bootstrap failed (${res.status})` };
+    }
+
     return json;
   } catch {
     return null;
@@ -36,7 +48,7 @@ export default function SetPasswordPage() {
   const router = useRouter();
   const sp = useSearchParams();
 
-  const next = sp.get("next") || "/home";
+  const next = normalizeNext(sp.get("next"));
 
   const supabase = useMemo(() => createClient(), []);
 
@@ -91,10 +103,12 @@ export default function SetPasswordPage() {
         return;
       }
 
-      // Bootstrap profile row + hydrate metadata linkages
+      // Bootstrap profile row + hydrate metadata linkages (best-effort)
       const boot = await callBootstrap();
       if (boot?.ok) {
         setOut(`Password set. bootstrap ok (status=${boot.status ?? "?"}). Redirecting…`);
+      } else if (boot && !boot.ok) {
+        setOut(`Password set. bootstrap not ok. Redirecting…`);
       } else {
         setOut("Password set. Redirecting…");
       }
@@ -115,7 +129,13 @@ export default function SetPasswordPage() {
       <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Set your password</h1>
       <p className="mt-2 text-sm text-[var(--to-ink-muted)]">Choose a password to finish onboarding.</p>
 
-      <div className="mt-6 grid gap-3">
+      <form
+        className="mt-6 grid gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!saving) void onSubmit();
+        }}
+      >
         <label className="grid gap-1">
           <span className="text-xs text-[var(--to-ink-muted)]">New password</span>
           <input
@@ -141,7 +161,7 @@ export default function SetPasswordPage() {
         </label>
 
         <button
-          onClick={onSubmit}
+          type="submit"
           disabled={saving}
           className="mt-2 rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
           style={{ borderColor: "var(--to-border)" }}
@@ -157,7 +177,7 @@ export default function SetPasswordPage() {
             {out}
           </pre>
         )}
-      </div>
+      </form>
     </main>
   );
 }

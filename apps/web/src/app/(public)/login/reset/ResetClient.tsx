@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { normalizeNext } from "@/lib/navigation/next";
 
 export default function ResetClient() {
   const sp = useSearchParams();
-  const next = sp.get("next") || "/home";
+  const next = sp.get("next") || "/";
 
   const [email, setEmail] = useState("");
   const [out, setOut] = useState<string>("");

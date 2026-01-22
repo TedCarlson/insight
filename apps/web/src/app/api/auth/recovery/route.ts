@@ -1,14 +1,21 @@
 // apps/web/src/app/api/auth/recovery/route.ts
 
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { normalizeNext } from "@/lib/navigation/next";
 
 type Body = {
   email: string;
-  next?: string; // optional post-password target, default "/home"
+  next?: string; // optional post-password target, default "/"
 };
 
-export async function POST(req: Request) {
+
+function isLikelyEmail(email: string): boolean {
+  // Simple, pragmatic check (not RFC-perfect, but good enough for UX gating)
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+export async function POST(req: NextRequest) {
   try {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -28,16 +35,23 @@ export async function POST(req: Request) {
     }
 
     const email = (body.email ?? "").trim().toLowerCase();
-    const next = (body.next ?? "/home").trim() || "/home";
+    const next = normalizeNext(body.next ?? null);
 
-    if (!email || !email.includes("@") || !email.includes(".")) {
+    if (!isLikelyEmail(email)) {
       return NextResponse.json({ error: "Valid email is required" }, { status: 400 });
     }
 
-    const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/+$/, "");
-    const redirectTo = `${siteUrl}/auth/callback?next=${encodeURIComponent(
-      `/auth/set-password?next=${encodeURIComponent(next)}`
-    )}`;
+    // Prefer explicit site URL, otherwise use request origin (works in previews)
+    const base =
+      (process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin || "http://localhost:3000").replace(/\/+$/, "");
+
+    // After recovery, Supabase redirects here:
+    //   /auth/callback?next=/auth/set-password?next=<next>
+    const innerNext = `/auth/set-password?next=${encodeURIComponent(next)}`;
+
+    const callbackUrl = new URL("/auth/callback", base);
+    callbackUrl.searchParams.set("next", innerNext);
+    const redirectTo = callbackUrl.toString();
 
     const admin = createClient(url, service, { auth: { persistSession: false } });
 
@@ -48,24 +62,27 @@ export async function POST(req: Request) {
     });
 
     if (linkRes.error) {
-      return NextResponse.json({ error: "generateLink(recovery) failed", details: linkRes.error }, { status: 400 });
+      // Avoid leaking internals in production
+      const isProd = process.env.NODE_ENV === "production";
+      return NextResponse.json(
+        isProd
+          ? { error: "generateLink(recovery) failed" }
+          : { error: "generateLink(recovery) failed", details: linkRes.error },
+        { status: 400 }
+      );
     }
 
-    // In production, do NOT return the action_link to the caller.
-    // Supabase should deliver recovery via email; returning direct links is a security footgun.
+    // In production, do NOT return the action_link (security footgun).
     const isProd = process.env.NODE_ENV === "production";
-
     if (isProd) {
       return NextResponse.json({
         ok: true,
         email,
-        redirect_to: redirectTo,
       });
     }
 
-    // Dev/local convenience: allow returning the link so you can test flows quickly.
+    // Dev/local convenience: return the action link to test flows quickly.
     const actionLink = (linkRes.data as any)?.properties?.action_link ?? null;
-
     if (!actionLink) {
       return NextResponse.json(
         { error: "Recovery link generated but action_link missing", data: linkRes.data },
@@ -76,8 +93,9 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       email,
-      action_link: actionLink,
+      next,
       redirect_to: redirectTo,
+      action_link: actionLink,
       dev_only: true,
     });
   } catch (e: any) {

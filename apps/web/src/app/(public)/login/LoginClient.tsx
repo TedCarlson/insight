@@ -4,8 +4,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { Session } from "@supabase/supabase-js";
-import { createClient } from "@/app/(prod)/_shared/supabase";
+import { createClient } from "@/lib/supabase/client";
+import { normalizeNext } from "@/lib/navigation/next";
+
 
 type BootstrapResponse = {
   ok: boolean;
@@ -16,12 +17,22 @@ type BootstrapResponse = {
   created: boolean;
   hydrated: boolean;
   notes?: string[];
+  error?: string;
 };
 
 async function callBootstrap(): Promise<BootstrapResponse | null> {
   try {
-    const res = await fetch("/api/auth/bootstrap", { method: "POST" });
+    const res = await fetch("/api/auth/bootstrap", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+
     const json = (await res.json()) as BootstrapResponse;
+
+    if (!res.ok) {
+      return { ...json, ok: false, error: json.error ?? `bootstrap failed (${res.status})` };
+    }
+
     return json;
   } catch {
     return null;
@@ -32,117 +43,137 @@ export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // IMPORTANT: use the SAME client helper as the rest of the UI
   const supabase = useMemo(() => createClient(), []);
+  const next = normalizeNext(searchParams.get("next"));
 
-  const next = searchParams.get("next") || "/home";
-
-  const [session, setSession] = useState<Session | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [error, setError] = useState("");
   const [bootMsg, setBootMsg] = useState("");
+  const [loading, setLoading] = useState(false);
 
+  // If a session exists, bounce to next (middleware usually handles this, but this prevents edge-case flashes)
   useEffect(() => {
-    let mounted = true;
+    let alive = true;
 
-    supabase.auth.getSession().then(async ({ data, error }: any) => {
-      if (!mounted) return;
+    (async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (!alive) return;
+
+      if (error) return; // don’t show as error; middleware will govern access anyway
+      if (data.session) {
+        // Best-effort bootstrap
+        const boot = await callBootstrap();
+        if (boot?.ok) setBootMsg(`bootstrap ok (status=${boot.status ?? "?"})`);
+        router.replace(next);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [supabase, router, next]);
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setBootMsg("");
+    setLoading(true);
+
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      });
 
       if (error) {
         setError(error.message);
         return;
       }
 
-      if (data.session) {
-        setSession(data.session);
-
-        // Best-effort bootstrap (ensures profile row exists)
-        const boot = await callBootstrap();
-        if (boot?.ok) {
-          setBootMsg(`bootstrap ok (status=${boot.status ?? "?"})`);
-        }
-
-        router.push(next); // honor ?next= if present, else /home
+      if (!data.session) {
+        setError("Login succeeded but no session was returned.");
+        return;
       }
-    });
 
-    return () => {
-      mounted = false;
-    };
-  }, [router, supabase, next]);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setBootMsg("");
-
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (error) {
-      setError(error.message);
-      return;
-    }
-
-    if (data.session) {
-      setSession(data.session);
-
-      // Ensure user_profile exists + hydrate from invite metadata
+      // Best-effort bootstrap
       const boot = await callBootstrap();
       if (boot?.ok) {
         setBootMsg(`bootstrap ok (status=${boot.status ?? "?"})`);
       } else if (boot && !boot.ok) {
-        setBootMsg("bootstrap failed (unauthorized)");
+        setBootMsg("bootstrap not ok (continuing)");
       }
 
-      router.push(next); // honor ?next= if present, else /home
-    } else {
-      setError("Login succeeded but no session was returned.");
+      router.replace(next);
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
   return (
-    <main className="p-4 max-w-md mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Admin Login</h1>
+    <main className="mx-auto max-w-md p-6">
+      <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Sign in</h1>
+      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">Use your credentials to access the app.</p>
 
-      <form onSubmit={handleLogin} className="space-y-4">
-        <input
-          type="email"
-          required
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="w-full p-2 border rounded"
-          autoComplete="email"
-        />
+      <form onSubmit={handleLogin} className="mt-6 grid gap-3">
+        <label className="grid gap-1">
+          <span className="text-xs text-[var(--to-ink-muted)]">Email</span>
+          <input
+            type="email"
+            required
+            className="rounded border px-3 py-2 text-sm"
+            style={{ borderColor: "var(--to-border)", background: "transparent" }}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@company.com"
+            autoComplete="email"
+          />
+        </label>
 
-        <input
-          type="password"
-          required
-          placeholder="••••••••"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full p-2 border rounded"
-          autoComplete="current-password"
-        />
+        <label className="grid gap-1">
+          <span className="text-xs text-[var(--to-ink-muted)]">Password</span>
+          <input
+            type="password"
+            required
+            className="rounded border px-3 py-2 text-sm"
+            style={{ borderColor: "var(--to-border)", background: "transparent" }}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            autoComplete="current-password"
+          />
+        </label>
 
-        <div className="flex items-center justify-between gap-3">
-          <button type="submit" className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800">
-            Sign In
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <button
+            type="submit"
+            disabled={loading}
+            className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
+            style={{ borderColor: "var(--to-border)" }}
+          >
+            {loading ? "Signing in..." : "Sign in"}
           </button>
 
-          {/* ✅ Forgot password path */}
           <Link
-            href={`/login/reset${next ? `?next=${encodeURIComponent(next)}` : ""}`}
-            className="text-sm underline underline-offset-4 text-gray-700 hover:text-black"
+            href={`/login/reset?next=${encodeURIComponent(next)}`}
+            className="text-sm underline underline-offset-4 text-[var(--to-ink-muted)] hover:text-[var(--to-ink)]"
           >
             Forgot password?
           </Link>
         </div>
 
-        {error && <p className="text-red-600">{error}</p>}
-        {bootMsg && <p className="text-xs text-gray-600">{bootMsg}</p>}
-        {session && <p className="text-xs text-gray-600">Session active.</p>}
+        {error && (
+          <pre
+            className="whitespace-pre-wrap rounded border p-3 text-xs"
+            style={{ borderColor: "var(--to-border)", background: "var(--to-surface-2)" }}
+          >
+            {error}
+          </pre>
+        )}
+
+        {bootMsg && <p className="text-xs text-[var(--to-ink-muted)]">{bootMsg}</p>}
       </form>
     </main>
   );

@@ -1,11 +1,15 @@
 // apps/web/src/app/home/page.tsx
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
 import { PageHeader, PageShell } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
 
 export default async function HomePage() {
   const cookieStore = await cookies();
@@ -37,24 +41,21 @@ export default async function HomePage() {
 
   return (
     <PageShell>
-      <PageHeader
-        title="Insight"
-        subtitle="Roster Management • Route Lock Planning • Metrics Visibility"
-      />
+      <PageHeader title="Insight" subtitle="Roster Management • Route Lock Planning • Metrics Visibility" />
 
       <Card>
         <div className="grid gap-3 sm:grid-cols-3">
-          <Button type="button" variant="secondary" disabled className="px-4 py-3">
+          <Link href="/roster" className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}>
             Roster
-          </Button>
+          </Link>
 
-          <Button type="button" variant="secondary" disabled className="px-4 py-3">
+          <button type="button" className={cls("to-btn", "to-btn--secondary", "px-4 py-3")} disabled>
             Route Lock
-          </Button>
+          </button>
 
-          <Button type="button" variant="secondary" disabled className="px-4 py-3">
+          <button type="button" className={cls("to-btn", "to-btn--secondary", "px-4 py-3")} disabled>
             Metrics
-          </Button>
+          </button>
         </div>
       </Card>
 

@@ -1,5 +1,5 @@
 // apps/web/src/components/ui/DataTable.tsx
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -56,14 +56,7 @@ export function DataTableHeader({
   );
 }
 
-export function DataTableBody({
-  children,
-  zebra = false,
-}: {
-  children: ReactNode;
-  zebra?: boolean;
-}) {
-  // Odd rows remain default (white in glass theme). Even rows get a light blue tint.
+export function DataTableBody({ children, zebra = false }: { children: ReactNode; zebra?: boolean }) {
   return <div className={cls(zebra && "[&>div:nth-child(even)]:bg-[var(--to-row-zebra)]")}>{children}</div>;
 }
 
@@ -72,14 +65,16 @@ export function DataTableRow({
   gridClassName = "grid-cols-12",
   hover = true,
   className,
+  ...props
 }: {
   children: ReactNode;
   gridClassName?: string;
   hover?: boolean;
   className?: string;
-}) {
+} & HTMLAttributes<HTMLDivElement>) {
   return (
     <div
+      {...props}
       className={cls(
         "grid gap-2 px-3 py-3 text-sm transition-colors",
         hover && "hover:bg-[var(--to-row-hover)]",
@@ -94,10 +89,7 @@ export function DataTableRow({
 
 export function DataTableFooter({ children }: { children: ReactNode }) {
   return (
-    <div
-      className="border-t px-3 py-2"
-      style={{ borderColor: "var(--to-border)", background: "var(--to-row-hover)" }}
-    >
+    <div className="border-t px-3 py-2" style={{ borderColor: "var(--to-border)", background: "var(--to-row-hover)" }}>
       {children}
     </div>
   );

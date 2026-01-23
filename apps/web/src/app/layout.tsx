@@ -10,17 +10,20 @@ import "../styles/tokens.theme-glass.css";
 import CoreNav from "@/components/CoreNav";
 import FooterHelp from "@/components/FooterHelp";
 import ThemeConsole from "@/components/ThemeConsole";
+import { OrgProvider } from "@/state/org";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body className="min-h-screen bg-[var(--to-surface-soft)] text-[var(--to-ink)]">
-        <CoreNav />
-        <main className="p-6">{children}</main>
+        <OrgProvider>
+          <CoreNav />
+          <main className="p-6">{children}</main>
 
-        {/* Global UI command center */}
-        <ThemeConsole />
-        <FooterHelp />
+          {/* Global UI command center */}
+          <ThemeConsole />
+          <FooterHelp />
+        </OrgProvider>
       </body>
     </html>
   );

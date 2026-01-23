@@ -114,6 +114,69 @@ export type RosterDrilldownRow = {
   [k: string]: any;
 };
 
+
+/** roster_row_module_get (single-call hydration row for the modal: person + assignment + org + leadership) */
+export type RosterRowModuleRow = {
+  assignment_id?: UUID;
+  pc_org_id?: UUID;
+  person_id?: UUID;
+
+  // person
+  full_name?: string | null;
+  emails?: string | null;
+  mobile?: string | null;
+  fuse_emp_id?: string | null;
+  person_notes?: string | null;
+  person_nt_login?: string | null;
+  person_csg_id?: string | null;
+  person_active?: boolean | null;
+
+  // company/contractor
+  co_type?: string | null;
+  co_code?: string | null;
+  co_ref_id?: UUID | null;
+  co_name?: string | null;
+
+  // assignment
+  tech_id?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  position_title?: string | null;
+  assignment_record_active?: boolean | null;
+  assignment_active?: boolean | null;
+
+  // org
+  pc_org_name?: string | null;
+  pc_id?: UUID | null;
+  pc_number?: number | null;
+  mso_id?: UUID | null;
+  mso_name?: string | null;
+  division_id?: UUID | null;
+  division_name?: string | null;
+  division_code?: string | null;
+  region_id?: UUID | null;
+  region_name?: string | null;
+  region_code?: string | null;
+
+  // leadership
+  reports_to_assignment_id?: UUID | null;
+  reports_to_person_id?: UUID | null;
+  reports_to_full_name?: string | null;
+
+  direct_reports?: any[] | null;
+
+  reports_to_reporting_id?: UUID | null;
+  reports_to_child_assignment_id?: UUID | null;
+  reports_to_start_date?: string | null;
+  reports_to_end_date?: string | null;
+  reports_to_created_at?: string | null;
+  reports_to_created_by?: string | null;
+  reports_to_updated_at?: string | null;
+  reports_to_updated_by?: string | null;
+
+  [k: string]: any;
+};
+
 export type OrgEventRow = {
   org_event_id?: UUID;
   id?: UUID;
@@ -152,6 +215,19 @@ export class ApiClient {
       status: err?.status,
     };
   }
+
+
+/**
+ * Remove keys with value === undefined so PostgREST doesn't treat them as provided params.
+ * (Keeping null is intentional; null means "set to null" when the RPC supports that param.)
+ */
+private compactRecord<T extends Record<string, any>>(obj: T): Partial<T> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as Partial<T>;
+}
 
   /**
    * Try the same RPC with multiple argument-shapes.
@@ -195,6 +271,17 @@ export class ApiClient {
     );
   }
 
+  async rosterRowModule(assignment_id: string): Promise<RosterRowModuleRow | null> {
+    const data = await this.rpcWithFallback<any>("roster_row_module_get", [
+      { p_assignment_id: assignment_id },
+      { assignment_id },
+      { p_id: assignment_id },
+      { id: assignment_id },
+    ]);
+    return data ?? null;
+  }
+
+
   async orgEventFeed(pc_org_id: string, limit = 50): Promise<OrgEventRow[]> {
     return (
       (await this.rpcWithFallback<OrgEventRow[]>("org_event_feed", [
@@ -204,6 +291,56 @@ export class ApiClient {
       ])) ?? []
     );
   }
+async personUpsert(input: {
+  person_id: string;
+  full_name?: string | null;
+  emails?: string | null;
+  mobile?: string | null;
+  fuse_emp_id?: string | null;
+  person_notes?: string | null;
+  person_nt_login?: string | null;
+  person_csg_id?: string | null;
+  active?: boolean | null;
+  role?: string | null;
+  co_ref_id?: string | null;
+  co_code?: string | null;
+}): Promise<PersonRow | null> {
+  // Exact signature (from pg_proc):
+  // api.person_upsert(
+  //   p_person_id uuid,
+  //   p_full_name text,
+  //   p_emails text,
+  //   p_mobile text,
+  //   p_fuse_emp_id text,
+  //   p_person_notes text,
+  //   p_person_nt_login text,
+  //   p_person_csg_id text,
+  //   p_active boolean,
+  //   p_role text,
+  //   p_co_ref_id uuid,
+  //   p_co_code text
+  // ) returns person
+
+  const args = this.compactRecord({
+    p_person_id: input.person_id,
+    p_full_name: input.full_name ?? undefined,
+    p_emails: input.emails ?? undefined,
+    p_mobile: input.mobile ?? undefined,
+    p_fuse_emp_id: input.fuse_emp_id ?? undefined,
+    p_person_notes: input.person_notes ?? undefined,
+    p_person_nt_login: input.person_nt_login ?? undefined,
+    p_person_csg_id: input.person_csg_id ?? undefined,
+    p_active: input.active ?? undefined,
+    p_role: input.role ?? undefined,
+    p_co_ref_id: input.co_ref_id ?? undefined,
+    p_co_code: input.co_code ?? undefined,
+  });
+
+  const { data, error } = await this.supabase.rpc("person_upsert", args as any);
+  if (error) throw this.normalize(error);
+  return (data as any) ?? null;
+}
+
 
   async personGet(person_id: string): Promise<PersonRow | null> {
     const data = await this.rpcWithFallback<any>("person_get", [
@@ -214,6 +351,88 @@ export class ApiClient {
     ]);
     return data ?? null;
   }
+
+
+/**
+ * Resolve company/contractor display for a person.
+ * co_ref_id may point to company_admin_v.company_id OR contractor_admin_v.contractor_id.
+ * If co_ref_id is null but co_code exists, we try matching by code.
+ */
+async resolveCoDisplay(input: { co_ref_id?: string | null; co_code?: string | null }): Promise<{ kind: "company" | "contractor"; name: string; matched_on: "id" | "code" } | null> {
+  const co_ref_id = input.co_ref_id ?? null;
+  const co_code = input.co_code ?? null;
+
+  // 1) Try by co_ref_id (uuid)
+  if (co_ref_id) {
+    const company = await this.supabase
+      .from("company_admin_v")
+      .select("company_id, company_name")
+      .eq("company_id", co_ref_id)
+      .maybeSingle();
+
+    if (!company.error && company.data?.company_name) {
+      return { kind: "company", name: company.data.company_name, matched_on: "id" };
+    }
+
+    const contractor = await this.supabase
+      .from("contractor_admin_v")
+      .select("contractor_id, contractor_name")
+      .eq("contractor_id", co_ref_id)
+      .maybeSingle();
+
+    if (!contractor.error && contractor.data?.contractor_name) {
+      return { kind: "contractor", name: contractor.data.contractor_name, matched_on: "id" };
+    }
+  }
+
+  // 2) Fallback by co_code (text)
+  if (co_code) {
+    const companyByCode = await this.supabase
+      .from("company_admin_v")
+      .select("company_code, company_name")
+      .eq("company_code", co_code)
+      .maybeSingle();
+
+    if (!companyByCode.error && companyByCode.data?.company_name) {
+      return { kind: "company", name: companyByCode.data.company_name, matched_on: "code" };
+    }
+
+    const contractorByCode = await this.supabase
+      .from("contractor_admin_v")
+      .select("contractor_code, contractor_name")
+      .eq("contractor_code", co_code)
+      .maybeSingle();
+
+    if (!contractorByCode.error && contractorByCode.data?.contractor_name) {
+      return { kind: "contractor", name: contractorByCode.data.contractor_name, matched_on: "code" };
+    }
+  }
+
+  return null;
 }
+}
+
+
+export type PersonUpsertInput = {
+  person_id?: UUID;
+  first_name?: string | null;
+  last_name?: string | null;
+  email?: string | null;
+  mobile?: string | null;
+  phone?: string | null;
+
+  /** Additional editable identifiers */
+  fuse_emp_id?: string | null;
+  person_csg_id?: string | null;
+  person_nt_login?: string | null;
+
+  /** Free-form notes */
+  person_notes?: string | null;
+
+  status?: string | null;
+
+  /** Allow backend to ignore/accept extra keys as it evolves */
+  [k: string]: any;
+};
 
 export const api = new ApiClient();

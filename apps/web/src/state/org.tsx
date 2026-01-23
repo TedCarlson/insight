@@ -1,7 +1,7 @@
 // src/state/org.tsx
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, PcOrgChoice } from "@/lib/api";
 
 type OrgState = {
@@ -38,7 +38,7 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
     else window.localStorage.removeItem(STORAGE_KEY);
   }, [selectedOrgId]);
 
-  const refreshOrgs = async () => {
+  const refreshOrgs = useCallback(async () => {
     setOrgsLoading(true);
     setOrgsError(null);
     try {
@@ -56,14 +56,13 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setOrgsLoading(false);
     }
-  };
+  }, [selectedOrgId]);
 
   useEffect(() => {
     refreshOrgs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshOrgs]);
 
-  const setSelectedOrgId = (id: string | null) => setSelectedOrgIdState(id);
+  const setSelectedOrgId = useCallback((id: string | null) => setSelectedOrgIdState(id), []);
 
   const value = useMemo(
     () => ({
@@ -74,7 +73,7 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
       setSelectedOrgId,
       refreshOrgs,
     }),
-    [orgs, orgsLoading, orgsError, selectedOrgId]
+    [orgs, orgsLoading, orgsError, selectedOrgId, setSelectedOrgId, refreshOrgs]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -60,7 +60,7 @@ export function Modal({
       <div className="relative flex h-full w-full items-start justify-center p-4 sm:p-8">
         <div
           className={cls(
-            "w-full rounded-xl border bg-[var(--to-surface)] shadow-[var(--to-shadow-sm)]",
+            "w-full max-h-[calc(100vh-4rem)] rounded-xl border bg-[var(--to-surface)] shadow-[var(--to-shadow-sm)] flex flex-col",
             maxW
           )}
           style={{ borderColor: "var(--to-border)" }}
@@ -73,7 +73,7 @@ export function Modal({
             </div>
           ) : null}
 
-          <div className="px-4 py-4">{children}</div>
+          <div className="px-4 py-4 flex-1 overflow-auto">{children}</div>
 
           {footer ? (
             <div className="border-t px-4 py-3" style={{ borderColor: "var(--to-border)" }}>

@@ -9,7 +9,7 @@ function cls(...parts: Array<string | false | undefined>) {
 }
 
 export function Button({
-  variant = "secondary",
+  variant = "primary",
   className,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {

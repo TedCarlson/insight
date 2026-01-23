@@ -7,10 +7,11 @@ import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow, typ
 import { Modal } from "@/components/ui/Modal";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Card } from "@/components/ui/Card";
+import { TextInput } from "@/components/ui/TextInput";
 import { Notice } from "@/components/ui/Notice";
 import { Button } from "@/components/ui/Button";
 
-type TabKey = "person" | "org" | "assignment" | "leadership";
+type TabKey = "person" | "assignment" | "leadership";
 
 function formatJson(v: any) {
   try {
@@ -33,25 +34,28 @@ function KVRow({ label, value }: { label: string; value: any }) {
   );
 }
 
+function CollapsibleJson({ obj, label }: { obj: any; label: string }) {
+  return (
+    <Card>
+      <details>
+        <summary className="cursor-pointer text-sm font-semibold">{label}</summary>
+        <pre
+          className="mt-2 max-h-[360px] overflow-auto rounded border p-3 text-xs"
+          style={{ borderColor: "var(--to-border)" }}
+        >
+          {formatJson(obj)}
+        </pre>
+      </details>
+    </Card>
+  );
+}
 
-function KeyFields({
-  title,
-  obj,
-  fields,
-  emptyHint,
-}: {
-  title: string;
-  obj: any | null | undefined;
-  fields: string[];
-  emptyHint?: string;
-}) {
+function AllFieldsCard({ title, obj, emptyHint }: { title: string; obj: any; emptyHint?: string }) {
   const rows = useMemo(() => {
     if (!obj) return [];
-    return fields
-      .filter((k) => hasOwn(obj, k))
-      .map((k) => ({ k, v: (obj as any)[k] }))
-      .filter((r) => r.v !== undefined);
-  }, [obj, fields]);
+    const keys = Object.keys(obj).sort((a, b) => a.localeCompare(b));
+    return keys.map((k) => ({ k, v: (obj as any)[k] }));
+  }, [obj]);
 
   return (
     <Card>
@@ -60,40 +64,81 @@ function KeyFields({
         <div className="text-sm text-[var(--to-ink-muted)]">{emptyHint ?? "No data."}</div>
       ) : rows.length ? (
         <div className="space-y-2">
-  {rows.map((r) => (
-    <KVRow key={r.k} label={r.k} value={r.v} />
-  ))}
-</div>
-
-
+          {rows.map((r) => (
+            <KVRow key={r.k} label={r.k} value={r.v} />
+          ))}
+        </div>
       ) : (
-        <div className="text-sm text-[var(--to-ink-muted)]">No known key fields present (showing raw JSON below).</div>
+        <div className="text-sm text-[var(--to-ink-muted)]">No fields.</div>
       )}
     </Card>
   );
 }
 
-function JsonBlock({ obj, label }: { obj: any; label: string }) {
+function buildTitle(row: RosterRow | null) {
+  if (!row) return "Roster Row";
+
+  // Prefer a human name if present
+  const name =
+    (hasOwn(row, "person_name") && (row as any).person_name) ||
+    (hasOwn(row, "full_name") && (row as any).full_name) ||
+    (hasOwn(row, "display_name") && (row as any).display_name) ||
+    null;
+
+  const assignment =
+    (hasOwn(row, "assignment_name") && (row as any).assignment_name) ||
+    (hasOwn(row, "role") && (row as any).role) ||
+    null;
+
+  if (name && assignment) return `${name} — ${assignment}`;
+  if (name) return String(name);
+  if (assignment) return String(assignment);
+  return "Roster Row";
+}
+
+
+function rowFallbackFullName(row: any): string | null {
   return (
-    <Card>
-      <div className="mb-2 text-sm font-semibold">{label}</div>
-      <pre className="max-h-[360px] overflow-auto rounded border p-3 text-xs" style={{ borderColor: "var(--to-border)" }}>
-        {formatJson(obj)}
-      </pre>
-    </Card>
+    (row && (row.full_name ?? row.person_name ?? row.display_name)) ??
+    null
   );
 }
 
-function pickTitleFromRow(row: any): string {
-  return (
-    row?.full_name ??
-    row?.person_name ??
-    row?.name ??
-    [row?.first_name, row?.last_name].filter(Boolean).join(" ") ??
-    row?.email ??
-    "Roster Row"
-  );
+function seedPersonFromRow(row: any): any | null {
+  if (!row) return null;
+  const person_id = row.person_id ?? row.personId ?? null;
+  if (!person_id) return null;
+
+  const seed: any = {
+    person_id,
+    full_name: rowFallbackFullName(row),
+    emails: row.emails ?? null,
+    mobile: row.mobile ?? null,
+    fuse_emp_id: row.fuse_emp_id ?? null,
+    person_notes: row.person_notes ?? null,
+    person_nt_login: row.person_nt_login ?? null,
+    person_csg_id: row.person_csg_id ?? null,
+    active: row.active ?? row.person_active ?? null,
+    role: row.co_type ?? row.role ?? null,
+    co_code: row.co_code ?? null,
+    co_ref_id: row.co_ref_id ?? null,
+  };
+
+  return seed;
 }
+
+function ensurePersonIdentity(obj: any, row: any): any {
+  const next: any = { ...(obj ?? {}) };
+
+  const pid = next.person_id ?? row?.person_id ?? null;
+  if (pid && !next.person_id) next.person_id = pid;
+
+  const fn = next.full_name ?? rowFallbackFullName(row);
+  if (fn && (next.full_name == null || next.full_name === "")) next.full_name = fn;
+
+  return next;
+}
+
 
 export function RosterRowModule({
   open,
@@ -110,15 +155,39 @@ export function RosterRowModule({
 }) {
   const [tab, setTab] = useState<TabKey>("person");
 
-  const personId = row?.person_id ?? null;
-  const assignmentId = row?.assignment_id ?? null;
+  const personId = (row as any)?.person_id ?? null;
+  const assignmentId = (row as any)?.assignment_id ?? null;
 
   // Person (primary source = api.person_get)
   const [person, setPerson] = useState<PersonRow | null>(null);
   const [personErr, setPersonErr] = useState<string | null>(null);
   const [loadingPerson, setLoadingPerson] = useState(false);
 
-  // Assignment read model (primary source for assignment tab = api.roster_master)
+  const [editingPerson, setEditingPerson] = useState(false);
+  const [savingPerson, setSavingPerson] = useState(false);
+  const [personBaseline, setPersonBaseline] = useState<any | null>(null);
+  const [personDraft, setPersonDraft] = useState<any | null>(null);
+
+  
+  const [coResolved, setCoResolved] = useState<{ kind: "company" | "contractor"; name: string; matched_on: "id" | "code" } | null>(null);
+
+
+const personHuman = useMemo(() => {
+  if (!person) return null;
+  const base: any = { ...(person as any) };
+
+  const coId = (person as any)?.co_ref_id ?? null;
+  const coCode = (person as any)?.co_code ?? null;
+
+  if (coResolved?.name) {
+  // Display company/contractor name only (no UUID/code)
+  base.co_ref_id = coResolved.name;
+}
+
+
+  return base;
+}, [person, coResolved]);
+// Assignment read model (primary source for assignment tab = api.roster_master)
   const [master, setMaster] = useState<RosterMasterRow[] | null>(null);
   const [masterErr, setMasterErr] = useState<string | null>(null);
   const [loadingMaster, setLoadingMaster] = useState(false);
@@ -128,29 +197,83 @@ export function RosterRowModule({
   const [drillErr, setDrillErr] = useState<string | null>(null);
   const [loadingDrill, setLoadingDrill] = useState(false);
 
+  const title = useMemo(() => buildTitle(row), [row]);
+
+  const selectionContext = useMemo(() => {
+    return {
+      pc_org_id: pcOrgId,
+      pc_org_name: pcOrgName ?? null,
+      person_id: personId,
+      assignment_id: assignmentId,
+    };
+  }, [pcOrgId, pcOrgName, personId, assignmentId]);
+
+  const options = useMemo(
+    () => [
+      { value: "person" as const, label: "Person" },
+      { value: "assignment" as const, label: "Assignment" },
+      { value: "leadership" as const, label: "Leadership" },
+    ],
+    []
+  );
+
   useEffect(() => {
     if (!open) return;
+
+    // Reset module state when opening a new row
     setTab("person");
-    setPerson(null);
+
+    // IMPORTANT: seed identity from the roster row so drafts never degrade to null
+    const seeded = ensurePersonIdentity(seedPersonFromRow(row as any), row as any);
+
+    setPerson(seeded?.person_id ? (seeded as any) : null);
+    setPersonBaseline(seeded?.person_id ? { ...(seeded as any) } : null);
+    setPersonDraft(seeded?.person_id ? { ...(seeded as any) } : null);
+
     setPersonErr(null);
+    setLoadingPerson(false);
+    setEditingPerson(false);
+    setSavingPerson(false);
+
     setMaster(null);
     setMasterErr(null);
+    setLoadingMaster(false);
+
     setDrilldown(null);
     setDrillErr(null);
-  }, [open, personId, assignmentId]);
+    setLoadingDrill(false);
+  }, [open, row]);
 
-  const title = useMemo(() => pickTitleFromRow(row), [row]);
 
   async function loadPerson() {
     if (!personId) return;
     setLoadingPerson(true);
     setPersonErr(null);
     try {
-      const data = await api.personGet(String(personId));
-      setPerson(data);
+const data = await api.personGet(String(personId));
+const merged = ensurePersonIdentity(data, row as any);
+setPerson(merged);
+
+// Derived display (company/contractor name) for co_ref_id/co_code
+try {
+  const resolved = await api.resolveCoDisplay({
+    co_ref_id: (merged as any)?.co_ref_id ?? null,
+    co_code: (merged as any)?.co_code ?? null,
+  });
+  setCoResolved(resolved);
+} catch {
+  setCoResolved(null);
+}
+
+// baseline drives dirty detection; draft is only for editing
+setPersonBaseline(merged ? { ...(merged as any) } : null);
+setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merged as any) } : null));
+
     } catch (e: any) {
-      setPerson(null);
       setPersonErr(e?.message ?? "Failed to load person");
+      setPerson(null);
+      setPersonBaseline(null);
+      setPersonDraft(null);
     } finally {
       setLoadingPerson(false);
     }
@@ -160,11 +283,11 @@ export function RosterRowModule({
     setLoadingMaster(true);
     setMasterErr(null);
     try {
-      const rows = await api.rosterMaster(pcOrgId);
-      setMaster(rows ?? []);
+      const data = await api.rosterMaster(pcOrgId);
+      setMaster(data ?? []);
     } catch (e: any) {
-      setMaster(null);
       setMasterErr(e?.message ?? "Failed to load roster master");
+      setMaster(null);
     } finally {
       setLoadingMaster(false);
     }
@@ -174,11 +297,11 @@ export function RosterRowModule({
     setLoadingDrill(true);
     setDrillErr(null);
     try {
-      const rows = await api.rosterDrilldown(pcOrgId);
-      setDrilldown(rows ?? []);
+      const data = await api.rosterDrilldown(pcOrgId);
+      setDrilldown(data ?? []);
     } catch (e: any) {
+      setDrillErr(e?.message ?? "Failed to load roster drilldown");
       setDrilldown(null);
-      setDrillErr(e?.message ?? "Failed to load drilldown");
     } finally {
       setLoadingDrill(false);
     }
@@ -186,69 +309,125 @@ export function RosterRowModule({
 
   useEffect(() => {
     if (!open) return;
-    if (personId) loadPerson();
-    loadMaster();
-    loadDrilldown();
+    // lazy-by-tab: person tab loads person automatically
+    if (tab === "person") void loadPerson();
+    if (tab === "assignment") void loadMaster();
+    if (tab === "leadership") void loadDrilldown();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, personId, pcOrgId]);
+  }, [open, tab]);
+
+  function beginEditPerson() {
+    if (!person) return;
+    setEditingPerson(true);
+    const merged = ensurePersonIdentity(person, row as any);
+    setPersonBaseline({ ...(merged as any) });
+    setPersonDraft({ ...(merged as any) });
+  }
+
+  function cancelEditPerson() {
+    setEditingPerson(false);
+    setPersonDraft(personBaseline ? { ...personBaseline } : person ? { ...(person as any) } : null);
+  }
+
+  async function savePerson() {
+    if (!personId || !personBaseline || !personDraft) {
+      setEditingPerson(false);
+      return;
+    }
+
+    // Only these fields are editable inline; everything else is display-only.
+    const editableKeys = [
+      "full_name",
+      "emails",
+      "mobile",
+      "fuse_emp_id",
+      "person_notes",
+      "person_nt_login",
+      "person_csg_id",
+      "active",
+    ] as const;
+
+    const patch: any = { person_id: String(personId) };
+
+    // Guardrails: ensure identity fields never degrade to null.
+    const fallbackName =
+      (personBaseline as any)?.full_name ?? (personDraft as any)?.full_name ?? rowFallbackFullName(row as any);
+
+    if (!fallbackName || String(fallbackName).trim() === "") {
+      setPersonErr("Full name is required.");
+      setEditingPerson(false);
+      return;
+    }
+
+    for (const k of editableKeys) {
+      const before = (personBaseline as any)[k];
+      const after = (personDraft as any)[k];
+
+      const isBool = k === "active";
+      const normBefore = isBool ? Boolean(before) : before === "" ? null : before ?? null;
+      const normAfter = isBool ? Boolean(after) : after === "" ? null : after ?? null;
+
+      if (normAfter !== normBefore) patch[k] = normAfter;
+    }
+
+    // No dirty fields
+    if (Object.keys(patch).length === 1) {
+      setEditingPerson(false);
+      return;
+    }
+
+    // Always send a non-null full_name whenever we write (prevents NOT NULL failures on insert-path upserts)
+    if (!("full_name" in patch) || patch.full_name == null || String(patch.full_name).trim() === "") {
+      const draftName = (personDraft as any)?.full_name ?? fallbackName;
+      if (!draftName || String(draftName).trim() === "") {
+        setPersonErr("Full name is required.");
+        return;
+      }
+      patch.full_name = String(draftName);
+    }
+
+    setSavingPerson(true);
+    setPersonErr(null);
+    try {
+      const updated = await api.personUpsert(patch);
+      setEditingPerson(false);
+      if (updated) {
+        setPerson(updated);
+        setPersonBaseline({ ...(updated as any) });
+        setPersonDraft({ ...(updated as any) });
+      } else {
+        await loadPerson();
+      }
+    } catch (e: any) {
+      setPersonErr(e?.message ?? "Failed to save person");
+    } finally {
+      setSavingPerson(false);
+    }
+  }
 
   const masterForPerson = useMemo(() => {
-    if (!master || !personId) return [];
-    return master.filter((r) => String(r.person_id) === String(personId));
-  }, [master, personId]);
-
-  const masterForAssignment = useMemo(() => {
-    if (!master || !assignmentId) return [];
-    return master.filter((r) => String(r.assignment_id) === String(assignmentId));
-  }, [master, assignmentId]);
-
-  const selectedMasterRow = useMemo(() => {
-    // Prefer assignment match (deterministic), fallback to person match, else null.
-    return (
-      (masterForAssignment.length ? masterForAssignment[0] : null) ??
-      (masterForPerson.length ? masterForPerson[0] : null) ??
-      null
-    );
-  }, [masterForAssignment, masterForPerson]);
+    if (!master || !master.length || !personId) return null;
+    const match =
+      master.find((r: any) => String(r.person_id) === String(personId)) ??
+      master.find((r: any) => String(r.assignment_id) === String(assignmentId));
+    return match ?? null;
+  }, [master, personId, assignmentId]);
 
   const drillForPerson = useMemo(() => {
-    if (!drilldown || !personId) return [];
-    return drilldown.filter((r) => String(r.person_id) === String(personId));
-  }, [drilldown, personId]);
+    if (!drilldown || !drilldown.length) return [];
+    const pid = personId ? String(personId) : null;
+    const aid = assignmentId ? String(assignmentId) : null;
+    return drilldown.filter((r: any) => (pid && String(r.person_id) === pid) || (aid && String(r.assignment_id) === aid));
+  }, [drilldown, personId, assignmentId]);
 
-  const drillForAssignment = useMemo(() => {
-    if (!drilldown || !assignmentId) return [];
-    return drilldown.filter((r) => String(r.assignment_id) === String(assignmentId));
-  }, [drilldown, assignmentId]);
+  const refreshCurrent = async () => {
+    if (tab === "person") return loadPerson();
+    if (tab === "assignment") return loadMaster();
+    if (tab === "leadership") return loadDrilldown();
+  };
 
-  const selectionContext = useMemo(() => {
-    return {
-      pc_org_id: row?.pc_org_id ?? pcOrgId,
-      pc_org_name: row?.pc_org_name ?? pcOrgName ?? null,
-      person_id: personId,
-      assignment_id: assignmentId,
-    };
-  }, [row, pcOrgId, pcOrgName, personId, assignmentId]);
-
-  const orgSnapshot = useMemo(() => {
-    // Deterministic: only include keys that actually exist.
-    const src = selectedMasterRow ?? row ?? {};
-    const keys = Object.keys(src).filter((k) => k.startsWith("pc_org") || k.startsWith("org_") || k === "org" || k === "org_id");
-    const out: Record<string, any> = {};
-    for (const k of keys.sort()) out[k] = (src as any)[k];
-    // Always include selection context (ids) in this snapshot.
-    out._selection = selectionContext;
-    return out;
-  }, [row, selectedMasterRow, selectionContext]);
-
-  const options = [
-    { value: "person" as const, label: "Person" },
-    { value: "org" as const, label: "PC Org" },
-    { value: "assignment" as const, label: "Assignment" },
-    { value: "leadership" as const, label: "Leadership" },
-  ];
-
-  const refreshing = loadingPerson || loadingMaster || loadingDrill;
+  const refreshing =
+    (tab === "person" && loadingPerson) || (tab === "assignment" && loadingMaster) || (tab === "leadership" && loadingDrill);
 
   return (
     <Modal
@@ -278,16 +457,7 @@ export function RosterRowModule({
           <div className="flex items-center justify-between gap-3">
             <SegmentedControl value={tab} onChange={setTab} options={options} />
             <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => {
-                  if (personId) loadPerson();
-                  loadMaster();
-                  loadDrilldown();
-                }}
-                disabled={refreshing}
-              >
+              <Button type="button" onClick={refreshCurrent} disabled={refreshing}>
                 {refreshing ? "Refreshing…" : "Refresh"}
               </Button>
             </div>
@@ -301,33 +471,135 @@ export function RosterRowModule({
                 </Notice>
               ) : null}
 
-              <KeyFields
-                title="Person (api.person_get) — key fields"
-                obj={person}
-                emptyHint={!personId ? "No person_id on this roster row." : loadingPerson ? "Loading person…" : "No person record returned."}
-                fields={[
-                  "person_id",
-                  "full_name",
-                  "first_name",
-                  "last_name",
-                  "email",
-                  "mobile",
-                  "phone",
-                  "status",
-                  "created_at",
-                  "updated_at",
-                ]}
-              />
+              <Card>
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold">Person (api.person_get) — all fields (human readable)</div>
+                    <div className="text-xs text-[var(--to-ink-muted)]">This view is the source of truth. Edit inline to test hydration and write.</div>
+                  </div>
 
-              {person ? <JsonBlock obj={person} label="Person (api.person_get) — raw JSON" /> : null}
+                  {!editingPerson ? (
+                    <Button onClick={beginEditPerson} disabled={!person || loadingPerson}>
+                      Edit
+                    </Button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Button variant="ghost" onClick={cancelEditPerson} disabled={savingPerson}>
+                        Cancel
+                      </Button>
+                      <Button onClick={savePerson} disabled={savingPerson}>
+                        {savingPerson ? "Saving…" : "Save"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
 
-              <KeyFields
-                title="Selection context (from roster_current row)"
-                obj={selectionContext}
-                fields={["pc_org_id", "pc_org_name", "person_id", "assignment_id"]}
-              />
+                {!personId ? (
+                  <div className="text-sm text-[var(--to-ink-muted)]">No person_id on this roster row.</div>
+                ) : loadingPerson && !person ? (
+                  <div className="text-sm text-[var(--to-ink-muted)]">Loading person…</div>
+                ) : !person ? (
+                  <div className="text-sm text-[var(--to-ink-muted)]">No person record returned.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {Object.keys((editingPerson ? personDraft : person) ?? {})
+                      .sort((a, b) => a.localeCompare(b))
+                      .map((k) => {
+                        const displayPerson = personHuman ?? person;
+                        const src: any = (editingPerson ? personDraft : displayPerson) ?? {};
+                        const v = src[k];
+                        const editable = ["full_name", "emails", "mobile", "fuse_emp_id", "person_notes", "person_nt_login", "person_csg_id", "active"].includes(k);
 
-              <JsonBlock obj={row} label="Roster row snapshot (roster_current) — raw JSON" />
+                        if (editingPerson && editable) {
+                          if (k === "person_notes") {
+                            return (
+                              <div key={k} className="grid grid-cols-12 gap-2 text-sm">
+                                <div className="col-span-4 text-[var(--to-ink-muted)]">{k}</div>
+                                <div className="col-span-8">
+                                  <textarea
+                                    className="to-input h-auto min-h-[96px] py-2"
+                                    value={(personDraft as any)?.[k] ?? ""}
+                                    onChange={(e) =>
+                                      setPersonDraft((p: any) => {
+                                        const next: any = ensurePersonIdentity(p, row as any);
+                                        next[k] = e.target.value;
+                                        // if editing a non-name field, never allow full_name to become null
+                                        if (!next.full_name || String(next.full_name).trim() === "") {
+                                          const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
+                                        if (fb) next.full_name = fb;
+}
+                                        return next;
+                                      })
+                                    }
+                                  />
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          if (k === "active") {
+                            return (
+                              <div key={k} className="grid grid-cols-12 gap-2 text-sm">
+                                <div className="col-span-4 text-[var(--to-ink-muted)]">{k}</div>
+                                <div className="col-span-8">
+                                  <SegmentedControl
+                                    value={String(Boolean((personDraft as any)?.active))}
+                                    onChange={(next) =>
+                                      setPersonDraft((p: any) => {
+                                        const n: any = ensurePersonIdentity(p, row as any);
+                                        n.active = next === "true";
+                                        if (!n.full_name || String(n.full_name).trim() === "") {
+                                          const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
+                                          if (fb) n.full_name = fb;
+                                        }
+                                        return n;
+                                      })
+                                    }
+                                    options={[
+                                      { value: "true", label: "Active" },
+                                      { value: "false", label: "Inactive" },
+                                    ]}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div key={k} className="grid grid-cols-12 gap-2 text-sm">
+                              <div className="col-span-4 text-[var(--to-ink-muted)]">{k}</div>
+                              <div className="col-span-8">
+                                <TextInput
+                                  value={(personDraft as any)?.[k] ?? ""}
+                                  onChange={(e) =>
+                                      setPersonDraft((p: any) => {
+                                        const next: any = ensurePersonIdentity(p, row as any);
+                                        next[k] = e.target.value;
+                                        // if editing a non-name field, never allow full_name to become null
+                                        if (k !== "full_name" && (!next.full_name || String(next.full_name).trim() === "")) {
+                                          const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
+                                          if (fb) next.full_name = fb;
+                                        }
+                                        return next;
+                                      })
+                                    }
+                                />
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        const display = k === "active" ? (Boolean(v) ? "Active" : "Inactive") : v ?? "—";
+                        return <KVRow key={k} label={k} value={display} />;
+                      })}
+                  </div>
+                )}
+              </Card>
+
+              {person ? <CollapsibleJson obj={person} label="Raw JSON — Person (api.person_get)" /> : null}
+
+              <AllFieldsCard title="Selection context (from roster_current row) — all fields" obj={selectionContext} />
+              <CollapsibleJson obj={row} label="Raw JSON — Roster row snapshot (roster_current)" />
             </div>
           ) : null}
 
@@ -339,98 +611,31 @@ export function RosterRowModule({
                 </Notice>
               ) : null}
 
-              <KeyFields
-                title="Assignment (api.roster_master filtered) — key fields"
-                obj={selectedMasterRow}
-                emptyHint={loadingMaster ? "Loading roster master…" : "No matching row in roster_master for this selection."}
-                fields={[
-                  "assignment_id",
-                  "person_id",
-                  "pc_org_id",
-                  "pc_org_name",
-                  "position_title",
-                  "start_date",
-                  "end_date",
-                  "active",
-                  "assignment_active",
-                  "co_name",
-                  "co_type",
-                  "reports_to_assignment_id",
-                  "reports_to_person_id",
-                  "reports_to_full_name",
-                ]}
+              <AllFieldsCard
+                title="Assignment row (from api.roster_master) — all fields"
+                obj={masterForPerson}
+                emptyHint={loadingMaster ? "Loading roster master…" : "No matching assignment row found."}
               />
 
-              {selectedMasterRow ? (
-                <JsonBlock obj={selectedMasterRow} label="Assignment row model (api.roster_master) — raw JSON" />
-              ) : master ? (
-                <JsonBlock
-                  obj={masterForAssignment.length ? masterForAssignment : masterForPerson}
-                  label="Matches (api.roster_master filtered set) — raw JSON"
-                />
-              ) : null}
-
-              <KeyFields
-                title="Current roster slice (roster_current row) — key fields"
-                obj={row}
-                fields={["assignment_id", "position_title", "start_date", "end_date", "assignment_active"]}
-              />
+              {masterForPerson ? <CollapsibleJson obj={masterForPerson} label="Raw JSON — Assignment row (api.roster_master)" /> : null}
             </div>
           ) : null}
 
           {tab === "leadership" ? (
             <div className="space-y-3">
               {drillErr ? (
-                <Notice variant="danger" title="Could not load drilldown">
+                <Notice variant="danger" title="Could not load roster drilldown">
                   {drillErr}
                 </Notice>
               ) : null}
 
-              <KeyFields
-                title="Leadership overlays (from roster_current row) — key fields"
-                obj={row}
-                fields={["reports_to_assignment_id", "reports_to_person_id", "reports_to_full_name"]}
+              <AllFieldsCard
+                title="Leadership rows (filtered from api.roster_drilldown) — count"
+                obj={{ count: drillForPerson.length }}
+                emptyHint={loadingDrill ? "Loading drilldown…" : "No drilldown rows."}
               />
 
-              <Card>
-                <div className="mb-2 text-sm font-semibold">Leadership context (api.roster_drilldown filtered)</div>
-                {loadingDrill ? (
-                  <div className="text-sm text-[var(--to-ink-muted)]">Loading drilldown…</div>
-                ) : drilldown ? (
-                  <pre
-                    className="max-h-[360px] overflow-auto rounded border p-3 text-xs"
-                    style={{ borderColor: "var(--to-border)" }}
-                  >
-                    {formatJson(drillForAssignment.length ? drillForAssignment : drillForPerson)}
-                  </pre>
-                ) : (
-                  <div className="text-sm text-[var(--to-ink-muted)]">No drilldown data.</div>
-                )}
-              </Card>
-
-              <div className="text-xs text-[var(--to-ink-muted)]">
-                If the leadership fields you need aren’t present in drilldown yet, we’ll treat this JSON as the ground truth and then wire the
-                correct endpoint next.
-              </div>
-            </div>
-          ) : null}
-
-          {tab === "org" ? (
-            <div className="space-y-3">
-              <KeyFields
-                title="PC Org — selection context"
-                obj={selectionContext}
-                fields={["pc_org_id", "pc_org_name", "person_id", "assignment_id"]}
-              />
-
-              <Card>
-                <div className="mb-2 text-sm font-semibold">Org snapshot (derived from current selection)</div>
-                <pre className="max-h-[360px] overflow-auto rounded border p-3 text-xs" style={{ borderColor: "var(--to-border)" }}>
-                  {formatJson(orgSnapshot)}
-                </pre>
-              </Card>
-
-              <JsonBlock obj={row} label="Roster row snapshot (roster_current) — raw JSON" />
+              {drillForPerson.length ? <CollapsibleJson obj={drillForPerson} label="Raw JSON — Leadership rows (api.roster_drilldown)" /> : null}
             </div>
           ) : null}
         </div>

@@ -13,7 +13,6 @@ import { Toolbar } from "@/components/ui/Toolbar";
 import { Button } from "@/components/ui/Button";
 import { Notice } from "@/components/ui/Notice";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { OrgSelector } from "@/components/OrgSelector";
 
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { DataTable, DataTableHeader, DataTableBody, DataTableRow } from "@/components/ui/DataTable";
@@ -343,10 +342,14 @@ export default function OnboardPage() {
 
       {!validatedOrgId ? (
         <Card className="p-4 space-y-3">
-          <Notice variant="warning" title="No scoped org">
-            Select an org in Roster first (scope is inherited). If needed, choose an org here as a fallback.
+          <Notice variant="warning" title="No scoped org selected">
+            Select a PC Org in the header to continue. Org scope is inherited across the app.
           </Notice>
-          <OrgSelector />
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" type="button" onClick={() => router.push("/roster")}>
+              Go to Roster
+            </Button>
+          </div>
         </Card>
       ) : (
         <>

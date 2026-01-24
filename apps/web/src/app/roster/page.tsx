@@ -12,7 +12,6 @@ import { Toolbar } from "@/components/ui/Toolbar";
 import { Button } from "@/components/ui/Button";
 import { Notice } from "@/components/ui/Notice";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { OrgSelector } from "@/components/OrgSelector";
 
 import { RosterTable } from "@/components/roster/RosterTable";
 import { RosterRowModule } from "@/components/roster/RosterRowModule";
@@ -34,7 +33,6 @@ export default function RosterPage() {
   const router = useRouter();
 
   const [roster, setRoster] = useState<RosterRow[]>([]);
-
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -87,7 +85,6 @@ export default function RosterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validatedOrgId]);
 
-
   useEffect(() => {
     let alive = true;
 
@@ -106,7 +103,6 @@ export default function RosterPage() {
             division_name: meta?.division_name ?? null,
             region_name: meta?.region_name ?? null,
           });
-
       } catch {
         if (alive) setOrgMeta({ mso_name: null, division_name: null, region_name: null });
       } finally {
@@ -120,7 +116,6 @@ export default function RosterPage() {
     };
   }, [validatedOrgId]);
 
-
   const headerRefreshDisabled = orgsLoading || !canLoad || loading;
 
   return (
@@ -128,7 +123,7 @@ export default function RosterPage() {
       <PageHeader
         title="Roster"
         subtitle="Current roster (scoped by PC access gate)."
-       actions={
+        actions={
           <div className="flex items-center gap-2">
             <Button variant="secondary" type="button" onClick={() => router.push("/onboard")} disabled={orgsLoading}>
               Onboard
@@ -152,17 +147,26 @@ export default function RosterPage() {
 
       <Card variant="subtle">
         <Toolbar
-          left={<OrgSelector />}
+          left={
+            validatedOrgId ? (
+              <div className="text-sm">
+                Org scope: <span className="font-semibold">{selectedOrgName ?? "—"}</span>
+              </div>
+            ) : (
+              <div className="text-sm text-[var(--to-ink-muted)]">Select a PC org in the header to load the roster.</div>
+            )
+          }
           right={
             <div className="text-xs text-[var(--to-ink-muted)] text-right">
               {validatedOrgId ? (
-                <div >
+                <div>
                   <span>
                     MSO: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.mso_name ?? "—"}</span>
                   </span>
                   <span className="px-2"> • </span>
                   <span>
-                    Division: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
+                    Division:{" "}
+                    <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
                   </span>
                   <span className="px-2"> • </span>
                   <span>
@@ -170,7 +174,7 @@ export default function RosterPage() {
                   </span>
                 </div>
               ) : null}
-</div>
+            </div>
           }
         />
       </Card>
@@ -185,7 +189,7 @@ export default function RosterPage() {
             title={orgs.length ? "Select an organization" : "No organizations available"}
             message={
               orgs.length
-                ? "Choose an org to load the roster."
+                ? "Choose an org in the header to load the roster."
                 : "This user has no org access. Ask an owner/admin to grant access or add membership."
             }
             compact

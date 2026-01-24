@@ -3,7 +3,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow, type RosterRow } from "@/lib/api";
-import { createClient } from "@/lib/supabase/client";
 
 import { Modal } from "@/components/ui/Modal";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -13,7 +12,7 @@ import { TextInput } from "@/components/ui/TextInput";
 import { Notice } from "@/components/ui/Notice";
 
 
-type TabKey = "person" | "assignment" | "leadership";
+type TabKey = "person" | "assignment" | "leadership" | "invite";
 
 function formatJson(v: any) {
   try {
@@ -160,16 +159,6 @@ export function RosterRowModule({
   const personId = (row as any)?.person_id ?? null;
   const assignmentId = (row as any)?.assignment_id ?? null;
 
-  // Invite (UI-only for now; server enforces authorization)
-  const [canInvite, setCanInvite] = useState(false);
-  const [checkingInvitePerms, setCheckingInvitePerms] = useState(false);
-
-  const [inviteEmailDraft, setInviteEmailDraft] = useState("");
-  const [sendingInvite, setSendingInvite] = useState(false);
-  const [inviteErr, setInviteErr] = useState<string | null>(null);
-  const [inviteOk, setInviteOk] = useState(false);
-
-
   // Person (primary source = api.person_get)
   const [person, setPerson] = useState<PersonRow | null>(null);
   const [personErr, setPersonErr] = useState<string | null>(null);
@@ -236,31 +225,83 @@ const personHuman = useMemo(() => {
     };
   }, [pcOrgId, pcOrgName, personId, assignmentId]);
 
-  const derivedInviteEmail = useMemo(() => {
-    const raw =
-      (person as any)?.emails ??
-      (person as any)?.email ??
-      (row as any)?.emails ??
-      (row as any)?.email ??
-      null;
+  
+  // Invite workflow (email is sent by server route; server enforces owner-only for launch)
+  const [inviteEmail, setInviteEmail] = useState<string>("");
+  const [inviteStatus, setInviteStatus] = useState<
+    "idle" | "sending" | "sent" | "error"
+  >("idle");
+  const [inviteErr, setInviteErr] = useState<string | null>(null);
 
-    if (!raw) return "";
-    if (Array.isArray(raw)) return String(raw[0] ?? "").trim();
-
-    const s = String(raw);
-    // Handle comma/semicolon/newline separated lists
-    const first = s.split(/[;,\n]+/).map((x) => x.trim()).filter(Boolean)[0] ?? "";
-    return first;
+  const inferredEmail = useMemo(() => {
+    const s =
+      String((person as any)?.emails ?? (row as any)?.emails ?? (row as any)?.email ?? "").trim();
+    if (!s) return "";
+    const first = s
+      .split(/[;,\n]+/)
+      .map((x) => x.trim())
+      .filter(Boolean)[0];
+    return first ?? "";
   }, [person, row]);
 
   useEffect(() => {
     if (!open) return;
-    if (inviteEmailDraft.trim() !== "") return;
-    if (!derivedInviteEmail) return;
-    setInviteEmailDraft(derivedInviteEmail);
-  }, [open, derivedInviteEmail, inviteEmailDraft]);
+    // Seed invite email from the person row (editable)
+    setInviteEmail((prev) => prev || inferredEmail);
+    setInviteStatus("idle");
+    setInviteErr(null);
+  }, [open, inferredEmail]);
 
-  const PERSON_FIELDS = [
+  async function sendInvite() {
+    if (!assignmentId) {
+      setInviteErr("No assignment_id on this roster row — cannot invite.");
+      setInviteStatus("error");
+      return;
+    }
+    const email = String(inviteEmail ?? "").trim();
+    if (!email) {
+      setInviteErr("Email is required.");
+      setInviteStatus("error");
+      return;
+    }
+
+    setInviteStatus("sending");
+    setInviteErr(null);
+
+    try {
+      const res = await fetch("/api/admin/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, assignment_id: String(assignmentId) }),
+      });
+
+      const json = await res.json().catch(() => ({} as any));
+
+      if (!res.ok) {
+        const msg =
+          (json && (json.error || json.message)) ||
+          (res.status === 403 ? "Not authorized to invite." : "Invite failed.");
+        setInviteErr(String(msg));
+        setInviteStatus("error");
+        return;
+      }
+
+      setInviteStatus("sent");
+      // Close modal to return to roster scanning workflow
+      onClose();
+    } catch (e: any) {
+      setInviteErr(e?.message ?? "Invite failed.");
+      setInviteStatus("error");
+    }
+  }
+
+  const invitePill = useMemo(() => {
+    if (inviteStatus === "sending") return { label: "Sending…", tone: "neutral" as const };
+    if (inviteStatus === "sent") return { label: "Sent", tone: "success" as const };
+    if (inviteStatus === "error") return { label: "Error", tone: "danger" as const };
+    return { label: "Not sent", tone: "neutral" as const };
+  }, [inviteStatus]);
+const PERSON_FIELDS = [
     { key: "full_name", label: "Full name" },
     { key: "emails", label: "Emails" },
     { key: "mobile", label: "Mobile" },
@@ -276,6 +317,7 @@ const personHuman = useMemo(() => {
       { value: "person" as const, label: "Person" },
       { value: "assignment" as const, label: "Assignment" },
       { value: "leadership" as const, label: "Leadership" },
+      { value: "invite" as const, label: "Invite" },
     ],
     []
   );
@@ -305,22 +347,6 @@ const personHuman = useMemo(() => {
     setDrilldown(null);
     setDrillErr(null);
     setLoadingDrill(false);
-
-    // Reset invite module state
-    setInviteErr(null);
-    setInviteOk(false);
-    setInviteEmailDraft("");
-
-    // Check whether this viewer can send invites (launch: owner-only; later: manager+)
-    setCheckingInvitePerms(true);
-    const sb = createClient();
-    sb.rpc("is_owner")
-      .then(({ data, error }: { data: unknown; error: unknown }) => {
-        if (error) return setCanInvite(false);
-        setCanInvite(Boolean(data));
-      })
-      .catch(() => setCanInvite(false))
-      .finally(() => setCheckingInvitePerms(false));
   }, [open, row]);
 
 
@@ -745,49 +771,6 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
   }
 
 
-
-  async function sendInvite() {
-    if (sendingInvite) return;
-
-    const email = inviteEmailDraft.trim();
-    if (!email) {
-      setInviteErr("Please enter an email address to invite.");
-      return;
-    }
-    if (!assignmentId) {
-      setInviteErr("This roster row is missing assignment_id.");
-      return;
-    }
-
-    setSendingInvite(true);
-    setInviteErr(null);
-    try {
-      const res = await fetch("/api/admin/invite", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, assignment_id: String(assignmentId) }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-
-      if (!res.ok || (json && json.ok === false)) {
-        const msg = json?.error ?? json?.message ?? `Invite failed (${res.status})`;
-        throw new Error(msg);
-      }
-
-      setInviteOk(true);
-
-      // UX: send → close → back to scanning roster
-      onClose();
-    } catch (e: any) {
-      setInviteOk(false);
-      setInviteErr(e?.message ?? "Invite failed");
-    } finally {
-      setSendingInvite(false);
-    }
-  }
-
-
   const refreshCurrent = async () => {
     if (tab === "person") return loadPerson();
     if (tab === "assignment") return loadMaster();
@@ -973,25 +956,57 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                     <KVRow label="Code" value={(person as any)?.co_code ?? "—"} />
                   </div>
                 </Card>
-
               ) : null}
 
+</div>
+          ) : null}
 
-              {/* Invite workflow (launch: owner-only; later: manager+ and row-verified gates) */}
+          
+
+          {tab === "invite" ? (
+            <div className="space-y-3">
               <Card title="Invite to app">
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
                     <div className="text-sm text-[var(--to-ink-muted)]">
-                      Send a Supabase invite email for this roster row. The invite will land on set-password and then bootstrap their profile.
+                      Sends a Supabase invite email to this person. (Owner-only for launch; managers+ later.)
                     </div>
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className="text-[var(--to-ink-muted)]">Status:</span>
+                    <div className="text-xs text-[var(--to-ink-muted)]">
+                      Status:{" "}
                       <span
-                        className="inline-flex items-center rounded-full border px-2 py-0.5"
-                        style={{ borderColor: "var(--to-border)" }}
+                        className={
+                          invitePill.tone === "success"
+                            ? "text-[var(--to-status-success)]"
+                            : invitePill.tone === "danger"
+                            ? "text-[var(--to-status-danger)]"
+                            : "text-[var(--to-ink-muted)]"
+                        }
                       >
-                        {sendingInvite ? "Sending…" : inviteOk ? "Sent" : "Not sent"}
+                        {invitePill.label}
                       </span>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={sendInvite}
+                    disabled={inviteStatus === "sending" || !assignmentId || !String(inviteEmail ?? "").trim()}
+                  >
+                    {inviteStatus === "sending" ? "Sending…" : inviteStatus === "sent" ? "Resend invite" : "Send invite"}
+                  </Button>
+                </div>
+
+                {!assignmentId ? (
+                  <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
+                    This roster row has no <code className="px-1">assignment_id</code>. Add an assignment before inviting.
+                  </div>
+                ) : null}
+
+                <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">Email</div>
+                  <div className="col-span-8">
+                    <TextInput value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder={inferredEmail || "name@company.com"} />
+                    <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
+                      Prefilled from the person record. Edit before sending if needed.
                     </div>
                   </div>
                 </div>
@@ -1003,55 +1018,11 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                     </Notice>
                   </div>
                 ) : null}
-
-                {!canInvite ? (
-                  <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
-                    {checkingInvitePerms
-                      ? "Checking invite permissions…"
-                      : "Invites are currently limited to the owner account for launch."}
-                  </div>
-                ) : (
-                  <div className="mt-3 space-y-2">
-                    <div className="grid grid-cols-12 gap-2 text-sm">
-                      <div className="col-span-4 text-[var(--to-ink-muted)]">Invite email</div>
-                      <div className="col-span-8">
-                        <TextInput
-                          value={inviteEmailDraft}
-                          onChange={(e) => {
-                            setInviteOk(false);
-                            setInviteErr(null);
-                            setInviteEmailDraft(e.target.value);
-                          }}
-                          placeholder="name@company.com"
-                        />
-                        <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-                          Prefilled from this row when available. You can edit before sending.
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2">
-                      <Button
-                        onClick={sendInvite}
-                        disabled={sendingInvite || !inviteEmailDraft.trim() || !personId || !assignmentId}
-                      >
-                        {sendingInvite ? "Sending…" : "Send invite email"}
-                      </Button>
-                    </div>
-
-                    {!personId || !assignmentId ? (
-                      <div className="text-xs text-[var(--to-status-danger)]">
-                        Missing person_id or assignment_id — this row is not eligible for invite.
-                      </div>
-                    ) : null}
-                  </div>
-                )}
               </Card>
-
-</div>
+            </div>
           ) : null}
 
-          {tab === "assignment" ? (
+{tab === "assignment" ? (
             <div className="space-y-3">
               {masterErr ? (
                 <Notice variant="danger" title="Could not load roster master">

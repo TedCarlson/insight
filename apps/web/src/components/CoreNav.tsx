@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import { OrgSelector } from "@/components/OrgSelector";
 
 const HIDE_ON_PREFIXES = ["/login", "/access", "/auth"];
 
@@ -86,6 +87,11 @@ export default function CoreNav() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Org scope lives at the top-level header so every org-scoped surface inherits it. */}
+          <div className="hidden sm:block">
+            <OrgSelector label="PC" />
+          </div>
+
           <span className="hidden text-xs text-muted-foreground sm:inline">{email}</span>
           <button
             type="button"

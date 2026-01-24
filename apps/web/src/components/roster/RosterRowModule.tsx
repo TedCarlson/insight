@@ -227,14 +227,14 @@ const personHuman = useMemo(() => {
 
   const title = useMemo(() => buildTitle(row), [row]);
 
-  const selectionContext = useMemo\(\(\) => \{
-    return \{
+  const selectionContext = useMemo(() => {
+    return {
       pc_org_id: pcOrgId,
-      pc_org_name: pcOrgName \?\? null,
+      pc_org_name: pcOrgName ?? null,
       person_id: personId,
       assignment_id: assignmentId,
-    \};
-  \}, \[pcOrgId, pcOrgName, personId, assignmentId\]\);
+    };
+  }, [pcOrgId, pcOrgName, personId, assignmentId]);
 
   const derivedInviteEmail = useMemo(() => {
     const raw =
@@ -249,8 +249,7 @@ const personHuman = useMemo(() => {
 
     const s = String(raw);
     // Handle comma/semicolon/newline separated lists
-    const first = s.split(/[;,
-]+/).map((x) => x.trim()).filter(Boolean)[0] ?? "";
+    const first = s.split(/[;,\n]+/).map((x) => x.trim()).filter(Boolean)[0] ?? "";
     return first;
   }, [person, row]);
 
@@ -316,7 +315,7 @@ const personHuman = useMemo(() => {
     setCheckingInvitePerms(true);
     const sb = createClient();
     sb.rpc("is_owner")
-      .then(({ data, error }) => {
+      .then(({ data, error }: { data: unknown; error: unknown }) => {
         if (error) return setCanInvite(false);
         setCanInvite(Boolean(data));
       })
@@ -755,12 +754,8 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
       setInviteErr("Please enter an email address to invite.");
       return;
     }
-    if (!pcOrgId) {
-      setInviteErr("No org selected.");
-      return;
-    }
-    if (!assignmentId || !personId) {
-      setInviteErr("This roster row is missing person_id or assignment_id.");
+    if (!assignmentId) {
+      setInviteErr("This roster row is missing assignment_id.");
       return;
     }
 
@@ -770,11 +765,7 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
       const res = await fetch("/api/admin/invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          orgId: String(pcOrgId),
-          role: "member",
-        }),
+        body: JSON.stringify({ email, assignment_id: String(assignmentId) }),
       });
 
       const json = await res.json().catch(() => ({}));

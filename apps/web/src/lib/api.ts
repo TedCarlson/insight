@@ -6,6 +6,8 @@ type ApiError = {
   message: string;
   code?: string;
   status?: number;
+  details?: string | null;
+  hint?: string | null;
 };
 
 export type UUID = string;
@@ -39,6 +41,36 @@ export type PersonRow = {
   [k: string]: any;
 };
 
+/** assignment table (public.assignment) */
+export type AssignmentRow = {
+  assignment_id: UUID;
+  person_id: UUID;
+  pc_org_id: UUID;
+  tech_id?: string | null;
+  start_date: string; // date (YYYY-MM-DD)
+  end_date?: string | null; // date (YYYY-MM-DD)
+  position_title?: string | null;
+  active?: boolean | null;
+
+  [k: string]: any;
+};
+
+/** assignment_reporting table (public.assignment_reporting) */
+export type AssignmentReportingRow = {
+  assignment_reporting_id: UUID;
+  child_assignment_id: UUID;
+  parent_assignment_id: UUID;
+  start_date: string; // date (YYYY-MM-DD)
+  end_date?: string | null; // date (YYYY-MM-DD)
+  created_at?: string | null;
+  created_by?: UUID | null;
+  updated_at?: string | null;
+  updated_by?: UUID | null;
+  [k: string]: any;
+};
+
+
+
 /** roster_current "thin slice" row (what the table shows + what the modal uses for selection context) */
 export type RosterRow = {
   pc_org_id?: UUID;
@@ -70,6 +102,38 @@ export type RosterRow = {
   reports_to_assignment_id?: UUID | null;
   reports_to_person_id?: UUID | null;
   reports_to_full_name?: string | null;
+
+  [k: string]: any;
+};
+
+/** roster_current_full (rows from public.roster_row_module_v; used to hydrate roster table columns) */
+export type RosterCurrentFullRow = {
+  assignment_id?: UUID;
+  pc_org_id?: UUID;
+  pc_org_name?: string | null;
+
+  person_id?: UUID;
+  full_name?: string | null;
+  emails?: string | null;
+  mobile?: string | null;
+  fuse_emp_id?: string | null;
+  person_notes?: string | null;
+  person_nt_login?: string | null;
+  person_csg_id?: string | null;
+  person_active?: boolean | null;
+
+  tech_id?: string | null;
+  position_title?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  assignment_active?: boolean | null;
+
+  reports_to_full_name?: string | null;
+
+  co_name?: string | null;
+  co_type?: string | null;
+  co_code?: string | null;
+  co_ref_id?: UUID | null;
 
   [k: string]: any;
 };
@@ -210,7 +274,7 @@ export class ApiClient {
 
   private normalize(err: any): ApiError {
     return {
-      message: err?.message ?? "Unknown error",
+      message: [err?.message, err?.details, err?.hint].filter(Boolean).join(" — ") || "Unknown error",
       code: err?.code,
       status: err?.status,
     };
@@ -252,6 +316,16 @@ private compactRecord<T extends Record<string, any>>(obj: T): Partial<T> {
   async rosterCurrent(pc_org_id: string): Promise<RosterRow[]> {
     return (
       (await this.rpcWithFallback<RosterRow[]>("roster_current", [{ p_pc_org_id: pc_org_id }, { pc_org_id }])) ?? []
+    );
+  }
+
+    async rosterCurrentFull(pc_org_id: string, position_title?: string | null): Promise<RosterCurrentFullRow[]> {
+    const p_position_title = position_title ?? null;
+    return (
+      (await this.rpcWithFallback<RosterCurrentFullRow[]>("roster_current_full", [
+        { p_pc_org_id: pc_org_id, p_position_title },
+        { pc_org_id, position_title: p_position_title },
+      ])) ?? []
     );
   }
 
@@ -340,6 +414,84 @@ async personUpsert(input: {
   if (error) throw this.normalize(error);
   return (data as any) ?? null;
 }
+
+
+
+
+  /**
+   * Update an existing assignment row (public.assignment).
+   * Non-destructive: only provided keys are updated.
+   */
+  async assignmentUpdate(input: {
+    assignment_id: string;
+    tech_id?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+    position_title?: string | null;
+    active?: boolean | null;
+  }): Promise<AssignmentRow | null> {
+    const assignment_id = input.assignment_id;
+    const patch = this.compactRecord({
+      tech_id: input.tech_id ?? undefined,
+      start_date: input.start_date ?? undefined,
+      end_date: input.end_date ?? undefined,
+      position_title: input.position_title ?? undefined,
+      active: input.active ?? undefined,
+    });
+
+    const { data, error } = await this.supabase
+      .from("assignment")
+      .update(patch as any)
+      .eq("assignment_id", assignment_id)
+      .select("*")
+      .maybeSingle();
+
+    if (error) throw this.normalize(error);
+    return (data as any) ?? null;
+  }
+
+  /**
+   * Upsert a reporting relationship for an assignment.
+   * - If assignment_reporting_id is provided, updates that row.
+   * - Otherwise inserts a new row.
+   */
+  async assignmentReportingUpsert(input: {
+    assignment_reporting_id?: string | null;
+    child_assignment_id: string;
+    parent_assignment_id: string;
+    start_date: string;
+    end_date?: string | null;
+  }): Promise<AssignmentReportingRow | null> {
+    const assignment_reporting_id = input.assignment_reporting_id ?? null;
+
+    const patch = this.compactRecord({
+      child_assignment_id: input.child_assignment_id,
+      parent_assignment_id: input.parent_assignment_id,
+      start_date: input.start_date,
+      end_date: input.end_date ?? undefined,
+    });
+
+    if (assignment_reporting_id) {
+      const { data, error } = await this.supabase
+        .from("assignment_reporting")
+        .update(patch as any)
+        .eq("assignment_reporting_id", assignment_reporting_id)
+        .select("*")
+        .maybeSingle();
+
+      if (error) throw this.normalize(error);
+      return (data as any) ?? null;
+    }
+
+    const { data, error } = await this.supabase
+      .from("assignment_reporting")
+      .insert(patch as any)
+      .select("*")
+      .maybeSingle();
+
+    if (error) throw this.normalize(error);
+    return (data as any) ?? null;
+  }
 
 
   async personGet(person_id: string): Promise<PersonRow | null> {

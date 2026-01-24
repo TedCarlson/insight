@@ -192,10 +192,26 @@ const personHuman = useMemo(() => {
   const [masterErr, setMasterErr] = useState<string | null>(null);
   const [loadingMaster, setLoadingMaster] = useState(false);
 
+  // Assignment inline-edit (non-destructive, guarded)
+  const [editingAssignment, setEditingAssignment] = useState(false);
+  const [savingAssignment, setSavingAssignment] = useState(false);
+  const [assignmentErr, setAssignmentErr] = useState<string | null>(null);
+  const [assignmentBaseline, setAssignmentBaseline] = useState<any | null>(null);
+  const [assignmentDraft, setAssignmentDraft] = useState<any | null>(null);
+
+
   // Leadership overlays / history (primary source for leadership tab = api.roster_drilldown)
   const [drilldown, setDrilldown] = useState<RosterDrilldownRow[] | null>(null);
   const [drillErr, setDrillErr] = useState<string | null>(null);
   const [loadingDrill, setLoadingDrill] = useState(false);
+
+  // Leadership inline-edit (reporting relationship)
+  const [editingLeadership, setEditingLeadership] = useState(false);
+  const [savingLeadership, setSavingLeadership] = useState(false);
+  const [leadershipErr, setLeadershipErr] = useState<string | null>(null);
+  const [leadershipBaseline, setLeadershipBaseline] = useState<any | null>(null);
+  const [leadershipDraft, setLeadershipDraft] = useState<any | null>(null);
+
 
   const title = useMemo(() => buildTitle(row), [row]);
 
@@ -207,6 +223,17 @@ const personHuman = useMemo(() => {
       assignment_id: assignmentId,
     };
   }, [pcOrgId, pcOrgName, personId, assignmentId]);
+
+  const PERSON_FIELDS = [
+    { key: "full_name", label: "Full name" },
+    { key: "emails", label: "Emails" },
+    { key: "mobile", label: "Mobile" },
+    { key: "fuse_emp_id", label: "Fuse employee ID" },
+    { key: "person_nt_login", label: "NT login" },
+    { key: "person_csg_id", label: "CSG ID" },
+    { key: "active", label: "Status" },
+    { key: "person_notes", label: "Notes" },
+  ] as const;
 
   const options = useMemo(
     () => [
@@ -312,7 +339,11 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
     // lazy-by-tab: person tab loads person automatically
     if (tab === "person") void loadPerson();
     if (tab === "assignment") void loadMaster();
-    if (tab === "leadership") void loadDrilldown();
+    if (tab === "leadership") {
+      void loadDrilldown();
+      // roster_master provides manager candidates for the reporting dropdown
+      void loadMaster();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tab]);
 
@@ -413,12 +444,254 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
     return match ?? null;
   }, [master, personId, assignmentId]);
 
+  useEffect(() => {
+    // Keep baseline/draft synced to the loaded record (but don't clobber while editing).
+    if (!masterForPerson) {
+      setAssignmentBaseline(null);
+      setAssignmentDraft(null);
+      setEditingAssignment(false);
+      return;
+    }
+    if (!editingAssignment) {
+      setAssignmentBaseline(masterForPerson);
+      setAssignmentDraft(masterForPerson);
+    }
+  }, [masterForPerson, editingAssignment]);
+
+  const assignmentDirty = useMemo(() => {
+    if (!assignmentBaseline || !assignmentDraft) return false;
+    const keys = ["position_title", "start_date", "end_date", "active", "tech_id"];
+    return keys.some((k) => {
+      const a = (assignmentBaseline as any)?.[k] ?? null;
+      const b = (assignmentDraft as any)?.[k] ?? null;
+      return String(a ?? "") !== String(b ?? "");
+    });
+  }, [assignmentBaseline, assignmentDraft]);
+
+  const assignmentValidation = useMemo(() => {
+    const start = (assignmentDraft as any)?.start_date ?? null;
+    const end = (assignmentDraft as any)?.end_date ?? null;
+
+    if (!start || String(start).trim() === "") return { ok: false, msg: "Start date is required." };
+
+    // YYYY-MM-DD lexical compare works for date ordering.
+    if (end && String(end).trim() !== "" && String(end) < String(start)) {
+      return { ok: false, msg: "End date must be on or after start date." };
+    }
+
+    return { ok: true as const, msg: "" };
+  }, [assignmentDraft]);
+
+  function beginEditAssignment() {
+    if (!masterForPerson) return;
+    setAssignmentErr(null);
+    setEditingAssignment(true);
+    setAssignmentBaseline(masterForPerson);
+    setAssignmentDraft(masterForPerson);
+  }
+
+  function cancelEditAssignment() {
+    setAssignmentErr(null);
+    setEditingAssignment(false);
+    setAssignmentDraft(assignmentBaseline ?? masterForPerson);
+  }
+
+  async function saveAssignment() {
+    if (!assignmentDraft) {
+      setEditingAssignment(false);
+      return;
+    }
+
+    const aid = String((assignmentDraft as any)?.assignment_id ?? assignmentId ?? "");
+    if (!aid) {
+      setAssignmentErr("No assignment_id to save.");
+      setEditingAssignment(false);
+      return;
+    }
+
+    if (!assignmentValidation.ok) {
+      setAssignmentErr(assignmentValidation.msg);
+      return;
+    }
+
+    // Build a minimal patch (only changed fields).
+    const editableKeys = ["position_title", "start_date", "end_date", "active", "tech_id"] as const;
+    const patch: any = { assignment_id: aid };
+
+    for (const k of editableKeys) {
+      const before = (assignmentBaseline as any)?.[k] ?? null;
+      let after: any = (assignmentDraft as any)?.[k] ?? null;
+
+      // Normalize empty strings => null for nullable columns (end_date, position_title, tech_id)
+      if (typeof after === "string" && after.trim() === "") after = null;
+
+      // start_date is NOT NULL in schema; keep it as string
+      if (k === "start_date" && after == null) {
+        setAssignmentErr("Start date is required.");
+        return;
+      }
+
+      if (String(before ?? "") !== String(after ?? "")) patch[k] = after;
+    }
+
+    if (Object.keys(patch).length <= 1) {
+      setEditingAssignment(false);
+      return;
+    }
+
+    setSavingAssignment(true);
+    setAssignmentErr(null);
+    try {
+      await api.assignmentUpdate(patch);
+      setEditingAssignment(false);
+
+      // Refetch master to confirm handshake end-to-end
+      await loadMaster();
+    } catch (e: any) {
+      setAssignmentErr(e?.message ?? "Failed to save assignment");
+    } finally {
+      setSavingAssignment(false);
+    }
+  }
+
+
   const drillForPerson = useMemo(() => {
     if (!drilldown || !drilldown.length) return [];
     const pid = personId ? String(personId) : null;
     const aid = assignmentId ? String(assignmentId) : null;
     return drilldown.filter((r: any) => (pid && String(r.person_id) === pid) || (aid && String(r.assignment_id) === aid));
   }, [drilldown, personId, assignmentId]);
+
+  const leadershipContext = useMemo(() => {
+    const first = drillForPerson?.[0] ?? null;
+
+    return {
+      child_assignment_id: String(assignmentId ?? (row as any)?.assignment_id ?? ""),
+      pc_org_id: String(pcOrgId ?? ""),
+      reports_to_full_name:
+        (first as any)?.reports_to_full_name ?? (row as any)?.reports_to_full_name ?? null,
+      reports_to_assignment_id:
+        (first as any)?.reports_to_assignment_id ?? (row as any)?.reports_to_assignment_id ?? null,
+
+      // These exist on roster_row_module_v / roster_current_full (if provided in row)
+      reports_to_reporting_id: (row as any)?.reports_to_reporting_id ?? null,
+      reports_to_start_date: (row as any)?.reports_to_start_date ?? null,
+      reports_to_end_date: (row as any)?.reports_to_end_date ?? null,
+    };
+  }, [drillForPerson, row, assignmentId, pcOrgId]);
+
+  useEffect(() => {
+    // Keep baseline/draft in sync while not editing.
+    if (!editingLeadership) {
+      setLeadershipBaseline(leadershipContext);
+      setLeadershipDraft({
+        reports_to_assignment_id: leadershipContext.reports_to_assignment_id ? String(leadershipContext.reports_to_assignment_id) : "",
+      });
+    }
+  }, [leadershipContext, editingLeadership]);
+
+  const managerOptions = useMemo(() => {
+    const rows: any[] = (master ?? []) as any[];
+    const childId = String(assignmentId ?? "");
+    return rows
+      .filter((r) => {
+        const aid = String(r?.assignment_id ?? "");
+        if (!aid) return false;
+        if (childId && aid === childId) return false;
+        const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
+        return active;
+      })
+      .map((r) => {
+        const aid = String(r?.assignment_id ?? "");
+        const name = (r?.full_name ?? r?.person_name ?? r?.name ?? r?.reports_to_full_name ?? "—") as string;
+        const title = (r?.position_title ?? r?.title ?? "") as string;
+        const label = title ? `${name} — ${title}` : name;
+        return { value: aid, label };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [master, assignmentId]);
+
+  function beginEditLeadership() {
+    setLeadershipErr(null);
+    setEditingLeadership(true);
+    setLeadershipBaseline(leadershipContext);
+    setLeadershipDraft({
+      reports_to_assignment_id: leadershipContext.reports_to_assignment_id ? String(leadershipContext.reports_to_assignment_id) : "",
+    });
+  }
+
+  function cancelEditLeadership() {
+    setLeadershipErr(null);
+    setEditingLeadership(false);
+    setLeadershipDraft({
+      reports_to_assignment_id: leadershipContext.reports_to_assignment_id ? String(leadershipContext.reports_to_assignment_id) : "",
+    });
+  }
+
+  async function saveLeadership() {
+    const childId = String(assignmentId ?? "");
+    if (!childId) {
+      setLeadershipErr("No assignment_id for this roster row.");
+      setEditingLeadership(false);
+      return;
+    }
+
+    const selectedParent = String((leadershipDraft as any)?.reports_to_assignment_id ?? "").trim();
+    const baselineParent = String((leadershipContext as any)?.reports_to_assignment_id ?? "").trim();
+
+    if (selectedParent === childId) {
+      setLeadershipErr("An assignment cannot report to itself.");
+      return;
+    }
+
+    // No change
+    if (selectedParent === baselineParent) {
+      setEditingLeadership(false);
+      return;
+    }
+
+    setSavingLeadership(true);
+    setLeadershipErr(null);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const reportingId = (leadershipContext as any)?.reports_to_reporting_id
+        ? String((leadershipContext as any).reports_to_reporting_id)
+        : null;
+
+      // Clear manager: end-date the current relationship (cannot null parent_assignment_id).
+      if (!selectedParent) {
+        if (reportingId) {
+          await api.assignmentReportingUpsert({
+            assignment_reporting_id: reportingId,
+            child_assignment_id: childId,
+            parent_assignment_id: baselineParent,
+            start_date: (leadershipContext as any)?.reports_to_start_date ?? today,
+            end_date: today,
+          });
+        }
+        setEditingLeadership(false);
+        await loadDrilldown();
+        return;
+      }
+
+      // Set/change manager
+      await api.assignmentReportingUpsert({
+        assignment_reporting_id: reportingId,
+        child_assignment_id: childId,
+        parent_assignment_id: selectedParent,
+        start_date: (leadershipContext as any)?.reports_to_start_date ?? (masterForPerson as any)?.start_date ?? today,
+        end_date: null,
+      });
+
+      setEditingLeadership(false);
+      await loadDrilldown();
+    } catch (e: any) {
+      setLeadershipErr(e?.message ?? "Failed to save reporting relationship");
+    } finally {
+      setSavingLeadership(false);
+    }
+  }
+
 
   const refreshCurrent = async () => {
     if (tab === "person") return loadPerson();
@@ -502,105 +775,111 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                   <div className="text-sm text-[var(--to-ink-muted)]">No person record returned.</div>
                 ) : (
                   <div className="space-y-2">
-                    {Object.keys((editingPerson ? personDraft : person) ?? {})
-                      .sort((a, b) => a.localeCompare(b))
-                      .map((k) => {
-                        const displayPerson = personHuman ?? person;
-                        const src: any = (editingPerson ? personDraft : displayPerson) ?? {};
-                        const v = src[k];
-                        const editable = ["full_name", "emails", "mobile", "fuse_emp_id", "person_notes", "person_nt_login", "person_csg_id", "active"].includes(k);
+                    {PERSON_FIELDS.map(({ key, label }) => {
+                      const displayPerson = (personHuman ?? person) as any;
+                      const src: any = (editingPerson ? personDraft : displayPerson) ?? {};
+                      const v = src[key as any];
+                      const editable = ["full_name", "emails", "mobile", "fuse_emp_id", "person_notes", "person_nt_login", "person_csg_id", "active"].includes(String(key));
 
-                        if (editingPerson && editable) {
-                          if (k === "person_notes") {
-                            return (
-                              <div key={k} className="grid grid-cols-12 gap-2 text-sm">
-                                <div className="col-span-4 text-[var(--to-ink-muted)]">{k}</div>
-                                <div className="col-span-8">
-                                  <textarea
-                                    className="to-input h-auto min-h-[96px] py-2"
-                                    value={(personDraft as any)?.[k] ?? ""}
-                                    onChange={(e) =>
-                                      setPersonDraft((p: any) => {
-                                        const next: any = ensurePersonIdentity(p, row as any);
-                                        next[k] = e.target.value;
-                                        // if editing a non-name field, never allow full_name to become null
-                                        if (!next.full_name || String(next.full_name).trim() === "") {
-                                          const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
-                                        if (fb) next.full_name = fb;
-}
-                                        return next;
-                                      })
-                                    }
-                                  />
-                                </div>
-                              </div>
-                            );
-                          }
-
-                          if (k === "active") {
-                            return (
-                              <div key={k} className="grid grid-cols-12 gap-2 text-sm">
-                                <div className="col-span-4 text-[var(--to-ink-muted)]">{k}</div>
-                                <div className="col-span-8">
-                                  <SegmentedControl
-                                    value={String(Boolean((personDraft as any)?.active))}
-                                    onChange={(next) =>
-                                      setPersonDraft((p: any) => {
-                                        const n: any = ensurePersonIdentity(p, row as any);
-                                        n.active = next === "true";
-                                        if (!n.full_name || String(n.full_name).trim() === "") {
-                                          const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
-                                          if (fb) n.full_name = fb;
-                                        }
-                                        return n;
-                                      })
-                                    }
-                                    options={[
-                                      { value: "true", label: "Active" },
-                                      { value: "false", label: "Inactive" },
-                                    ]}
-                                  />
-                                </div>
-                              </div>
-                            );
-                          }
-
+                      if (editingPerson && editable) {
+                        if (key === "person_notes") {
                           return (
-                            <div key={k} className="grid grid-cols-12 gap-2 text-sm">
-                              <div className="col-span-4 text-[var(--to-ink-muted)]">{k}</div>
+                            <div key={String(key)} className="grid grid-cols-12 gap-2 text-sm">
+                              <div className="col-span-4 text-[var(--to-ink-muted)]">{label}</div>
                               <div className="col-span-8">
-                                <TextInput
-                                  value={(personDraft as any)?.[k] ?? ""}
+                                <textarea
+                                  className="to-input h-auto min-h-[96px] py-2"
+                                  value={(personDraft as any)?.[key] ?? ""}
                                   onChange={(e) =>
-                                      setPersonDraft((p: any) => {
-                                        const next: any = ensurePersonIdentity(p, row as any);
-                                        next[k] = e.target.value;
-                                        // if editing a non-name field, never allow full_name to become null
-                                        if (k !== "full_name" && (!next.full_name || String(next.full_name).trim() === "")) {
-                                          const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
-                                          if (fb) next.full_name = fb;
-                                        }
-                                        return next;
-                                      })
-                                    }
+                                    setPersonDraft((p: any) => {
+                                      const next: any = ensurePersonIdentity(p, row as any);
+                                      next[key] = e.target.value;
+                                      if (!next.full_name || String(next.full_name).trim() === "") {
+                                        const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
+                                        if (fb) next.full_name = fb;
+                                      }
+                                      return next;
+                                    })
+                                  }
                                 />
                               </div>
                             </div>
                           );
                         }
 
-                        const display = k === "active" ? (Boolean(v) ? "Active" : "Inactive") : v ?? "—";
-                        return <KVRow key={k} label={k} value={display} />;
-                      })}
+                        if (key === "active") {
+                          return (
+                            <div key={String(key)} className="grid grid-cols-12 gap-2 text-sm">
+                              <div className="col-span-4 text-[var(--to-ink-muted)]">{label}</div>
+                              <div className="col-span-8">
+                                <SegmentedControl
+                                  value={String(Boolean((personDraft as any)?.active))}
+                                  onChange={(next) =>
+                                    setPersonDraft((p: any) => {
+                                      const n: any = ensurePersonIdentity(p, row as any);
+                                      n.active = next === "true";
+                                      if (!n.full_name || String(n.full_name).trim() === "") {
+                                        const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
+                                        if (fb) n.full_name = fb;
+                                      }
+                                      return n;
+                                    })
+                                  }
+                                  options={[
+                                    { value: "true", label: "Active" },
+                                    { value: "false", label: "Inactive" },
+                                  ]}
+                                />
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div key={String(key)} className="grid grid-cols-12 gap-2 text-sm">
+                            <div className="col-span-4 text-[var(--to-ink-muted)]">{label}</div>
+                            <div className="col-span-8">
+                              <TextInput
+                                value={(personDraft as any)?.[key] ?? ""}
+                                onChange={(e) =>
+                                  setPersonDraft((p: any) => {
+                                    const next: any = ensurePersonIdentity(p, row as any);
+                                    next[key] = e.target.value;
+                                    if (key !== "full_name" && (!next.full_name || String(next.full_name).trim() === "")) {
+                                      const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
+                                      if (fb) next.full_name = fb;
+                                    }
+                                    return next;
+                                  })
+                                }
+                              />
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const display = key === "active" ? (Boolean(v) ? "Active" : "Inactive") : v ?? "—";
+                      return <KVRow key={String(key)} label={label} value={display} />;
+                    })}
                   </div>
                 )}
               </Card>
 
-              {person ? <CollapsibleJson obj={person} label="Raw JSON — Person (api.person_get)" /> : null}
+              {person ? (
+                <Card title="Company / Role">
+                  <div className="space-y-1">
+                    <KVRow
+                      label="Organization"
+                      value={coResolved?.name ?? (person as any)?.co_code ?? (person as any)?.co_ref_id ?? "—"}
+                    />
+                    <KVRow label="Type" value={coResolved?.kind ?? (row as any)?.co_type ?? "—"} />
+                    <KVRow label="Role" value={(person as any)?.role ?? (row as any)?.role ?? "—"} />
+                    <KVRow label="Code" value={(person as any)?.co_code ?? "—"} />
+                  </div>
+                </Card>
+              ) : null}
 
-              <AllFieldsCard title="Selection context (from roster_current row) — all fields" obj={selectionContext} />
-              <CollapsibleJson obj={row} label="Raw JSON — Roster row snapshot (roster_current)" />
-            </div>
+</div>
           ) : null}
 
           {tab === "assignment" ? (
@@ -611,13 +890,177 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                 </Notice>
               ) : null}
 
-              <AllFieldsCard
-                title="Assignment row (from api.roster_master) — all fields"
-                obj={masterForPerson}
-                emptyHint={loadingMaster ? "Loading roster master…" : "No matching assignment row found."}
-              />
+              {assignmentErr ? (
+                <Notice variant="danger" title="Could not save assignment">
+                  {assignmentErr}
+                </Notice>
+              ) : null}
 
-              {masterForPerson ? <CollapsibleJson obj={masterForPerson} label="Raw JSON — Assignment row (api.roster_master)" /> : null}
+              <Card title="Assignment">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-sm text-[var(--to-ink-muted)]">
+                      Assignment is the source of truth for position + dates. Edit inline to confirm hydration and write.
+                    </div>
+                    {!masterForPerson && !loadingMaster ? (
+                      <div className="text-sm text-[var(--to-ink-muted)]">No matching assignment row found.</div>
+                    ) : null}
+                  </div>
+
+                  {!editingAssignment ? (
+                    <Button onClick={beginEditAssignment} disabled={!masterForPerson || loadingMaster}>
+                      Edit
+                    </Button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Button variant="ghost" onClick={cancelEditAssignment} disabled={savingAssignment}>
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={saveAssignment}
+                        disabled={savingAssignment || !assignmentDirty || !assignmentValidation.ok}
+                      >
+                        {savingAssignment ? "Saving…" : "Save"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {loadingMaster && !masterForPerson ? (
+                  <div className="mt-3 text-sm text-[var(--to-ink-muted)]">Loading roster master…</div>
+                ) : masterForPerson ? (
+                  <div className="mt-3 space-y-2">
+                    {/* Position title */}
+                    {editingAssignment ? (
+                      <div className="grid grid-cols-12 gap-2 text-sm">
+                        <div className="col-span-4 text-[var(--to-ink-muted)]">Position title</div>
+                        <div className="col-span-8">
+                          <TextInput
+                            value={(assignmentDraft as any)?.position_title ?? ""}
+                            onChange={(e) =>
+                              setAssignmentDraft((a: any) => ({
+                                ...(a ?? {}),
+                                position_title: e.target.value,
+                              }))
+                            }
+                          />
+                          <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
+                            (This references <code className="px-1">position_title</code> lookup; save will fail if invalid.)
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <KVRow label="Position title" value={(masterForPerson as any)?.position_title ?? "—"} />
+                    )}
+
+                    {/* Tech ID (optional) */}
+                    {editingAssignment ? (
+                      <div className="grid grid-cols-12 gap-2 text-sm">
+                        <div className="col-span-4 text-[var(--to-ink-muted)]">Tech ID</div>
+                        <div className="col-span-8">
+                          <TextInput
+                            value={(assignmentDraft as any)?.tech_id ?? ""}
+                            onChange={(e) =>
+                              setAssignmentDraft((a: any) => ({
+                                ...(a ?? {}),
+                                tech_id: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <KVRow label="Tech ID" value={(masterForPerson as any)?.tech_id ?? (row as any)?.tech_id ?? "—"} />
+                    )}
+
+                    {/* Start date (required) */}
+                    {editingAssignment ? (
+                      <div className="grid grid-cols-12 gap-2 text-sm">
+                        <div className="col-span-4 text-[var(--to-ink-muted)]">Start date</div>
+                        <div className="col-span-8">
+                          <input
+                            className="to-input"
+                            type="date"
+                            value={(assignmentDraft as any)?.start_date ?? ""}
+                            onChange={(e) =>
+                              setAssignmentDraft((a: any) => ({
+                                ...(a ?? {}),
+                                start_date: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <KVRow label="Start date" value={(masterForPerson as any)?.start_date ?? "—"} />
+                    )}
+
+                    {/* End date (optional) */}
+                    {editingAssignment ? (
+                      <div className="grid grid-cols-12 gap-2 text-sm">
+                        <div className="col-span-4 text-[var(--to-ink-muted)]">End date</div>
+                        <div className="col-span-8">
+                          <input
+                            className="to-input"
+                            type="date"
+                            value={(assignmentDraft as any)?.end_date ?? ""}
+                            onChange={(e) =>
+                              setAssignmentDraft((a: any) => ({
+                                ...(a ?? {}),
+                                end_date: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <KVRow label="End date" value={(masterForPerson as any)?.end_date ?? "—"} />
+                    )}
+
+                    {/* Active */}
+                    {editingAssignment ? (
+                      <div className="grid grid-cols-12 gap-2 text-sm">
+                        <div className="col-span-4 text-[var(--to-ink-muted)]">Status</div>
+                        <div className="col-span-8">
+                          <SegmentedControl
+                            value={String(
+                              Boolean(
+                                (assignmentDraft as any)?.active ?? (assignmentDraft as any)?.assignment_active
+                              )
+                            )}
+                            onChange={(next) =>
+                              setAssignmentDraft((a: any) => ({
+                                ...(a ?? {}),
+                                active: next === "true",
+                              }))
+                            }
+                            options={[
+                              { value: "true", label: "Active" },
+                              { value: "false", label: "Inactive" },
+                            ]}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <KVRow
+                        label="Status"
+                        value={
+                          Boolean((masterForPerson as any)?.active ?? (masterForPerson as any)?.assignment_active)
+                            ? "Active"
+                            : "Inactive"
+                        }
+                      />
+                    )}
+
+                    {/* Reporting (read-only) */}
+                    <KVRow label="Reports to" value={(masterForPerson as any)?.reports_to_full_name ?? "—"} />
+                  </div>
+                ) : null}
+
+                {editingAssignment && !assignmentValidation.ok ? (
+                  <div className="mt-3 text-sm text-[var(--to-status-danger)]">{assignmentValidation.msg}</div>
+                ) : null}
+              </Card>
             </div>
           ) : null}
 
@@ -629,13 +1072,75 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                 </Notice>
               ) : null}
 
-              <AllFieldsCard
-                title="Leadership rows (filtered from api.roster_drilldown) — count"
-                obj={{ count: drillForPerson.length }}
-                emptyHint={loadingDrill ? "Loading drilldown…" : "No drilldown rows."}
-              />
+              {leadershipErr ? (
+                <Notice variant="danger" title="Could not save leadership">
+                  {leadershipErr}
+                </Notice>
+              ) : null}
 
-              {drillForPerson.length ? <CollapsibleJson obj={drillForPerson} label="Raw JSON — Leadership rows (api.roster_drilldown)" /> : null}
+              <Card title="Leadership">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-sm text-[var(--to-ink-muted)]">
+                      Reporting relationship is stored in <code className="px-1">assignment_reporting</code>. Edit inline to confirm hydration and write.
+                    </div>
+                    {loadingDrill && !drillForPerson.length ? (
+                      <div className="text-sm text-[var(--to-ink-muted)]">Loading leadership…</div>
+                    ) : null}
+                  </div>
+
+                  {!editingLeadership ? (
+                    <Button onClick={beginEditLeadership} disabled={!assignmentId || loadingDrill}>
+                      Edit
+                    </Button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Button variant="ghost" onClick={cancelEditLeadership} disabled={savingLeadership}>
+                        Cancel
+                      </Button>
+                      <Button onClick={saveLeadership} disabled={savingLeadership}>
+                        {savingLeadership ? "Saving…" : "Save"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {!editingLeadership ? (
+                    <>
+                      <KVRow label="Reports to" value={leadershipContext.reports_to_full_name ?? "—"} />
+                      <KVRow label="Manager assignment_id" value={leadershipContext.reports_to_assignment_id ?? "—"} />
+                    </>
+                  ) : (
+                    <div className="grid grid-cols-12 gap-2 text-sm">
+                      <div className="col-span-4 text-[var(--to-ink-muted)]">Reports to</div>
+                      <div className="col-span-8 space-y-2">
+                        <select
+                          className="to-input"
+                          value={(leadershipDraft as any)?.reports_to_assignment_id ?? ""}
+                          onChange={(e) =>
+                            setLeadershipDraft({
+                              reports_to_assignment_id: e.target.value,
+                            })
+                          }
+                        >
+                          <option value="">— No manager (end current relationship) —</option>
+                          {managerOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="text-xs text-[var(--to-ink-muted)]">
+                          If you don’t see the right manager here, ensure they have an active assignment in this org.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </Card>
+
+              {/* Keep scaffolding until handshake is verified */}
             </div>
           ) : null}
         </div>

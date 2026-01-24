@@ -27,6 +27,16 @@ export type PcOrgChoice = {
   [k: string]: any;
 };
 
+
+export type PcOrgAdminMeta = {
+  pc_org_id?: UUID;
+  mso_name?: string | null;
+  division_name?: string | null;
+  region_name?: string | null;
+  [k: string]: any;
+};
+
+
 export type PersonRow = {
   person_id?: UUID;
   full_name?: string | null;
@@ -311,6 +321,19 @@ private compactRecord<T extends Record<string, any>>(obj: T): Partial<T> {
 
   async pcOrgChoices(): Promise<PcOrgChoice[]> {
     return (await this.rpcWithFallback<PcOrgChoice[]>("pc_org_choices", [undefined])) ?? [];
+  }
+
+
+
+  async pcOrgAdminMeta(pc_org_id: string): Promise<PcOrgAdminMeta> {
+    const { data, error } = await this.supabase
+      .from("pc_org_admin_v")
+      .select("pc_org_id,mso_name,division_name,region_name")
+      .eq("pc_org_id", pc_org_id)
+      .maybeSingle();
+
+    if (error) throw this.normalize(error);
+    return (data as any) ?? { pc_org_id, mso_name: null, division_name: null, region_name: null };
   }
 
   async rosterCurrent(pc_org_id: string): Promise<RosterRow[]> {

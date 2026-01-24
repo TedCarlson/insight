@@ -63,26 +63,60 @@
 
 /* Button */
 .to-btn {
-  @apply rounded px-3 py-2 text-sm font-medium;
+  /* “Tech-forward”: tighter typography, better shape, motion, and focus affordance */
+  border: 1px solid transparent;
+  @apply inline-flex items-center justify-center gap-2 whitespace-nowrap select-none
+    rounded-xl px-4 py-2 text-sm font-semibold tracking-tight
+    transition-[transform,background-color,border-color,box-shadow,opacity,color] duration-150 ease-out
+    active:translate-y-px;
 }
 
 .to-btn:disabled {
-  @apply opacity-60 cursor-not-allowed;
+  @apply opacity-60 cursor-not-allowed active:translate-y-0;
 }
 
-.to-btn--secondary {
-  border-color: var(--to-border);
-  @apply border hover:bg-[var(--to-surface-2)];
-}
-
+/* Primary: premium, not neon. Uses your accent token. */
 .to-btn--primary {
-  background: var(--to-accent);
-  @apply font-semibold text-white hover:opacity-90;
+  /* subtle top highlight for “glass” feel */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--to-accent) 92%, white 8%),
+    var(--to-accent)
+  );
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
+  @apply text-white;
 }
 
-.to-btn--ghost {
-  @apply underline underline-offset-4 hover:opacity-80;
+.to-btn--primary:hover:not(:disabled) {
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  @apply opacity-95;
 }
+
+/* Secondary: real “button”, subtle depth, with green accent hint (not gaudy). */
+.to-btn--secondary {
+  background: var(--to-surface);
+  border-color: var(--to-border);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06);
+  @apply text-[var(--to-ink)];
+}
+
+.to-btn--secondary:hover:not(:disabled) {
+  background: var(--to-surface-2);
+  border-color: color-mix(in srgb, var(--to-accent-2) 35%, var(--to-border));
+}
+
+/* Ghost: modern tertiary (NOT underlined). */
+.to-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  @apply text-[var(--to-ink)];
+}
+
+.to-btn--ghost:hover:not(:disabled) {
+  background: var(--to-surface-2);
+  border-color: color-mix(in srgb, var(--to-border) 70%, transparent);
+}
+
 
 /* Field */
 .to-label {

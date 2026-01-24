@@ -39,6 +39,11 @@ export default function RosterPage() {
   const [selectedRow, setSelectedRow] = useState<RosterRow | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
+  const [orgMeta, setOrgMeta] = useState<{ mso_name: string | null; division_name: string | null; region_name: string | null } | null>(
+    null
+  );
+  const [orgMetaLoading, setOrgMetaLoading] = useState(false);
+
   const validatedOrgId = useMemo(() => {
     if (orgsLoading) return null;
     if (!selectedOrgId) return null;
@@ -80,13 +85,47 @@ export default function RosterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validatedOrgId]);
 
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadOrgMeta() {
+      if (!validatedOrgId) {
+        setOrgMeta(null);
+        return;
+      }
+
+      setOrgMetaLoading(true);
+      try {
+        const meta = await api.pcOrgAdminMeta(validatedOrgId);
+        if (alive)
+          setOrgMeta({
+            mso_name: meta?.mso_name ?? null,
+            division_name: meta?.division_name ?? null,
+            region_name: meta?.region_name ?? null,
+          });
+
+      } catch {
+        if (alive) setOrgMeta({ mso_name: null, division_name: null, region_name: null });
+      } finally {
+        if (alive) setOrgMetaLoading(false);
+      }
+    }
+
+    loadOrgMeta();
+    return () => {
+      alive = false;
+    };
+  }, [validatedOrgId]);
+
+
   const headerRefreshDisabled = orgsLoading || !canLoad || loading;
 
   return (
     <PageShell>
       <PageHeader
         title="Roster"
-        subtitle="Current roster (scoped by org access gate + RLS)."
+        subtitle="Current roster (scoped by PC access gate)."
         actions={
           <Button variant="secondary" type="button" onClick={loadAll} disabled={headerRefreshDisabled}>
             {loading ? "Refreshing…" : "Refresh"}
@@ -108,9 +147,23 @@ export default function RosterPage() {
         <Toolbar
           left={<OrgSelector />}
           right={
-            <div className="text-xs text-[var(--to-ink-muted)]">
-              Org-scoped reads via <code>api.roster_current</code>
-            </div>
+            <div className="text-xs text-[var(--to-ink-muted)] text-right">
+              {validatedOrgId ? (
+                <div >
+                  <span>
+                    MSO: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.mso_name ?? "—"}</span>
+                  </span>
+                  <span className="px-2"> • </span>
+                  <span>
+                    Division: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
+                  </span>
+                  <span className="px-2"> • </span>
+                  <span>
+                    Region: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
+                  </span>
+                </div>
+              ) : null}
+</div>
           }
         />
       </Card>

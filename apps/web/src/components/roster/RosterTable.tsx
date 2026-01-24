@@ -7,7 +7,7 @@ import { DataTable, DataTableHeader, DataTableBody, DataTableRow } from "@/compo
 
 const rosterGridStyle: CSSProperties = {
   // Short/id columns use fixed-ish widths; the three text-heavy columns share remaining space evenly.
-  gridTemplateColumns: "6rem minmax(12rem,1fr) 10rem 8rem 5rem minmax(12rem,1fr) minmax(12rem,1fr)",
+  gridTemplateColumns: "6rem minmax(12rem,1fr) 10rem 8rem 5rem minmax(0,1fr) minmax(0,1fr)",
 };
 
 export function RosterTable({
@@ -26,7 +26,7 @@ export function RosterTable({
       // Template-driven, distributed columns that still respect content and truncate long text.
       layout="content"
       // IMPORTANT: no min-w-max here; it prevents fr columns from distributing and disables truncation.
-      gridClassName="w-full"
+      gridClassName="w-full overflow-hidden"
       gridStyle={rosterGridStyle}
     >
       <DataTableHeader>

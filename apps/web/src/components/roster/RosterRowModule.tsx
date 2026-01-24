@@ -6,10 +6,11 @@ import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow, typ
 
 import { Modal } from "@/components/ui/Modal";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { TextInput } from "@/components/ui/TextInput";
 import { Notice } from "@/components/ui/Notice";
-import { Button } from "@/components/ui/Button";
+
 
 type TabKey = "person" | "assignment" | "leadership";
 
@@ -730,9 +731,10 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
           <div className="flex items-center justify-between gap-3">
             <SegmentedControl value={tab} onChange={setTab} options={options} />
             <div className="flex items-center gap-2">
-              <Button type="button" onClick={refreshCurrent} disabled={refreshing}>
+              <Button variant="secondary" type="button" onClick={refreshCurrent} disabled={refreshing}>
                 {refreshing ? "Refreshing…" : "Refresh"}
               </Button>
+
             </div>
           </div>
 
@@ -1082,7 +1084,7 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
                     <div className="text-sm text-[var(--to-ink-muted)]">
-                      Reporting relationship is stored in <code className="px-1">assignment_reporting</code>. Edit inline to confirm hydration and write.
+                      Reporting relationship is stored in <code className="px-1">Assignment</code>. Edit ends current and starts new.
                     </div>
                     {loadingDrill && !drillForPerson.length ? (
                       <div className="text-sm text-[var(--to-ink-muted)]">Loading leadership…</div>

@@ -21,12 +21,12 @@ function orgLabel(o: any): string {
   return role ? `${base} — ${role}` : base;
 }
 
-export function OrgSelector({ label = "Organization" }: { label?: string }) {
+export function OrgSelector({ label = "PC" }: { label?: string }) {
   const { orgs, orgsLoading, orgsError, selectedOrgId, setSelectedOrgId } = useOrg();
 
-  if (orgsLoading) return <div className="text-sm text-[var(--to-ink-muted)]">Loading organizations…</div>;
-  if (orgsError) return <div className="text-sm text-[var(--to-danger)]">Org load error: {orgsError}</div>;
-  if (!orgs.length) return <div className="text-sm text-[var(--to-ink-muted)]">No organizations available.</div>;
+  if (orgsLoading) return <div className="text-sm text-[var(--to-ink-muted)]">Loading PC details…</div>;
+  if (orgsError) return <div className="text-sm text-[var(--to-danger)]">PC load error: {orgsError}</div>;
+  if (!orgs.length) return <div className="text-sm text-[var(--to-ink-muted)]">No PC details available.</div>;
 
   // If user only has one org, render a simple label instead of an empty-feeling dropdown
   if (orgs.length === 1) {

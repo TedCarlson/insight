@@ -77,8 +77,8 @@ export function OnboardWizardModal(props: {
 
   onPersonChange: (patch: Partial<PersonRow>) => void;
 
-  assignmentDraft: { position_title: string; start_date: string; notes: string };
-  onAssignmentChange: (next: { position_title: string; start_date: string; notes: string }) => void;
+  assignmentDraft: { position_title: string; start_date: string };
+  onAssignmentChange: (next: { position_title: string; start_date: string }) => void;
 
   leadersLoading: boolean;
   leaders: RosterCurrentFullRow[];
@@ -429,8 +429,8 @@ function WizardAssignmentStep({
   titlesError,
   onRetryLoadTitles,
 }: {
-  value: { position_title: string; start_date: string; notes: string };
-  onChange: (next: { position_title: string; start_date: string; notes: string }) => void;
+  value: { position_title: string; start_date: string };
+  onChange: (next: { position_title: string; start_date: string }) => void;
   titles: { position_title: string }[];
   titlesLoading: boolean;
   titlesError: string | null;
@@ -471,15 +471,7 @@ function WizardAssignmentStep({
             value={value.start_date}
             onChange={(e) => onChange({ ...value, start_date: e.target.value })}
           />
-        </Field>
-        <Field label="Notes (optional)">
-          <TextInput
-            value={value.notes}
-            onChange={(e) => onChange({ ...value, notes: e.target.value })}
-            placeholder="Reason / context"
-          />
-        </Field>
-      </div>
+        </Field></div>
       <Notice variant="warning" title="Roster rule">
         Assignment creation is enforced on the server.
       </Notice>

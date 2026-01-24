@@ -591,16 +591,9 @@ async personUpsert(input: {
       p_notes: input.notes ?? null,
     });
 
-    // Back-compat attempt (older param names) — also send nulls so keys are present.
-    const legacyArgs = {
-      pc_org_id: input.pc_org_id,
-      person_id: input.person_id,
-      position_title: input.position_title ?? null,
-      start_date: input.start_date,
-      notes: input.notes ?? null,
-    };
-
-    const data = await this.rpcWithFallback<any>("wizard_process_to_roster", [args, legacyArgs]);
+    // Use the current SQL parameter names (p_*) only. If these drift, we want the error to reflect
+    // the real function signature instead of falling back to legacy names.
+    const data = await this.rpcWithFallback<any>("wizard_process_to_roster", [args]);
     return data as AssignmentRow;
   }
 

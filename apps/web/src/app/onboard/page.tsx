@@ -87,8 +87,10 @@ export default function OnboardPage() {
 
   const [assignmentDraft, setAssignmentDraft] = useState<{
   position_title: string;
-  start_date: string; 
-  }>({ position_title: "", start_date: todayIsoDate() });
+  start_date: string;
+  tech_id: string;
+  }>({ position_title: "", start_date: todayIsoDate(), tech_id: "" });
+
 
 
   const [createdAssignment, setCreatedAssignment] = useState<AssignmentRow | null>(null);
@@ -157,7 +159,7 @@ export default function OnboardPage() {
     setPersonDraft(null);
     setPersonSaved(null);
     setEmploymentType("");
-    setAssignmentDraft({ position_title: "", start_date: todayIsoDate() });
+    setAssignmentDraft({ position_title: "", start_date: todayIsoDate(), tech_id: "" });
     setCreatedAssignment(null);
     setLeaderAssignmentId("");
     setLeaders([]);

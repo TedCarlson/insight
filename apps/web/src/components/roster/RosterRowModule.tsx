@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow, type RosterRow } from "@/lib/api";
+import { createClient } from "@/lib/supabase/client";
 
 import { Modal } from "@/components/ui/Modal";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -159,6 +160,16 @@ export function RosterRowModule({
   const personId = (row as any)?.person_id ?? null;
   const assignmentId = (row as any)?.assignment_id ?? null;
 
+  // Invite (UI-only for now; server enforces authorization)
+  const [canInvite, setCanInvite] = useState(false);
+  const [checkingInvitePerms, setCheckingInvitePerms] = useState(false);
+
+  const [inviteEmailDraft, setInviteEmailDraft] = useState("");
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [inviteErr, setInviteErr] = useState<string | null>(null);
+  const [inviteOk, setInviteOk] = useState(false);
+
+
   // Person (primary source = api.person_get)
   const [person, setPerson] = useState<PersonRow | null>(null);
   const [personErr, setPersonErr] = useState<string | null>(null);
@@ -216,14 +227,39 @@ const personHuman = useMemo(() => {
 
   const title = useMemo(() => buildTitle(row), [row]);
 
-  const selectionContext = useMemo(() => {
-    return {
+  const selectionContext = useMemo\(\(\) => \{
+    return \{
       pc_org_id: pcOrgId,
-      pc_org_name: pcOrgName ?? null,
+      pc_org_name: pcOrgName \?\? null,
       person_id: personId,
       assignment_id: assignmentId,
-    };
-  }, [pcOrgId, pcOrgName, personId, assignmentId]);
+    \};
+  \}, \[pcOrgId, pcOrgName, personId, assignmentId\]\);
+
+  const derivedInviteEmail = useMemo(() => {
+    const raw =
+      (person as any)?.emails ??
+      (person as any)?.email ??
+      (row as any)?.emails ??
+      (row as any)?.email ??
+      null;
+
+    if (!raw) return "";
+    if (Array.isArray(raw)) return String(raw[0] ?? "").trim();
+
+    const s = String(raw);
+    // Handle comma/semicolon/newline separated lists
+    const first = s.split(/[;,
+]+/).map((x) => x.trim()).filter(Boolean)[0] ?? "";
+    return first;
+  }, [person, row]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (inviteEmailDraft.trim() !== "") return;
+    if (!derivedInviteEmail) return;
+    setInviteEmailDraft(derivedInviteEmail);
+  }, [open, derivedInviteEmail, inviteEmailDraft]);
 
   const PERSON_FIELDS = [
     { key: "full_name", label: "Full name" },
@@ -270,6 +306,22 @@ const personHuman = useMemo(() => {
     setDrilldown(null);
     setDrillErr(null);
     setLoadingDrill(false);
+
+    // Reset invite module state
+    setInviteErr(null);
+    setInviteOk(false);
+    setInviteEmailDraft("");
+
+    // Check whether this viewer can send invites (launch: owner-only; later: manager+)
+    setCheckingInvitePerms(true);
+    const sb = createClient();
+    sb.rpc("is_owner")
+      .then(({ data, error }) => {
+        if (error) return setCanInvite(false);
+        setCanInvite(Boolean(data));
+      })
+      .catch(() => setCanInvite(false))
+      .finally(() => setCheckingInvitePerms(false));
   }, [open, row]);
 
 
@@ -694,6 +746,57 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
   }
 
 
+
+  async function sendInvite() {
+    if (sendingInvite) return;
+
+    const email = inviteEmailDraft.trim();
+    if (!email) {
+      setInviteErr("Please enter an email address to invite.");
+      return;
+    }
+    if (!pcOrgId) {
+      setInviteErr("No org selected.");
+      return;
+    }
+    if (!assignmentId || !personId) {
+      setInviteErr("This roster row is missing person_id or assignment_id.");
+      return;
+    }
+
+    setSendingInvite(true);
+    setInviteErr(null);
+    try {
+      const res = await fetch("/api/admin/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          orgId: String(pcOrgId),
+          role: "member",
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || (json && json.ok === false)) {
+        const msg = json?.error ?? json?.message ?? `Invite failed (${res.status})`;
+        throw new Error(msg);
+      }
+
+      setInviteOk(true);
+
+      // UX: send → close → back to scanning roster
+      onClose();
+    } catch (e: any) {
+      setInviteOk(false);
+      setInviteErr(e?.message ?? "Invite failed");
+    } finally {
+      setSendingInvite(false);
+    }
+  }
+
+
   const refreshCurrent = async () => {
     if (tab === "person") return loadPerson();
     if (tab === "assignment") return loadMaster();
@@ -879,7 +982,80 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                     <KVRow label="Code" value={(person as any)?.co_code ?? "—"} />
                   </div>
                 </Card>
+
               ) : null}
+
+
+              {/* Invite workflow (launch: owner-only; later: manager+ and row-verified gates) */}
+              <Card title="Invite to app">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-sm text-[var(--to-ink-muted)]">
+                      Send a Supabase invite email for this roster row. The invite will land on set-password and then bootstrap their profile.
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-[var(--to-ink-muted)]">Status:</span>
+                      <span
+                        className="inline-flex items-center rounded-full border px-2 py-0.5"
+                        style={{ borderColor: "var(--to-border)" }}
+                      >
+                        {sendingInvite ? "Sending…" : inviteOk ? "Sent" : "Not sent"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {inviteErr ? (
+                  <div className="mt-3">
+                    <Notice variant="danger" title="Invite failed">
+                      {inviteErr}
+                    </Notice>
+                  </div>
+                ) : null}
+
+                {!canInvite ? (
+                  <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
+                    {checkingInvitePerms
+                      ? "Checking invite permissions…"
+                      : "Invites are currently limited to the owner account for launch."}
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    <div className="grid grid-cols-12 gap-2 text-sm">
+                      <div className="col-span-4 text-[var(--to-ink-muted)]">Invite email</div>
+                      <div className="col-span-8">
+                        <TextInput
+                          value={inviteEmailDraft}
+                          onChange={(e) => {
+                            setInviteOk(false);
+                            setInviteErr(null);
+                            setInviteEmailDraft(e.target.value);
+                          }}
+                          placeholder="name@company.com"
+                        />
+                        <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
+                          Prefilled from this row when available. You can edit before sending.
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        onClick={sendInvite}
+                        disabled={sendingInvite || !inviteEmailDraft.trim() || !personId || !assignmentId}
+                      >
+                        {sendingInvite ? "Sending…" : "Send invite email"}
+                      </Button>
+                    </div>
+
+                    {!personId || !assignmentId ? (
+                      <div className="text-xs text-[var(--to-status-danger)]">
+                        Missing person_id or assignment_id — this row is not eligible for invite.
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </Card>
 
 </div>
           ) : null}

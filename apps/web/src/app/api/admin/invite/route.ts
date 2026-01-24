@@ -13,7 +13,7 @@ type InviteBody = {
 /**
  * Owner-only invite endpoint.
  *
- * Creates an invite link (Supabase admin.generateLink) and stamps the invited user's metadata
+ * Sends an invite email (Supabase admin.inviteUserByEmail) and stamps the invited user's metadata
  * so the app can bootstrap user_profile on first login.
  *
  * Requires env:
@@ -130,32 +130,31 @@ export async function POST(req: Request) {
     // Service-role client (admin)
     const admin = createClient(url, service, { auth: { persistSession: false } });
 
-    // Create invite link
-    const linkRes = await admin.auth.admin.generateLink({
-      type: "invite",
-      email,
-      options: { redirectTo },
+    // Stamp metadata for bootstrap (client never sees service key)
+    const meta = { assignment_id, person_id, position_title, pc_org_id, pc_org_name };
+
+    // Send invite email (Supabase sends the email)
+    const inviteRes = await admin.auth.admin.inviteUserByEmail(email, {
+      redirectTo,
+      data: meta, // user_metadata
     });
 
-    if (linkRes.error) {
+    if (inviteRes.error) {
       return NextResponse.json(
-        { error: "generateLink failed", details: linkRes.error, redirect_to: redirectTo },
+        { error: "inviteUserByEmail failed", details: inviteRes.error, redirect_to: redirectTo },
         { status: 400 }
       );
     }
 
-    const invitedUserId = (linkRes.data as any)?.user?.id ?? null;
-    const actionLink = (linkRes.data as any)?.properties?.action_link ?? null;
+    const invitedUserId = (inviteRes.data as any)?.user?.id ?? null;
 
     if (!invitedUserId) {
       return NextResponse.json(
-        { error: "generateLink succeeded but no user id returned", data: linkRes.data },
+        { error: "inviteUserByEmail succeeded but no user id returned", data: inviteRes.data },
         { status: 400 }
       );
     }
 
-    // Stamp metadata for bootstrap (client never sees service key)
-    const meta = { assignment_id, person_id, position_title, pc_org_id, pc_org_name };
 
     const upd = await admin.auth.admin.updateUserById(invitedUserId, {
       user_metadata: meta,
@@ -166,10 +165,10 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           ok: true,
-          warning: "Invite link created, but metadata update failed",
+          emailed: true,
+          warning: "Invite email sent, but metadata update failed",
           warning_details: upd.error,
           invited: { email, auth_user_id: invitedUserId, ...meta },
-          action_link: actionLink,
           redirect_to: redirectTo,
         },
         { status: 200 }
@@ -192,8 +191,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
+      emailed: true,
       invited: { email, auth_user_id: invitedUserId, ...meta },
-      action_link: actionLink,
       redirect_to: redirectTo,
     });
   } catch (e: any) {

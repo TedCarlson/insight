@@ -527,6 +527,82 @@ async personUpsert(input: {
     return data ?? null;
   }
 
+  /**
+   * Global people directory search (active + inactive).
+   * Canonical surface is API schema: api.people_all(p_query, p_limit).
+   */
+  async peopleAll(query = "", limit = 25): Promise<PersonRow[]> {
+    const p_query = query ?? "";
+    const p_limit = limit ?? 25;
+    const data = await this.rpcWithFallback<any[]>("people_all", [
+      { p_query, p_limit },
+      { query: p_query, limit: p_limit },
+      { p_q: p_query, p_lim: p_limit },
+    ]);
+    return (data as any[])?.map((r) => r as PersonRow) ?? [];
+  }
+
+  /**
+   * Globally unassigned people search.
+   * Prefer API schema wrapper if present; fall back to public.people_global_unassigned_search if needed.
+   */
+  async peopleGlobalUnassignedSearch(query = "", limit = 25): Promise<PersonRow[]> {
+    const p_query = query ?? "";
+    const p_limit = limit ?? 25;
+
+    // Attempt 1: API schema
+    try {
+      const data = await this.rpcWithFallback<any[]>("people_global_unassigned_search", [
+        { p_query, p_limit },
+        { query: p_query, limit: p_limit },
+      ]);
+      return (data as any[])?.map((r) => r as PersonRow) ?? [];
+    } catch (e) {
+      // Attempt 2: public schema (legacy helper)
+      const { data, error } = await (this.supabase as any).rpc("people_global_unassigned_search", {
+        p_query,
+        p_limit,
+      });
+      if (error) throw this.normalize(error);
+      return (data as any[])?.map((r) => r as PersonRow) ?? [];
+    }
+  }
+
+  /**
+   * Wizard: ensure membership chain + create assignment (adds to roster).
+   * API schema: api.wizard_process_to_roster(p_notes, p_pc_org_id, p_person_id, p_position_title, p_start_date)
+   */
+  async wizardProcessToRoster(input: {
+    pc_org_id: string;
+    person_id: string;
+    position_title?: string | null;
+    start_date: string;
+    notes?: string | null;
+  }): Promise<AssignmentRow> {
+    // NOTE: We intentionally send *all* RPC params, including nulls.
+    // The SQL function signature requires these named params:
+    // api.wizard_process_to_roster(p_notes, p_pc_org_id, p_person_id, p_position_title, p_start_date)
+    // Passing undefined would drop keys and cause a schema-cache mismatch.
+    const args = this.compactRecord({
+      p_pc_org_id: input.pc_org_id,
+      p_person_id: input.person_id,
+      p_position_title: input.position_title ?? null,
+      p_start_date: input.start_date,
+      p_notes: input.notes ?? null,
+    });
+
+    // Back-compat attempt (older param names) — also send nulls so keys are present.
+    const legacyArgs = {
+      pc_org_id: input.pc_org_id,
+      person_id: input.person_id,
+      position_title: input.position_title ?? null,
+      start_date: input.start_date,
+      notes: input.notes ?? null,
+    };
+
+    const data = await this.rpcWithFallback<any>("wizard_process_to_roster", [args, legacyArgs]);
+    return data as AssignmentRow;
+  }
 
 /**
  * Resolve company/contractor display for a person.

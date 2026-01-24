@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api, type RosterRow } from "@/lib/api";
 import { useOrg } from "@/state/org";
 
@@ -30,6 +31,7 @@ function pickName(r: RosterRow): string {
 
 export default function RosterPage() {
   const { selectedOrgId, orgs, orgsLoading } = useOrg();
+  const router = useRouter();
 
   const [roster, setRoster] = useState<RosterRow[]>([]);
 
@@ -126,10 +128,15 @@ export default function RosterPage() {
       <PageHeader
         title="Roster"
         subtitle="Current roster (scoped by PC access gate)."
-        actions={
-          <Button variant="secondary" type="button" onClick={loadAll} disabled={headerRefreshDisabled}>
-            {loading ? "Refreshing…" : "Refresh"}
-          </Button>
+       actions={
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" type="button" onClick={() => router.push("/onboard")} disabled={orgsLoading}>
+              Onboard
+            </Button>
+            <Button variant="secondary" type="button" onClick={loadAll} disabled={headerRefreshDisabled}>
+              {loading ? "Refreshing…" : "Refresh"}
+            </Button>
+          </div>
         }
       />
 

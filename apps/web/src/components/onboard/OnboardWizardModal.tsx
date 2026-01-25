@@ -99,8 +99,8 @@ export function OnboardWizardModal(props: {
 
   onPersonChange: (patch: Partial<PersonRow>) => void;
 
-  assignmentDraft: { position_title: string; start_date: string };
-  onAssignmentChange: (next: { position_title: string; start_date: string }) => void;
+  assignmentDraft: { position_title: string; start_date: string; tech_id: string };
+  onAssignmentChange: (next: { position_title: string; start_date: string; tech_id: string }) => void;
 
   childAssignmentId?: string;
   

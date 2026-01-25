@@ -86,12 +86,10 @@ export default function OnboardPage() {
   const [employmentType, setEmploymentType] = useState<"" | "company" | "contractor">("");
 
   const [assignmentDraft, setAssignmentDraft] = useState<{
-  position_title: string;
-  start_date: string;
-  tech_id: string;
+    position_title: string;
+    start_date: string;
+    tech_id: string;
   }>({ position_title: "", start_date: todayIsoDate(), tech_id: "" });
-
-
 
   const [createdAssignment, setCreatedAssignment] = useState<AssignmentRow | null>(null);
 
@@ -217,7 +215,8 @@ export default function OnboardPage() {
     setLoading(true);
     setErr(null);
 
-    try {      // Derived fields are handled by the app/DB. We only send direct user inputs.
+    try {
+      // Derived fields are handled by the app/DB. We only send direct user inputs.
       const saved = await api.personUpsert({
         person_id: String(personDraft.person_id),
         full_name: personDraft.full_name ?? null,
@@ -397,11 +396,7 @@ export default function OnboardPage() {
                   placeholder="Search people…"
                   className="w-full"
                 />
-                <Button
-                  variant="ghost"
-                  onClick={() => loadPeople(mode, query, statusFilter)}
-                  disabled={!canLoad || loading}
-                >
+                <Button variant="ghost" onClick={() => loadPeople(mode, query, statusFilter)} disabled={!canLoad || loading}>
                   Refresh
                 </Button>
               </div>
@@ -450,7 +445,6 @@ export default function OnboardPage() {
             onCreateAssignment={createAssignment}
             onFinish={finishLeadership}
           />
-
         </>
       )}
     </PageShell>
@@ -501,4 +495,3 @@ function PeopleTable({ rows, onOpen }: { rows: PersonRow[]; onOpen: (row: Person
     </DataTable>
   );
 }
-

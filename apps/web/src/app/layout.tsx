@@ -8,8 +8,8 @@ import "../styles/globals.css";
 import "../styles/tokens.theme-glass.css";
 
 import CoreNav from "@/components/CoreNav";
-import FooterHelp from "@/components/FooterHelp";
-import ThemeConsole from "@/components/ThemeConsole";
+//import ThemeConsole from "@/components/ThemeConsole";
+//import FooterHelp from "@/components/FooterHelp";
 import { OrgProvider } from "@/state/org";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -19,10 +19,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <OrgProvider>
           <CoreNav />
           <main className="px-6 py-6">{children}</main>
-
-          {/* Global UI command center */}
-          <ThemeConsole />
-          <FooterHelp />
         </OrgProvider>
       </body>
     </html>

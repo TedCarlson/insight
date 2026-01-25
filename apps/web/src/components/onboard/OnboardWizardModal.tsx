@@ -77,8 +77,9 @@ export function OnboardWizardModal(props: {
 
   onPersonChange: (patch: Partial<PersonRow>) => void;
 
-  assignmentDraft: { position_title: string; start_date: string };
-  onAssignmentChange: (next: { position_title: string; start_date: string }) => void;
+  assignmentDraft: { position_title: string; start_date: string; tech_id: string };
+  onAssignmentChange: (next: { position_title: string; start_date: string; tech_id: string }) => void;
+
 
   leadersLoading: boolean;
   leaders: RosterCurrentFullRow[];
@@ -159,6 +160,26 @@ export function OnboardWizardModal(props: {
     return list;
   }, [positionTitles]);
 
+  const defaultPositionTitle = useMemo(() => {
+    // Prefer exact match; fall back to case-insensitive match
+    const exact = positionTitleOptions.find((t) => t.position_title === "Technician")?.position_title;
+    if (exact) return exact;
+
+    const ci = positionTitleOptions.find((t) => t.position_title.toLowerCase() === "technician")?.position_title;
+    return ci ?? null;
+  }, [positionTitleOptions]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (step !== "assignment") return;
+
+    // Only set a default if nothing is selected yet
+    if (assignmentDraft.position_title) return;
+
+    if (!defaultPositionTitle) return;
+
+    onAssignmentChange({ ...assignmentDraft, position_title: defaultPositionTitle });
+  }, [open, step, assignmentDraft, defaultPositionTitle, onAssignmentChange]);
 
   const affiliationValue = toAffiliationValue(personDraft, employmentType);
 
@@ -429,8 +450,8 @@ function WizardAssignmentStep({
   titlesError,
   onRetryLoadTitles,
 }: {
-  value: { position_title: string; start_date: string };
-  onChange: (next: { position_title: string; start_date: string }) => void;
+  value: { position_title: string; start_date: string; tech_id: string };
+  onChange: (next: { position_title: string; start_date: string; tech_id: string }) => void;
   titles: { position_title: string }[];
   titlesLoading: boolean;
   titlesError: string | null;
@@ -464,6 +485,13 @@ function WizardAssignmentStep({
               </Button>
             </div>
           ) : null}
+        </Field>
+        <Field label="Tech ID">
+          <TextInput
+            value={value.tech_id}
+            onChange={(e) => onChange({ ...value, tech_id: e.target.value })}
+            placeholder="Tech ID"
+          />
         </Field>
         <Field label="Start date">
           <TextInput

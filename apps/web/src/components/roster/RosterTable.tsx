@@ -26,7 +26,7 @@ export function RosterTable({
       // Template-driven, distributed columns that still respect content and truncate long text.
       layout="content"
       // IMPORTANT: no min-w-max here; it prevents fr columns from distributing and disables truncation.
-      gridClassName="w-full overflow-hidden"
+      gridClassName="w-full min-w-[64rem] lg:min-w-0"
       gridStyle={rosterGridStyle}
     >
       <DataTableHeader>

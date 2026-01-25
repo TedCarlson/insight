@@ -14,11 +14,11 @@ import { OrgProvider } from "@/state/org";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-theme="glass">
       <body className="min-h-screen bg-[var(--to-surface-soft)] text-[var(--to-ink)]">
         <OrgProvider>
           <CoreNav />
-          <main className="p-6">{children}</main>
+          <main className="px-6 py-6">{children}</main>
 
           {/* Global UI command center */}
           <ThemeConsole />

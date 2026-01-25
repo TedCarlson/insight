@@ -74,16 +74,26 @@ export default function CoreNav() {
     router.refresh();
   }
 
-  return (
+    return (
     <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
+      <div className="flex w-full items-center justify-between px-6 py-3">
         <div className="flex items-center gap-4">
           <Link href="/" className="text-sm font-semibold">
             TeamOptix
           </Link>
-          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
-            Home
-          </Link>
+
+          <nav className="flex items-center gap-2">
+            <Link
+              href="/"
+              className={
+                pathname === "/"
+                  ? "rounded-md px-2 py-1 text-sm font-medium text-foreground"
+                  : "rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
+              }
+            >
+              Home
+            </Link>
+          </nav>
         </div>
 
         <div className="flex items-center gap-3">

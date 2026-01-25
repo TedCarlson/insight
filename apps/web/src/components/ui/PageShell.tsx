@@ -1,12 +1,11 @@
 import type { ReactNode } from "react";
 
+export const PAGE_FRAME = "w-full space-y-6";
+
 export function PageShell({ children }: { children: ReactNode }) {
-  return (
-    <div className="mx-auto max-w-5xl lg:max-w-6xl 2xl:max-w-7xl space-y-6">
-      {children}
-    </div>
-  );
+  return <div className={`${PAGE_FRAME} space-y-6`}>{children}</div>;
 }
+
 
 
 export function PageHeader({

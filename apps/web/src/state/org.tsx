@@ -1,8 +1,11 @@
-// src/state/org.tsx
+// apps/web/src/state/org.tsx
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api, PcOrgChoice } from "@/lib/api";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/client";
+import { api, type PcOrgChoice } from "@/lib/api";
+import { useSessionReady } from "@/lib/useSessionReady";
 
 type OrgState = {
   orgs: PcOrgChoice[];
@@ -20,18 +23,22 @@ const Ctx = createContext<OrgState | null>(null);
 const STORAGE_KEY = "pc:selected_org_id";
 
 export function OrgProvider({ children }: { children: React.ReactNode }) {
+  const supabase = useMemo(() => createClient(), []);
+  const sessionReady = useSessionReady();
+
   const [orgs, setOrgs] = useState<PcOrgChoice[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(true);
   const [orgsError, setOrgsError] = useState<string | null>(null);
 
   const [selectedOrgId, setSelectedOrgIdState] = useState<string | null>(null);
 
+  // Load persisted org selection (client-only)
   useEffect(() => {
-    // load persisted org selection
     const saved = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
     if (saved) setSelectedOrgIdState(saved);
   }, []);
 
+  // Persist org selection
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (selectedOrgId) window.localStorage.setItem(STORAGE_KEY, selectedOrgId);
@@ -41,16 +48,18 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   const refreshOrgs = useCallback(async () => {
     setOrgsLoading(true);
     setOrgsError(null);
+
     try {
-      const choices = await api.pcOrgChoices();
+      const choices = (await api.pcOrgChoices()) ?? [];
       setOrgs(choices);
 
-      // Auto-select if none chosen or chosen org no longer available
-      if (!selectedOrgId || !choices.some(o => o.pc_org_id === selectedOrgId)) {
-        setSelectedOrgIdState(choices[0]?.pc_org_id ?? null);
+      // Auto-select if none chosen OR chosen org no longer available
+      if (!selectedOrgId || !choices.some((o) => String(o.pc_org_id) === String(selectedOrgId))) {
+        setSelectedOrgIdState((choices[0]?.pc_org_id as string) ?? null);
       }
-    } catch (e: any) {
-      setOrgsError(e?.message ?? "Failed to load org choices");
+    } catch (e: unknown) {
+      const msg = (e as any)?.message ?? "Failed to load org choices";
+      setOrgsError(msg);
       setOrgs([]);
       setSelectedOrgIdState(null);
     } finally {
@@ -58,9 +67,54 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
     }
   }, [selectedOrgId]);
 
+  /**
+   * Key fix: do NOT call api schema RPCs until auth session is ready + user exists.
+   * This prevents first-login redirect flashes of:
+   *   "permission denied for schema api"
+   */
   useEffect(() => {
-    refreshOrgs();
-  }, [refreshOrgs]);
+    let alive = true;
+
+    async function boot() {
+      if (!sessionReady) return;
+
+      // If there is no signed-in user, don't hit the api schema.
+      const { data } = await supabase.auth.getUser();
+      if (!alive) return;
+
+      if (!data.user) {
+        setOrgs([]);
+        setSelectedOrgIdState(null);
+        setOrgsError(null);
+        setOrgsLoading(false);
+        return;
+      }
+
+      await refreshOrgs();
+    }
+
+    void boot();
+
+    // React to auth changes: on login, load orgs; on logout, clear.
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event: AuthChangeEvent, session: Session | null) => {
+      if (!alive) return;
+
+      if (!session) {
+        setOrgs([]);
+        setSelectedOrgIdState(null);
+        setOrgsError(null);
+        setOrgsLoading(false);
+        return;
+      }
+
+      await refreshOrgs();
+    });
+
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [sessionReady, supabase, refreshOrgs]);
 
   const setSelectedOrgId = useCallback((id: string | null) => setSelectedOrgIdState(id), []);
 

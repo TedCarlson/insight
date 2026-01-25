@@ -27,7 +27,6 @@ export type PcOrgChoice = {
   [k: string]: any;
 };
 
-
 export type PcOrgAdminMeta = {
   pc_org_id?: UUID;
   mso_name?: string | null;
@@ -36,6 +35,29 @@ export type PcOrgAdminMeta = {
   [k: string]: any;
 };
 
+export type PermissionDefRow = {
+  permission_key: string;
+  description?: string | null;
+  created_at?: string | null;
+  [k: string]: any;
+};
+
+export type PcOrgPermissionGrantRow = {
+  pc_org_id?: UUID;
+  auth_user_id?: UUID;
+  permission_key?: string;
+  expires_at?: IsoDateString | null;
+  notes?: string | null;
+  created_at?: IsoDateString | null;
+  created_by?: UUID | null;
+  [k: string]: any;
+};
+
+
+export type PcOrgEligibilityRow = {
+  pc_org_id?: UUID;
+  [k: string]: any;
+};
 
 export type PersonRow = {
   person_id?: UUID;
@@ -78,8 +100,6 @@ export type AssignmentReportingRow = {
   updated_by?: UUID | null;
   [k: string]: any;
 };
-
-
 
 /** roster_current "thin slice" row (what the table shows + what the modal uses for selection context) */
 export type RosterRow = {
@@ -188,7 +208,6 @@ export type RosterDrilldownRow = {
   [k: string]: any;
 };
 
-
 /** roster_row_module_get (single-call hydration row for the modal: person + assignment + org + leadership) */
 export type RosterRowModuleRow = {
   assignment_id?: UUID;
@@ -290,18 +309,40 @@ export class ApiClient {
     };
   }
 
+  /**
+   * Ensures the Supabase session is present and refreshes it if it's close to expiring.
+   * Useful to avoid "stale token" / partial hydration issues that are fixed by log out/in.
+   */
+  async ensureSessionFresh(): Promise<void> {
+    const auth: any = (this.supabase as any)?.auth;
+    if (!auth?.getSession) return;
 
-/**
- * Remove keys with value === undefined so PostgREST doesn't treat them as provided params.
- * (Keeping null is intentional; null means "set to null" when the RPC supports that param.)
- */
-private compactRecord<T extends Record<string, any>>(obj: T): Partial<T> {
-  const out: Record<string, any> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (v !== undefined) out[k] = v;
+    const { data, error } = await auth.getSession();
+    if (error) return;
+
+    const session = data?.session;
+    if (!session) return;
+
+    const expiresAt = session.expires_at ?? 0; // seconds
+    const now = Math.floor(Date.now() / 1000);
+
+    // Refresh if expiring within 2 minutes
+    if (expiresAt && expiresAt - now < 120) {
+      await auth.refreshSession();
+    }
   }
-  return out as Partial<T>;
-}
+
+  /**
+   * Remove keys with value === undefined so PostgREST doesn't treat them as provided params.
+   * (Keeping null is intentional; null means "set to null" when the RPC supports that param.)
+   */
+  private compactRecord<T extends Record<string, any>>(obj: T): Partial<T> {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== undefined) out[k] = v;
+    }
+    return out as Partial<T>;
+  }
 
   /**
    * Try the same RPC with multiple argument-shapes.
@@ -323,7 +364,64 @@ private compactRecord<T extends Record<string, any>>(obj: T): Partial<T> {
     return (await this.rpcWithFallback<PcOrgChoice[]>("pc_org_choices", [undefined])) ?? [];
   }
 
+    async permissionDefs(): Promise<PermissionDefRow[]> {
+    const { data, error } = await this.supabase
+      .from("permission_def")
+      .select("permission_key,description,created_at")
+      .order("permission_key", { ascending: true });
 
+    if (error) throw this.normalize(error);
+    return (data as any) ?? [];
+  }
+
+  async permissionsForOrg(pc_org_id: string): Promise<PcOrgPermissionGrantRow[]> {
+    return (
+      (await this.rpcWithFallback<PcOrgPermissionGrantRow[]>("permissions_for_org", [
+        { p_pc_org_id: pc_org_id },
+        { pc_org_id },
+      ])) ?? []
+    );
+  }
+
+  async permissionGrant(input: {
+    pc_org_id: string;
+    auth_user_id: string;
+    permission_key: string;
+    expires_at?: string | null;
+    notes?: string | null;
+  }): Promise<PcOrgPermissionGrantRow> {
+    const { pc_org_id, auth_user_id, permission_key } = input;
+    const p_expires_at = input.expires_at ?? null;
+    const p_notes = input.notes ?? null;
+
+    return await this.rpcWithFallback<PcOrgPermissionGrantRow>("permission_grant", [
+      {
+        p_pc_org_id: pc_org_id,
+        p_auth_user_id: auth_user_id,
+        p_permission_key: permission_key,
+        p_expires_at,
+        p_notes,
+      },
+      {
+        pc_org_id,
+        auth_user_id,
+        permission_key,
+        expires_at: p_expires_at,
+        notes: p_notes,
+      },
+    ]);
+  }
+
+  async permissionRevoke(input: { pc_org_id: string; auth_user_id: string; permission_key: string }): Promise<boolean> {
+    const { pc_org_id, auth_user_id, permission_key } = input;
+
+    const out = await this.rpcWithFallback<boolean>("permission_revoke", [
+      { p_pc_org_id: pc_org_id, p_auth_user_id: auth_user_id, p_permission_key: permission_key },
+      { pc_org_id, auth_user_id, permission_key },
+    ]);
+
+    return !!out;
+  }
 
   async pcOrgAdminMeta(pc_org_id: string): Promise<PcOrgAdminMeta> {
     const { data, error } = await this.supabase
@@ -342,7 +440,7 @@ private compactRecord<T extends Record<string, any>>(obj: T): Partial<T> {
     );
   }
 
-    async rosterCurrentFull(pc_org_id: string, position_title?: string | null): Promise<RosterCurrentFullRow[]> {
+  async rosterCurrentFull(pc_org_id: string, position_title?: string | null): Promise<RosterCurrentFullRow[]> {
     const p_position_title = position_title ?? null;
     return (
       (await this.rpcWithFallback<RosterCurrentFullRow[]>("roster_current_full", [
@@ -378,7 +476,6 @@ private compactRecord<T extends Record<string, any>>(obj: T): Partial<T> {
     return data ?? null;
   }
 
-
   async orgEventFeed(pc_org_id: string, limit = 50): Promise<OrgEventRow[]> {
     return (
       (await this.rpcWithFallback<OrgEventRow[]>("org_event_feed", [
@@ -388,58 +485,40 @@ private compactRecord<T extends Record<string, any>>(obj: T): Partial<T> {
       ])) ?? []
     );
   }
-async personUpsert(input: {
-  person_id: string;
-  full_name?: string | null;
-  emails?: string | null;
-  mobile?: string | null;
-  fuse_emp_id?: string | null;
-  person_notes?: string | null;
-  person_nt_login?: string | null;
-  person_csg_id?: string | null;
-  active?: boolean | null;
-  role?: string | null;
-  co_ref_id?: string | null;
-  co_code?: string | null;
-}): Promise<PersonRow | null> {
-  // Exact signature (from pg_proc):
-  // api.person_upsert(
-  //   p_person_id uuid,
-  //   p_full_name text,
-  //   p_emails text,
-  //   p_mobile text,
-  //   p_fuse_emp_id text,
-  //   p_person_notes text,
-  //   p_person_nt_login text,
-  //   p_person_csg_id text,
-  //   p_active boolean,
-  //   p_role text,
-  //   p_co_ref_id uuid,
-  //   p_co_code text
-  // ) returns person
 
-  const args = this.compactRecord({
-    p_person_id: input.person_id,
-    p_full_name: input.full_name ?? undefined,
-    p_emails: input.emails ?? undefined,
-    p_mobile: input.mobile ?? undefined,
-    p_fuse_emp_id: input.fuse_emp_id ?? undefined,
-    p_person_notes: input.person_notes ?? undefined,
-    p_person_nt_login: input.person_nt_login ?? undefined,
-    p_person_csg_id: input.person_csg_id ?? undefined,
-    p_active: input.active ?? undefined,
-    p_role: input.role ?? undefined,
-    p_co_ref_id: input.co_ref_id ?? undefined,
-    p_co_code: input.co_code ?? undefined,
-  });
+  async personUpsert(input: {
+    person_id: string;
+    full_name?: string | null;
+    emails?: string | null;
+    mobile?: string | null;
+    fuse_emp_id?: string | null;
+    person_notes?: string | null;
+    person_nt_login?: string | null;
+    person_csg_id?: string | null;
+    active?: boolean | null;
+    role?: string | null;
+    co_ref_id?: string | null;
+    co_code?: string | null;
+  }): Promise<PersonRow | null> {
+    const args = this.compactRecord({
+      p_person_id: input.person_id,
+      p_full_name: input.full_name ?? undefined,
+      p_emails: input.emails ?? undefined,
+      p_mobile: input.mobile ?? undefined,
+      p_fuse_emp_id: input.fuse_emp_id ?? undefined,
+      p_person_notes: input.person_notes ?? undefined,
+      p_person_nt_login: input.person_nt_login ?? undefined,
+      p_person_csg_id: input.person_csg_id ?? undefined,
+      p_active: input.active ?? undefined,
+      p_role: input.role ?? undefined,
+      p_co_ref_id: input.co_ref_id ?? undefined,
+      p_co_code: input.co_code ?? undefined,
+    });
 
-  const { data, error } = await this.supabase.rpc("person_upsert", args as any);
-  if (error) throw this.normalize(error);
-  return (data as any) ?? null;
-}
-
-
-
+    const { data, error } = await this.supabase.rpc("person_upsert", args as any);
+    if (error) throw this.normalize(error);
+    return (data as any) ?? null;
+  }
 
   /**
    * Update an existing assignment row (public.assignment).
@@ -516,7 +595,6 @@ async personUpsert(input: {
     return (data as any) ?? null;
   }
 
-
   async personGet(person_id: string): Promise<PersonRow | null> {
     const data = await this.rpcWithFallback<any>("person_get", [
       { p_person_id: person_id },
@@ -579,10 +657,6 @@ async personUpsert(input: {
     start_date: string;
     notes?: string | null;
   }): Promise<AssignmentRow> {
-    // NOTE: We intentionally send *all* RPC params, including nulls.
-    // The SQL function signature requires these named params:
-    // api.wizard_process_to_roster(p_notes, p_pc_org_id, p_person_id, p_position_title, p_start_date)
-    // Passing undefined would drop keys and cause a schema-cache mismatch.
     const args = this.compactRecord({
       p_pc_org_id: input.pc_org_id,
       p_person_id: input.person_id,
@@ -591,71 +665,107 @@ async personUpsert(input: {
       p_notes: input.notes ?? null,
     });
 
-    // Use the current SQL parameter names (p_*) only. If these drift, we want the error to reflect
-    // the real function signature instead of falling back to legacy names.
     const data = await this.rpcWithFallback<any>("wizard_process_to_roster", [args]);
     return data as AssignmentRow;
   }
 
-/**
- * Resolve company/contractor display for a person.
- * co_ref_id may point to company_admin_v.company_id OR contractor_admin_v.contractor_id.
- * If co_ref_id is null but co_code exists, we try matching by code.
- */
-async resolveCoDisplay(input: { co_ref_id?: string | null; co_code?: string | null }): Promise<{ kind: "company" | "contractor"; name: string; matched_on: "id" | "code" } | null> {
-  const co_ref_id = input.co_ref_id ?? null;
-  const co_code = input.co_code ?? null;
+  /**
+   * Resolve company/contractor display for a person.
+   * co_ref_id may point to company_admin_v.company_id OR contractor_admin_v.contractor_id.
+   * If co_ref_id is null but co_code exists, we try matching by code.
+   */
+  async resolveCoDisplay(input: {
+    co_ref_id?: string | null;
+    co_code?: string | null;
+  }): Promise<{ kind: "company" | "contractor"; name: string; matched_on: "id" | "code" } | null> {
+    const co_ref_id = input.co_ref_id ?? null;
+    const co_code = input.co_code ?? null;
 
-  // 1) Try by co_ref_id (uuid)
-  if (co_ref_id) {
-    const company = await this.supabase
-      .from("company_admin_v")
-      .select("company_id, company_name")
-      .eq("company_id", co_ref_id)
-      .maybeSingle();
+    // 1) Try by co_ref_id (uuid)
+    if (co_ref_id) {
+      const company = await this.supabase
+        .from("company_admin_v")
+        .select("company_id, company_name")
+        .eq("company_id", co_ref_id)
+        .maybeSingle();
 
-    if (!company.error && company.data?.company_name) {
-      return { kind: "company", name: company.data.company_name, matched_on: "id" };
+      if (!company.error && company.data?.company_name) {
+        return { kind: "company", name: company.data.company_name, matched_on: "id" };
+      }
+
+      const contractor = await this.supabase
+        .from("contractor_admin_v")
+        .select("contractor_id, contractor_name")
+        .eq("contractor_id", co_ref_id)
+        .maybeSingle();
+
+      if (!contractor.error && contractor.data?.contractor_name) {
+        return { kind: "contractor", name: contractor.data.contractor_name, matched_on: "id" };
+      }
     }
 
-    const contractor = await this.supabase
-      .from("contractor_admin_v")
-      .select("contractor_id, contractor_name")
-      .eq("contractor_id", co_ref_id)
-      .maybeSingle();
+    // 2) Fallback by co_code (text)
+    if (co_code) {
+      const companyByCode = await this.supabase
+        .from("company_admin_v")
+        .select("company_code, company_name")
+        .eq("company_code", co_code)
+        .maybeSingle();
 
-    if (!contractor.error && contractor.data?.contractor_name) {
-      return { kind: "contractor", name: contractor.data.contractor_name, matched_on: "id" };
+      if (!companyByCode.error && companyByCode.data?.company_name) {
+        return { kind: "company", name: companyByCode.data.company_name, matched_on: "code" };
+      }
+
+      const contractorByCode = await this.supabase
+        .from("contractor_admin_v")
+        .select("contractor_code, contractor_name")
+        .eq("contractor_code", co_code)
+        .maybeSingle();
+
+      if (!contractorByCode.error && contractorByCode.data?.contractor_name) {
+        return { kind: "contractor", name: contractorByCode.data.contractor_name, matched_on: "code" };
+      }
     }
+
+    return null;
+  }
+  async pcOrgEligibilityForUser(auth_user_id: string): Promise<PcOrgEligibilityRow[]> {
+    return (
+      (await this.rpcWithFallback<PcOrgEligibilityRow[]>("pc_org_eligibility_for_user", [
+        { p_auth_user_id: auth_user_id },
+        { auth_user_id },
+      ])) ?? []
+    );
   }
 
-  // 2) Fallback by co_code (text)
-  if (co_code) {
-    const companyByCode = await this.supabase
-      .from("company_admin_v")
-      .select("company_code, company_name")
-      .eq("company_code", co_code)
-      .maybeSingle();
-
-    if (!companyByCode.error && companyByCode.data?.company_name) {
-      return { kind: "company", name: companyByCode.data.company_name, matched_on: "code" };
-    }
-
-    const contractorByCode = await this.supabase
-      .from("contractor_admin_v")
-      .select("contractor_code, contractor_name")
-      .eq("contractor_code", co_code)
-      .maybeSingle();
-
-    if (!contractorByCode.error && contractorByCode.data?.contractor_name) {
-      return { kind: "contractor", name: contractorByCode.data.contractor_name, matched_on: "code" };
-    }
+  async pcOrgEligibilityGrant(input: { pc_org_id: string; auth_user_id: string }): Promise<boolean> {
+    const { pc_org_id, auth_user_id } = input;
+    const out = await this.rpcWithFallback<boolean>("pc_org_eligibility_grant", [
+      { p_pc_org_id: pc_org_id, p_auth_user_id: auth_user_id },
+      { pc_org_id, auth_user_id },
+    ]);
+    return !!out;
   }
 
-  return null;
-}
-}
+  async pcOrgEligibilityRevoke(input: { pc_org_id: string; auth_user_id: string }): Promise<boolean> {
+    const { pc_org_id, auth_user_id } = input;
+    const out = await this.rpcWithFallback<boolean>("pc_org_eligibility_revoke", [
+      { p_pc_org_id: pc_org_id, p_auth_user_id: auth_user_id },
+      { pc_org_id, auth_user_id },
+    ]);
+    return !!out;
+  }
 
+
+  async isItgSupervisor(auth_user_id: string): Promise<boolean> {
+    const out = await this.rpcWithFallback<boolean>("is_itg_supervisor", [
+      { p_auth_user_id: auth_user_id },
+      { auth_user_id },
+    ]);
+    return !!out;
+  }
+
+}
 
 export type PersonUpsertInput = {
   person_id?: UUID;

@@ -317,93 +317,7 @@ const headerActions: ReactNode = (
   <Modal
     open={open}
     onClose={onClose}
-    title={
-      <div className="flex items-start justify-between gap-3 w-full">
-        <div className="space-y-1 min-w-0">
-          <div className="text-sm font-medium">
-            {wizardMode === "add" ? "Add & Onboard" : "Onboard person"}
-          </div>
-          <div className="text-xs text-[var(--to-ink-muted)]">
-            {safeName(personSaved ?? personDraft)}
-            {personDraft?.person_id ? ` · ${String(personDraft.person_id).slice(0, 8)}` : ""}
-            {scopedOrgId ? (
-              <span className="text-[var(--to-ink-muted)]">
-                {" "}
-                • {scopedOrgName ?? "Org"} • {String(scopedOrgId).slice(0, 8)}
-              </span>
-            ) : (
-              <span className="text-[var(--to-ink-muted)]"> • {scopedOrgName ?? "Org"}</span>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <Badge>{step.toUpperCase()}</Badge>
-
-          <div className="flex items-center gap-2">
-            {step !== "person" ? (
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={onBack}
-                disabled={loading}
-                className="whitespace-nowrap"
-              >
-                Back
-              </Button>
-            ) : null}
-
-            {step === "person" ? (
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={onSavePerson}
-                disabled={loading || !canContinuePerson}
-                className="whitespace-nowrap min-w-[140px]"
-              >
-                Save & Continue
-              </Button>
-            ) : null}
-
-            {step === "org" ? (
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={onProceedOrg}
-                disabled={loading || !canProceedOrg}
-                className="whitespace-nowrap min-w-[120px]"
-              >
-                Continue
-              </Button>
-            ) : null}
-
-            {step === "assignment" ? (
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={onCreateAssignment}
-                disabled={loading || !canCreateAssignment}
-                className="whitespace-nowrap min-w-[140px]"
-              >
-                Add to roster
-              </Button>
-            ) : null}
-
-            {step === "leadership" ? (
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={onFinish}
-                disabled={loading}
-                className="whitespace-nowrap min-w-[120px]"
-              >
-                Finish
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    }
+    title={title}
     size="lg"
     footer={<div />}
   >
@@ -695,9 +609,19 @@ function WizardLeadershipStep({
   const allowCrossToITGSupervisor =
     childTitle === "BP Owner" || childTitle === "BP Supervisor";
 
+  // ITG employees: always include manager roles even if affiliation metadata is imperfect,
+  // because managers may "moonlight" as supervisors.
+  const childAffKind = childAffiliation?.kind ?? null;
+  const childAffName = String(childAffiliation?.name ?? "").toLowerCase();
+  const childAffCode = String(childAffiliation?.co_code ?? "").toLowerCase();
+  const isITGChild = childAffKind === "company" && (childAffCode.includes("itg") || childAffName.includes("itg"));
+
+  const managerTitlesAlwaysAllowed = new Set(["Project Manager", "Regional Manager", "Director", "VP"]);
+
   const candidates = base.filter((r) => {
     const mgrTitle = String(r?.position_title ?? r?.title ?? "").trim();
     if (allowCrossToITGSupervisor && mgrTitle === "ITG Supervisor") return true;
+    if (isITGChild && managerTitlesAlwaysAllowed.has(mgrTitle)) return true;
     return isSameAffiliation(r);
   });
 

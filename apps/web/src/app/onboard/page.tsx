@@ -51,7 +51,7 @@ function applyStatusFilter(list: PersonRow[], statusFilter: StatusFilter): Perso
 
 export default function OnboardPage() {
   const router = useRouter();
-  const { selectedOrgId, orgs, orgsLoading } = useOrg();
+const { selectedOrgId, orgs, orgsLoading } = useOrg();
 
   const validatedOrgId = useMemo(() => {
     if (orgsLoading) return null;
@@ -100,6 +100,7 @@ export default function OnboardPage() {
 
   const canLoad = Boolean(validatedOrgId);
 
+  
   /**
    * Load list for the table.
    *
@@ -252,50 +253,49 @@ export default function OnboardPage() {
   }
 
   async function createAssignment(): Promise<boolean> {
-  if (!validatedOrgId) return false;
-  const pid = personSaved?.person_id ?? personDraft?.person_id;
-  if (!pid) return false;
+    if (!validatedOrgId) return false;
+    const pid = personSaved?.person_id ?? personDraft?.person_id;
+    if (!pid) return false;
 
-  if (!assignmentDraft.start_date) {
-    setErr("Start date is required.");
-    return false;
-  }
-
-  setLoading(true);
-  setErr(null);
-
-  try {
-    // 1) Create the assignment via wizard RPC
-    const a = await api.wizardProcessToRoster({
-      pc_org_id: validatedOrgId,
-      person_id: String(pid),
-      position_title: assignmentDraft.position_title || null,
-      start_date: assignmentDraft.start_date,
-    });
-
-    // 2) Persist tech_id to the assignment row (wizard RPC doesn't write it)
-    const techId = String(assignmentDraft.tech_id ?? "").trim();
-    let created = a;
-
-    if (techId) {
-      const updated = await api.assignmentUpdate({
-        assignment_id: a.assignment_id,
-        tech_id: techId,
-      });
-      if (updated) created = updated;
+    if (!assignmentDraft.start_date) {
+      setErr("Start date is required.");
+      return false;
     }
 
-    setCreatedAssignment(created);
-    setStep("leadership");
-    return true;
-  } catch (e: any) {
-    setErr(e?.message ?? "Failed to create assignment");
-    return false;
-  } finally {
-    setLoading(false);
-  }
-}
+    setLoading(true);
+    setErr(null);
 
+    try {
+      // 1) Create the assignment via wizard RPC
+      const a = await api.wizardProcessToRoster({
+        pc_org_id: validatedOrgId,
+        person_id: String(pid),
+        position_title: assignmentDraft.position_title || null,
+        start_date: assignmentDraft.start_date,
+      });
+
+      // 2) Persist tech_id to the assignment row (wizard RPC doesn't write it)
+      const techId = String(assignmentDraft.tech_id ?? "").trim();
+      let created = a;
+
+      if (techId) {
+        const updated = await api.assignmentUpdate({
+          assignment_id: a.assignment_id,
+          tech_id: techId,
+        });
+        if (updated) created = updated;
+      }
+
+      setCreatedAssignment(created);
+      setStep("leadership");
+      return true;
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to create assignment");
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function loadLeadersOnce() {
     if (!validatedOrgId) return;

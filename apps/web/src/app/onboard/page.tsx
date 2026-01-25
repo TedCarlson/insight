@@ -460,7 +460,6 @@ export default function OnboardPage() {
             onFinish={finishLeadership}
             childAssignmentId={createdAssignment?.assignment_id ?? ""}
           />
-
         </>
       )}
     </PageShell>

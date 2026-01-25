@@ -18,6 +18,28 @@ import { Badge } from "@/components/ui/Badge";
 export type WizardMode = "add" | "select";
 export type WizardStep = "person" | "org" | "assignment" | "leadership";
 
+const POSITION_RANK: Record<string, number> = {
+  "Admin": 80,
+  "VP": 70,
+  "Director": 60,
+  "Regional Manager": 50,
+  "Project Manager": 40,
+  "ITG Supervisor": 30,
+  "BP Owner": 25,
+  "BP Supervisor": 20,
+  "Technician": 10,
+};
+
+function posRank(title: string | null | undefined): number | null {
+  const t = String(title ?? "").trim();
+  if (!t) return null;
+  return Object.prototype.hasOwnProperty.call(POSITION_RANK, t) ? POSITION_RANK[t] : null;
+}
+
+function isTechnicianTitle(title: string | null | undefined): boolean {
+  return String(title ?? "").trim() === "Technician";
+}
+
 function safeName(p: PersonRow | null | undefined) {
   return (p?.full_name ?? (p as any)?.first_name ?? (p as any)?.last_name ?? "—") as string;
 }
@@ -79,7 +101,8 @@ export function OnboardWizardModal(props: {
 
   assignmentDraft: { position_title: string; start_date: string; tech_id: string };
   onAssignmentChange: (next: { position_title: string; start_date: string; tech_id: string }) => void;
-
+  
+  childAssignmentId?: string;
 
   leadersLoading: boolean;
   leaders: RosterCurrentFullRow[];
@@ -108,6 +131,7 @@ export function OnboardWizardModal(props: {
     onPersonChange,
     assignmentDraft,
     onAssignmentChange,
+    childAssignmentId,
     leadersLoading,
     leaders,
     leaderAssignmentId,
@@ -200,132 +224,234 @@ export function OnboardWizardModal(props: {
     else if (step === "assignment") setStep("org");
     else if (step === "leadership") setStep("assignment");
   }
+const headerActions: ReactNode = (
+  <div className="flex items-center gap-2">
+    {step !== "person" ? (
+      <Button
+        variant="secondary"
+        type="button"
+        onClick={onBack}
+        disabled={loading}
+        className="whitespace-nowrap"
+      >
+        Back
+      </Button>
+    ) : null}
 
-  const title: ReactNode = (
-    <div className="flex items-center justify-between w-full">
-      <div className="space-y-1">
-        <div className="text-sm font-medium">{wizardMode === "add" ? "Add & Onboard" : "Onboard person"}</div>
-        <div className="text-xs text-[var(--to-ink-muted)]">
-          {safeName(personSaved ?? personDraft)}{" "}
-          {personDraft?.person_id ? `· ${String(personDraft.person_id).slice(0, 8)}` : ""}{" "}
-          {scopedOrgId ? (
-            <span className="text-[var(--to-ink-muted)]">
-              • {scopedOrgName ?? "Org"} • {String(scopedOrgId).slice(0, 8)}
-            </span>
-          ) : (
-            <span className="text-[var(--to-ink-muted)]">• {scopedOrgName ?? "Org"}</span>
-          )}
+    {step === "person" ? (
+      <Button
+        variant="secondary"
+        type="button"
+        onClick={onSavePerson}
+        disabled={loading || !canContinuePerson}
+        className="whitespace-nowrap min-w-[140px]"
+      >
+        Save & Continue
+      </Button>
+    ) : null}
+
+    {step === "org" ? (
+      <Button
+        variant="secondary"
+        type="button"
+        onClick={onProceedOrg}
+        disabled={loading || !canProceedOrg}
+        className="whitespace-nowrap min-w-[120px]"
+      >
+        Continue
+      </Button>
+    ) : null}
+
+    {step === "assignment" ? (
+      <Button
+        variant="secondary"
+        type="button"
+        onClick={onCreateAssignment}
+        disabled={loading || !canCreateAssignment}
+        className="whitespace-nowrap min-w-[140px]"
+      >
+        Add to roster
+      </Button>
+    ) : null}
+
+    {step === "leadership" ? (
+      <Button
+        variant="secondary"
+        type="button"
+        onClick={onFinish}
+        disabled={loading}
+        className="whitespace-nowrap min-w-[120px]"
+      >
+        Finish
+      </Button>
+    ) : null}
+  </div>
+);
+
+      const title: ReactNode = (
+      <div className="flex items-start justify-between gap-3 w-full">
+        <div className="space-y-1 min-w-0">
+          <div className="text-sm font-medium">{wizardMode === "add" ? "Add & Onboard" : "Onboard person"}</div>
+          <div className="text-xs text-[var(--to-ink-muted)]">
+            {safeName(personSaved ?? personDraft)}{" "}
+            {personDraft?.person_id ? `· ${String(personDraft.person_id).slice(0, 8)}` : ""}{" "}
+            {scopedOrgId ? (
+              <span className="text-[var(--to-ink-muted)]">
+                • {scopedOrgName ?? "Org"} • {String(scopedOrgId).slice(0, 8)}
+              </span>
+            ) : (
+              <span className="text-[var(--to-ink-muted)]">• {scopedOrgName ?? "Org"}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <Badge>{step.toUpperCase()}</Badge>
+          {headerActions}
         </div>
       </div>
-      <Badge>{step.toUpperCase()}</Badge>
-    </div>
-  );
+    );
+
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={title}
-      size="lg"
-      footer={
-        <div className="flex items-center justify-end gap-2 w-full">
-          {step !== "person" ? (
-            <Button variant="secondary"
-              type="button"
-              onClick={onBack}
-              disabled={loading}
-              className="whitespace-nowrap"
-            >
-              Back
-            </Button>
-          ) : null}
-
-          {step === "person" ? (
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={onSavePerson}
-              disabled={loading || !canContinuePerson}
-              className="whitespace-nowrap min-w-[140px]"
-            >
-              Save & Continue
-            </Button>
-          ) : null}
-
-          {step === "org" ? (
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={onProceedOrg}
-              disabled={loading || !canProceedOrg}
-              className="whitespace-nowrap min-w-[120px]"
-            >
-              Continue
-            </Button>
-          ) : null}
-
-          {step === "assignment" ? (
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={onCreateAssignment}
-              disabled={loading || !canCreateAssignment}
-              className="whitespace-nowrap min-w-[140px]"
-            >
-              Add to roster
-            </Button>
-          ) : null}
-
-          {step === "leadership" ? (
-            <Button
-              variant="secondary" type="button" onClick={onFinish} disabled={loading} className="whitespace-nowrap min-w-[120px]">
-              Finish
-            </Button>
-          ) : null}
+  <Modal
+    open={open}
+    onClose={onClose}
+    title={
+      <div className="flex items-start justify-between gap-3 w-full">
+        <div className="space-y-1 min-w-0">
+          <div className="text-sm font-medium">
+            {wizardMode === "add" ? "Add & Onboard" : "Onboard person"}
+          </div>
+          <div className="text-xs text-[var(--to-ink-muted)]">
+            {safeName(personSaved ?? personDraft)}
+            {personDraft?.person_id ? ` · ${String(personDraft.person_id).slice(0, 8)}` : ""}
+            {scopedOrgId ? (
+              <span className="text-[var(--to-ink-muted)]">
+                {" "}
+                • {scopedOrgName ?? "Org"} • {String(scopedOrgId).slice(0, 8)}
+              </span>
+            ) : (
+              <span className="text-[var(--to-ink-muted)]"> • {scopedOrgName ?? "Org"}</span>
+            )}
+          </div>
         </div>
-      }
-    >
-      <div className="space-y-6">
-        {error ? (
-          <Notice variant="danger" title="Error">
-            {error}
-          </Notice>
-        ) : null}
 
-        {step === "person" ? (
-          <WizardPersonStep
-            person={personDraft}
-            affiliationValue={affiliationValue}
-            employmentType={employmentType}
-            onEmploymentTypeChange={onEmploymentTypeChange}
-            onChange={onPersonChange}
-          />
-        ) : null}
+        <div className="flex items-center gap-2 shrink-0">
+          <Badge>{step.toUpperCase()}</Badge>
 
-        {step === "org" ? <WizardOrgStep pc_org_id={scopedOrgId} pc_org_name={scopedOrgName} /> : null}
+          <div className="flex items-center gap-2">
+            {step !== "person" ? (
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={onBack}
+                disabled={loading}
+                className="whitespace-nowrap"
+              >
+                Back
+              </Button>
+            ) : null}
 
-        {step === "assignment" ? (
-          <WizardAssignmentStep
-            value={assignmentDraft}
-            onChange={onAssignmentChange}
-            titles={positionTitleOptions}
-            titlesLoading={positionTitlesLoading}
-            titlesError={positionTitlesError}
-            onRetryLoadTitles={loadPositionTitles}
-          />
-        ) : null}
+            {step === "person" ? (
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={onSavePerson}
+                disabled={loading || !canContinuePerson}
+                className="whitespace-nowrap min-w-[140px]"
+              >
+                Save & Continue
+              </Button>
+            ) : null}
 
-        {step === "leadership" ? (
-          <WizardLeadershipStep
-            loading={leadersLoading}
-            leaders={leaders}
-            leaderAssignmentId={leaderAssignmentId}
-            onLeaderAssignmentIdChange={onLeaderAssignmentIdChange}
-          />
-        ) : null}
+            {step === "org" ? (
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={onProceedOrg}
+                disabled={loading || !canProceedOrg}
+                className="whitespace-nowrap min-w-[120px]"
+              >
+                Continue
+              </Button>
+            ) : null}
+
+            {step === "assignment" ? (
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={onCreateAssignment}
+                disabled={loading || !canCreateAssignment}
+                className="whitespace-nowrap min-w-[140px]"
+              >
+                Add to roster
+              </Button>
+            ) : null}
+
+            {step === "leadership" ? (
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={onFinish}
+                disabled={loading}
+                className="whitespace-nowrap min-w-[120px]"
+              >
+                Finish
+              </Button>
+            ) : null}
+          </div>
+        </div>
       </div>
-    </Modal>
-  );
+    }
+    size="lg"
+    footer={<div />}
+  >
+    <div className="space-y-6">
+      {error ? (
+        <Notice variant="danger" title="Error">
+          {error}
+        </Notice>
+      ) : null}
+
+      {step === "person" ? (
+        <WizardPersonStep
+          person={personDraft}
+          affiliationValue={affiliationValue}
+          employmentType={employmentType}
+          onEmploymentTypeChange={onEmploymentTypeChange}
+          onChange={onPersonChange}
+        />
+      ) : null}
+
+      {step === "org" ? <WizardOrgStep pc_org_id={scopedOrgId} pc_org_name={scopedOrgName} /> : null}
+
+      {step === "assignment" ? (
+        <WizardAssignmentStep
+          value={assignmentDraft}
+          onChange={onAssignmentChange}
+          titles={positionTitleOptions}
+          titlesLoading={positionTitlesLoading}
+          titlesError={positionTitlesError}
+          onRetryLoadTitles={loadPositionTitles}
+        />
+      ) : null}
+
+      {step === "leadership" ? (
+        <WizardLeadershipStep
+          loading={leadersLoading}
+          leaders={leaders}
+          leaderAssignmentId={leaderAssignmentId}
+          onLeaderAssignmentIdChange={onLeaderAssignmentIdChange}
+          childAssignmentId={childAssignmentId ?? ""}
+          childAffiliation={affiliationValue ?? null}
+          childPositionTitle={assignmentDraft.position_title}
+        />
+      ) : null}
+    </div>
+  </Modal>
+);
+
 }
 
 function WizardPersonStep({
@@ -512,26 +638,173 @@ function WizardLeadershipStep({
   leaders,
   leaderAssignmentId,
   onLeaderAssignmentIdChange,
+  childAssignmentId,
+  childAffiliation,
+  childPositionTitle,
 }: {
   loading: boolean;
   leaders: RosterCurrentFullRow[];
   leaderAssignmentId: string;
   onLeaderAssignmentIdChange: (v: string) => void;
+  childAssignmentId: string;
+  childAffiliation: AffiliationOption | null;
+  childPositionTitle: string;
 }) {
+  const managerOptions = useMemo(() => {
+  const rows: any[] = (leaders ?? []) as any[];
+  const childId = String(childAssignmentId ?? "");
+  const childTitle = String(childPositionTitle ?? "").trim();
+
+  // Helper to build label like roster: Name — Title
+  const toLabel = (r: any) => {
+    const name = (r?.full_name ?? r?.person_name ?? r?.name ?? "—") as string;
+    const title = String(r?.position_title ?? r?.title ?? "").trim();
+    return title ? `${name} — ${title}` : name;
+  };
+
+  // Child affiliation (may be null by type; in practice should be set)
+  const childCoRef = String(childAffiliation?.co_ref_id ?? "").trim();
+  const childCoCode = childAffiliation?.co_code ? String(childAffiliation.co_code).trim() : "";
+
+  // Candidate base filter: active, not self, manager not Technician
+  const base = rows.filter((r) => {
+    const aid = String(r?.assignment_id ?? "");
+    if (!aid) return false;
+    if (childId && aid === childId) return false;
+
+    const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
+    if (!active) return false;
+
+    const mgrTitle = String(r?.position_title ?? r?.title ?? "").trim();
+    if (mgrTitle === "Technician") return false; // never selectable parent
+
+    return true;
+  });
+
+  // Affiliation gating with BP exceptions:
+  // - default: same affiliation only
+  // - BP Owner / BP Supervisor: allowed to pick ITG Supervisor even if different affiliation
+  const isSameAffiliation = (r: any) => {
+    const rCoRef = String(r?.co_ref_id ?? "").trim();
+    const rCoCode = String(r?.co_code ?? "").trim();
+    if (childCoRef) return rCoRef === childCoRef;
+    if (childCoCode) return rCoCode === childCoCode;
+    return true; // if child affiliation missing, don't block
+  };
+
+  const allowCrossToITGSupervisor =
+    childTitle === "BP Owner" || childTitle === "BP Supervisor";
+
+  const candidates = base.filter((r) => {
+    const mgrTitle = String(r?.position_title ?? r?.title ?? "").trim();
+    if (allowCrossToITGSupervisor && mgrTitle === "ITG Supervisor") return true;
+    return isSameAffiliation(r);
+  });
+
+  // Group candidates by position_title
+  const byTitle = new Map<string, { value: string; label: string }[]>();
+  for (const r of candidates) {
+    const title = String(r?.position_title ?? r?.title ?? "").trim();
+    const aid = String(r?.assignment_id ?? "");
+    if (!title || !aid) continue;
+    const arr = byTitle.get(title) ?? [];
+    arr.push({ value: aid, label: toLabel(r) });
+    byTitle.set(title, arr);
+  }
+
+  // Sort labels within each title
+  for (const [t, arr] of byTitle.entries()) {
+    arr.sort((a, b) => a.label.localeCompare(b.label));
+    byTitle.set(t, arr);
+  }
+
+  // Choose “next logical manager title that exists” rules.
+  // Return ALL options for that chosen title (if multiple people share the role).
+  const pickFirstExistingTitle = (titles: string[]) => {
+    for (const t of titles) {
+      const arr = byTitle.get(t);
+      if (arr && arr.length) return arr;
+    }
+    return [];
+  };
+
+  // Titles that never need a "reports to" in this app
+  if (childTitle === "VP" || childTitle === "Admin") return [];
+
+  if (childTitle === "Director") {
+    return pickFirstExistingTitle(["VP"]);
+  }
+
+  if (childTitle === "Regional Manager") {
+    return pickFirstExistingTitle(["Director", "VP"]);
+  }
+
+  if (childTitle === "Project Manager") {
+    // can report to RM if exists; otherwise up
+    return pickFirstExistingTitle(["Regional Manager", "Director", "VP"]);
+  }
+
+  if (childTitle === "ITG Supervisor") {
+    // flex up to next logical manager options
+    return pickFirstExistingTitle(["Project Manager", "Regional Manager", "Director", "VP"]);
+  }
+
+  if (childTitle === "BP Owner") {
+    // can be set to ITG Supervisor
+    return pickFirstExistingTitle(["ITG Supervisor", "Project Manager", "Regional Manager", "Director", "VP"]);
+  }
+
+  if (childTitle === "BP Supervisor") {
+    // must report to ITG Supervisor; if none exists, then next above
+    return pickFirstExistingTitle(["ITG Supervisor", "Project Manager", "Regional Manager", "Director", "VP"]);
+  }
+
+  if (childTitle === "Technician") {
+    // always reports to associated leadership.
+    // Primary: nearest leader roles above (ITG Sup for ITG, BP Sup/Owner for BP), else next up.
+    // Note: this stays inside same affiliation unless ITG Supervisor exists and child is BP,
+    // in which case ITG Supervisor will appear only if allowCrossToITGSupervisor is true (it's not),
+    // so Technicians stay "within their affiliation" by default.
+    return pickFirstExistingTitle([
+      "ITG Supervisor",
+      "BP Supervisor",
+      "BP Owner",
+      "Project Manager",
+      "Regional Manager",
+      "Director",
+      "VP",
+    ]);
+  }
+
+  // Unknown title: fall back to showing all candidates (still active/self/tech excluded)
+  const all = Array.from(byTitle.values()).flat();
+  all.sort((a, b) => a.label.localeCompare(b.label));
+  return all;
+}, [leaders, childAssignmentId, childAffiliation, childPositionTitle]);
+
+
+  const hasOptions = managerOptions.length > 0;
+
   return (
     <Card className="p-4 space-y-4">
       <div className="text-sm font-medium">Leadership (optional)</div>
-      <Notice variant="info" title="Optional">
-        If you know who they report to, set it now. If not, finish onboarding and the manager can set it later from
-        Roster.
-      </Notice>
+
+      {!hasOptions ? (
+        <Notice variant="info" title="Can do later">
+          No valid next-level leader exists for this person’s affiliation + rank in the current roster scope. You can finish onboarding and set leadership later from Roster.
+        </Notice>
+      ) : (
+        <Notice variant="info" title="Optional">
+          Select the nearest valid next-level leader (filtered by affiliation + rank). You can also skip and set it later from Roster.
+        </Notice>
+      )}
 
       <Field label={loading ? "Loading roster…" : "Reports to (optional)"}>
         <Select value={leaderAssignmentId} onChange={(e) => onLeaderAssignmentIdChange(e.target.value)}>
-          <option value="">None / set later</option>
-          {leaders.map((r: any) => (
-            <option key={String(r.assignment_id)} value={String(r.assignment_id)}>
-              {(r.full_name ?? r.person_name ?? "—") as any}
+          <option value="">— None / set later —</option>
+          {managerOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
             </option>
           ))}
         </Select>

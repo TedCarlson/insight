@@ -9,6 +9,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { TextInput } from "@/components/ui/TextInput";
+import { Select } from "@/components/ui/Select";
 import { Notice } from "@/components/ui/Notice";
 
 
@@ -200,6 +201,72 @@ const personHuman = useMemo(() => {
   const [assignmentBaseline, setAssignmentBaseline] = useState<any | null>(null);
   const [assignmentDraft, setAssignmentDraft] = useState<any | null>(null);
 
+  // Position title lookup (shared rules with OnboardWizardModal to prevent free-text drift)
+  type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
+  const [positionTitles, setPositionTitles] = useState<PositionTitleRow[]>([]);
+  const [positionTitlesLoading, setPositionTitlesLoading] = useState(false);
+  const [positionTitlesError, setPositionTitlesError] = useState<string | null>(null);
+
+  const loadPositionTitles = async () => {
+    setPositionTitlesLoading(true);
+    setPositionTitlesError(null);
+    try {
+      const res = await fetch("/api/meta/position-titles", { method: "GET" });
+      const json = (await res.json()) as any;
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error ?? `Failed to load position titles (${res.status})`);
+      }
+      const titles = Array.isArray(json?.titles) ? (json.titles as any[]) : [];
+      setPositionTitles(
+        titles
+          .filter((t) => t && typeof t.position_title === "string")
+          .map((t) => ({
+            position_title: String(t.position_title),
+            sort_order: t.sort_order ?? null,
+            active: t.active ?? null,
+          }))
+      );
+    } catch (e: any) {
+      setPositionTitles([]);
+      setPositionTitlesError(e?.message ?? "Failed to load position titles");
+    } finally {
+      setPositionTitlesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    if (tab !== "assignment") return;
+    void loadPositionTitles();
+  }, [open, tab]);
+
+  const positionTitleOptions = useMemo(() => {
+    const list = [...positionTitles];
+    // server already sorts, but keep deterministic
+    list.sort(
+      (a, b) =>
+        Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || a.position_title.localeCompare(b.position_title)
+    );
+    return list;
+  }, [positionTitles]);
+
+  const defaultPositionTitle = useMemo(() => {
+    // Prefer exact match; fall back to case-insensitive match
+    const exact = positionTitleOptions.find((t) => t.position_title === "Technician")?.position_title;
+    if (exact) return exact;
+
+    const ci = positionTitleOptions.find((t) => t.position_title.toLowerCase() === "technician")?.position_title;
+    return ci ?? null;
+  }, [positionTitleOptions]);
+
+  useEffect(() => {
+    // Only set a default if nothing is selected yet (prevents clobbering hydration)
+    if (!editingAssignment) return;
+    if ((assignmentDraft as any)?.position_title) return;
+    if (!defaultPositionTitle) return;
+
+    setAssignmentDraft((a: any) => ({ ...(a ?? {}), position_title: defaultPositionTitle }));
+  }, [editingAssignment, assignmentDraft, defaultPositionTitle]);
 
   // Leadership overlays / history (primary source for leadership tab = api.roster_drilldown)
   const [drilldown, setDrilldown] = useState<RosterDrilldownRow[] | null>(null);
@@ -1075,7 +1142,20 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                       <div className="grid grid-cols-12 gap-2 text-sm">
                         <div className="col-span-4 text-[var(--to-ink-muted)]">Position title</div>
                         <div className="col-span-8">
-                          <TextInput
+                          {positionTitlesError ? (
+                            <div className="mb-2">
+                              <Notice variant="danger" title="Could not load position titles">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="text-sm">{positionTitlesError}</div>
+                                  <Button variant="ghost" onClick={loadPositionTitles} disabled={positionTitlesLoading}>
+                                    Retry
+                                  </Button>
+                                </div>
+                              </Notice>
+                            </div>
+                          ) : null}
+
+                          <Select
                             value={(assignmentDraft as any)?.position_title ?? ""}
                             onChange={(e) =>
                               setAssignmentDraft((a: any) => ({
@@ -1083,7 +1163,17 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                                 position_title: e.target.value,
                               }))
                             }
-                          />
+                            disabled={positionTitlesLoading}
+                          >
+                            <option value="">
+                              {positionTitlesLoading ? "Loading titles…" : "Select a title…"}
+                            </option>
+                            {positionTitleOptions.map((t) => (
+                              <option key={t.position_title} value={t.position_title}>
+                                {t.position_title}
+                              </option>
+                            ))}
+                          </Select>
                           <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
                             (This references <code className="px-1">position_title</code> lookup; save will fail if invalid.)
                           </div>

@@ -8,8 +8,7 @@ import "../styles/globals.css";
 import "../styles/tokens.theme-glass.css";
 
 import CoreNav from "@/components/CoreNav";
-//import ThemeConsole from "@/components/ThemeConsole";
-//import FooterHelp from "@/components/FooterHelp";
+import FooterHelp from "@/components/FooterHelp";
 import { OrgProvider } from "@/state/org";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -17,8 +16,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en" data-theme="glass">
       <body className="min-h-screen bg-[var(--to-surface-soft)] text-[var(--to-ink)]">
         <OrgProvider>
-          <CoreNav />
-          <main className="px-6 py-6">{children}</main>
+          <div className="min-h-screen flex flex-col">
+            <CoreNav />
+            <main className="flex-1 px-6 py-6">{children}</main>
+            <FooterHelp />
+          </div>
         </OrgProvider>
       </body>
     </html>

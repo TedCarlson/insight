@@ -69,9 +69,13 @@ export default function CoreNav() {
   if (!status?.active) return null;
 
   async function onSignOut() {
+  // Clear any client-side session state…
+  try {
     await supabase.auth.signOut();
-    router.replace("/login");
-    router.refresh();
+  } finally {
+    // …then force a full reload through server signout to clear SSR cookies.
+    window.location.assign("/auth/signout");
+  }
   }
 
     return (

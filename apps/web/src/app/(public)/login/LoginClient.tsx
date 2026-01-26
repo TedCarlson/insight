@@ -20,6 +20,11 @@ type BootstrapResponse = {
   error?: string;
 };
 
+function hardNavigate(to: string) {
+  // Forces a full navigation so middleware + SSR cookies take effect immediately.
+  window.location.assign(to);
+}
+
 async function callBootstrap(): Promise<BootstrapResponse | null> {
   try {
     const res = await fetch("/api/auth/bootstrap", {
@@ -66,7 +71,8 @@ export default function LoginPage() {
         // Best-effort bootstrap
         const boot = await callBootstrap();
         if (boot?.ok) setBootMsg(`bootstrap ok (status=${boot.status ?? "?"})`);
-        router.replace(next);
+        hardNavigate(next);
+
       }
     })();
 
@@ -106,7 +112,7 @@ export default function LoginPage() {
         setBootMsg("bootstrap not ok (continuing)");
       }
 
-      router.replace(next);
+      hardNavigate(next);
     } finally {
       setLoading(false);
     }

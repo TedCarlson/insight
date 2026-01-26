@@ -95,15 +95,15 @@ Patterns are reusable page structures built from primitives:
 - `DataTable` (header/body/row/footer; zebra + hover; token-driven)
 - `EmptyState` (no-data pattern with optional actions)
 
-### 5) Kit / Workbench
-- Route: `/kit`
+### 5) Kit / Workbench (dev-only)
+- Route: `/dev/kit`
 - Purpose:
   - Document canonical patterns
   - Preview variants
   - Verify themes
   - Copy/paste recipes (without inventing new ones)
 
-> If it’s not in `/kit`, it’s not “official.”
+> If it’s not in `/dev/kit`, it’s not “official.”
 
 ---
 
@@ -139,8 +139,8 @@ Example:
 Add a `.tsx` file in this folder that uses those semantic classes.
 Keep it thin: it should mainly map `variant` props to classnames.
 
-### Step D — Demonstrate it in `/kit`
-Update `/kit` to show the new element and its variants.
+### Step D — Demonstrate it in `/dev/kit`
+Update `/dev/kit` to show the new element and its variants.
 
 ---
 
@@ -155,8 +155,8 @@ If this repo is reset or rehydrated, re-establish these anchors:
 2) Theme console:
 - `ThemeConsole` is mounted in `app/layout.tsx` (with FooterHelp)
 
-3) Kit:
-- `/kit` route exists and renders the canonical UI examples
+3) Kit (dev-only):
+- `/dev/kit` route exists and renders the canonical UI examples
 
 Once those three are in place, the UI system “reconnects.”
 
@@ -188,7 +188,7 @@ Once those three are in place, the UI system “reconnects.”
 - [x] EmptyState
 
 ### Kit
-- [x] `/kit` shows canonical patterns + variants
+- [x] `/dev/kit` shows canonical patterns + variants
 - [x] Theme console changes app appearance globally
 
 ### Next improvements
@@ -214,8 +214,8 @@ Once those three are in place, the UI system “reconnects.”
    - All colors, borders, shadows should come from tokens (`var(--to-*)`).
    - If something needs a new token (rare), add it to the token layer and document it.
 
-4) **If it’s reusable, it belongs in `/kit`**
-   - If a new element/pattern isn’t demonstrated in `/kit`, it’s not “official.”
+4) **If it’s reusable, it belongs in `/dev/kit`**
+   - If a new element/pattern isn’t demonstrated in `/dev/kit`, it’s not “official.”
 
 ---
 
@@ -264,7 +264,7 @@ export default function ExamplePage() {
       <Card>
         <div className="flex items-center justify-between">
           <div className="text-sm text-[var(--to-ink-muted)]">
-            Main content goes here. Prefer patterns from /kit.
+            Main content goes here. Prefer patterns from /dev/kit.
           </div>
           <Button variant="secondary" type="button">Action</Button>
         </div>
@@ -272,4 +272,3 @@ export default function ExamplePage() {
     </PageShell>
   );
 }
-```

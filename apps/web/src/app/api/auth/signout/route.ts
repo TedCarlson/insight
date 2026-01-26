@@ -1,3 +1,5 @@
+//apps/web/src/app/api/auth/signout/route.ts
+
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
@@ -6,7 +8,6 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const cookieStore = await cookies();
 
-  // We'll redirect to /login after clearing auth cookies.
   const res = NextResponse.redirect(new URL("/login", url.origin));
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -25,8 +26,6 @@ export async function GET(req: Request) {
     },
   });
 
-  // This is what actually clears the SSR cookies.
   await supabase.auth.signOut();
-
   return res;
 }

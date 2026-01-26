@@ -2,10 +2,8 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
-import { createClient } from "@/lib/supabase/client";
 import { api, type PcOrgChoice } from "@/lib/api";
-import { useSessionReady } from "@/lib/useSessionReady";
+import { useSession } from "@/state/session";
 
 type OrgState = {
   orgs: PcOrgChoice[];
@@ -19,12 +17,10 @@ type OrgState = {
 };
 
 const Ctx = createContext<OrgState | null>(null);
-
 const STORAGE_KEY = "pc:selected_org_id";
 
 export function OrgProvider({ children }: { children: React.ReactNode }) {
-  const supabase = useMemo(() => createClient(), []);
-  const sessionReady = useSessionReady();
+  const { ready, signedIn } = useSession();
 
   const [orgs, setOrgs] = useState<PcOrgChoice[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(true);
@@ -46,6 +42,9 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   }, [selectedOrgId]);
 
   const refreshOrgs = useCallback(async () => {
+    // Only hit api schema when we know we have a session
+    if (!ready || !signedIn) return;
+
     setOrgsLoading(true);
     setOrgsError(null);
 
@@ -54,8 +53,12 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
       setOrgs(choices);
 
       // Auto-select if none chosen OR chosen org no longer available
-      if (!selectedOrgId || !choices.some((o) => String(o.pc_org_id) === String(selectedOrgId))) {
-        setSelectedOrgIdState((choices[0]?.pc_org_id as string) ?? null);
+      const stillValid =
+        selectedOrgId &&
+        choices.some((o) => String((o as any)?.pc_org_id) === String(selectedOrgId));
+
+      if (!stillValid) {
+        setSelectedOrgIdState(((choices[0] as any)?.pc_org_id as string) ?? null);
       }
     } catch (e: unknown) {
       const msg = (e as any)?.message ?? "Failed to load org choices";
@@ -65,60 +68,27 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setOrgsLoading(false);
     }
-  }, [selectedOrgId]);
+  }, [ready, signedIn, selectedOrgId]);
 
-  /**
-   * Key fix: do NOT call api schema RPCs until auth session is ready + user exists.
-   * This prevents first-login redirect flashes of:
-   *   "permission denied for schema api"
-   */
+  // Drive org lifecycle off session state (no auth listeners here)
   useEffect(() => {
-    let alive = true;
+    if (!ready) return;
 
-    async function boot() {
-      if (!sessionReady) return;
-
-      // If there is no signed-in user, don't hit the api schema.
-      const { data } = await supabase.auth.getUser();
-      if (!alive) return;
-
-      if (!data.user) {
-        setOrgs([]);
-        setSelectedOrgIdState(null);
-        setOrgsError(null);
-        setOrgsLoading(false);
-        return;
-      }
-
-      await refreshOrgs();
+    if (!signedIn) {
+      setOrgs([]);
+      setSelectedOrgIdState(null);
+      setOrgsError(null);
+      setOrgsLoading(false);
+      if (typeof window !== "undefined") window.localStorage.removeItem(STORAGE_KEY);
+      return;
     }
 
-    void boot();
-
-    // React to auth changes: on login, load orgs; on logout, clear.
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event: AuthChangeEvent, session: Session | null) => {
-      if (!alive) return;
-
-      if (!session) {
-        setOrgs([]);
-        setSelectedOrgIdState(null);
-        setOrgsError(null);
-        setOrgsLoading(false);
-        return;
-      }
-
-      await refreshOrgs();
-    });
-
-    return () => {
-      alive = false;
-      sub.subscription.unsubscribe();
-    };
-  }, [sessionReady, supabase, refreshOrgs]);
+    void refreshOrgs();
+  }, [ready, signedIn, refreshOrgs]);
 
   const setSelectedOrgId = useCallback((id: string | null) => setSelectedOrgIdState(id), []);
 
-  const value = useMemo(
+  const value = useMemo<OrgState>(
     () => ({
       orgs,
       orgsLoading,
@@ -134,7 +104,7 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useOrg() {
-  const v = useContext(Ctx);
-  if (!v) throw new Error("useOrg must be used within OrgProvider");
-  return v;
+  const ctx = useContext(Ctx);
+  if (!ctx) throw new Error("useOrg must be used within an OrgProvider");
+  return ctx;
 }

@@ -1,4 +1,4 @@
-// apps/web/src/app/kit/TooltipDemo.tsx
+// apps/web/src/app/dev/kit/TooltipDemo.tsx
 "use client";
 
 import { Tooltip } from "@/components/ui/Tooltip";

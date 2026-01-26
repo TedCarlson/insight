@@ -1,4 +1,4 @@
-// apps/web/src/app/kit/PaginationDemo.tsx
+// apps/web/src/app/dev/kit/PaginationDemo.tsx
 "use client";
 
 import { useMemo, useState } from "react";

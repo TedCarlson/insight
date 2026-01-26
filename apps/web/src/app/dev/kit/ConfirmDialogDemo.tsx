@@ -1,4 +1,4 @@
-// apps/web/src/app/kit/ConfirmDialogDemo.tsx
+// apps/web/src/app/dev/kit/ConfirmDialogDemo.tsx
 "use client";
 
 import { useState } from "react";

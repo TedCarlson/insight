@@ -1,71 +1,43 @@
-import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+// apps/web/src/app/api/session/status/route.ts
+import { NextResponse } from "next/server";
+import { supabaseServer } from "@/lib/supabase/server";
 
-type Payload = { signedIn: boolean; active: boolean };
+export async function GET() {
+  const sb = await supabaseServer();
 
-export async function GET(req: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  const base: Payload = { signedIn: false, active: false };
-
-  if (!url || !anon) {
-    return NextResponse.json(base, { status: 200 });
-  }
-
-  // Cookie carrier response (Supabase may refresh cookies)
-  const cookieCarrier = NextResponse.next();
-
-  const supabase = createServerClient(url, anon, {
-    cookies: {
-      getAll() {
-        return req.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value, options }) => {
-          cookieCarrier.cookies.set(name, value, options);
-        });
-      },
-    },
-  });
-
-  const { data: userData } = await supabase.auth.getUser();
+  const { data: userData, error: userErr } = await sb.auth.getUser();
   const user = userData?.user ?? null;
 
-  if (!user) {
-    const res = NextResponse.json(base, { status: 200 });
-    cookieCarrier.cookies.getAll().forEach(({ name, value }) => res.cookies.set(name, value));
-    return res;
+  if (userErr || !user) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
   // Owner bypass
+  let isOwner = false;
   try {
-    const { data } = await supabase.rpc("is_owner");
-    if (data) {
-      const res = NextResponse.json({ signedIn: true, active: true } satisfies Payload, { status: 200 });
-      cookieCarrier.cookies.getAll().forEach(({ name, value }) => res.cookies.set(name, value));
-      return res;
-    }
+    const { data } = await sb.rpc("is_owner");
+    isOwner = !!data;
   } catch {
-    // ignore
+    isOwner = false;
+  }
+  if (isOwner) {
+    return NextResponse.json({ signedIn: true, active: true }, { status: 200 });
   }
 
-  // status gate
-  let active = false;
+  // Active check
+  let status: string | null = null;
   try {
-    const { data: profile } = await supabase
+    const { data: profile } = await sb
       .from("user_profile")
       .select("status")
       .eq("auth_user_id", user.id)
       .maybeSingle();
 
-    const status = (profile as { status?: string } | null)?.status ?? null;
-    active = status === "active";
+    status = (profile as any)?.status ?? null;
   } catch {
-    active = false;
+    status = null;
   }
 
-  const res = NextResponse.json({ signedIn: true, active } satisfies Payload, { status: 200 });
-  cookieCarrier.cookies.getAll().forEach(({ name, value }) => res.cookies.set(name, value));
-  return res;
+  const active = status === "active";
+  return NextResponse.json({ signedIn: true, active }, { status: 200 });
 }

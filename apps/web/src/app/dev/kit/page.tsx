@@ -1,4 +1,4 @@
-// apps/web/src/app/kit/page.tsx
+// apps/web/src/app/dev/kit/page.tsx
 import type { ReactNode } from "react";
 
 import ThemePreview from "./ThemePreview";

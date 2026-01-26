@@ -1,4 +1,4 @@
-// apps/web/src/app/kit/BreadcrumbsDemo.tsx
+// apps/web/src/app/dev/kit/BreadcrumbsDemo.tsx
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
 
 export default function BreadcrumbsDemo() {

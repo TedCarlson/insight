@@ -6,36 +6,83 @@ const OWNER_LANDING = "/";
 const ACTIVE_LANDING = "/";
 
 /**
- * Public = allowed without session.
- * NOTE: "/" is public so your marketing/landing can exist.
- * If you later want "/" to be protected, remove it here.
+ * Public UI routes (no session required).
  */
-function isPublicPath(pathname: string) {
+function isPublicUiPath(pathname: string) {
   return (
     pathname === "/" ||
     pathname.startsWith("/login") ||
     pathname.startsWith("/access") ||
     pathname.startsWith("/auth") ||
-    pathname.startsWith("/api/") ||
     pathname === "/favicon.ico"
   );
 }
 
+/**
+ * Public API routes (no session required).
+ * Keep this extremely tight.
+ */
+function isPublicApiPath(pathname: string) {
+  return pathname.startsWith("/api/auth/");
+}
+
+function isApiPath(pathname: string) {
+  return pathname.startsWith("/api/");
+}
+
+/**
+ * Allowlist for "next" redirects after login.
+ * Keep this tight to avoid redirecting to nonsense/404s.
+ */
+const ALLOWED_NEXT_PREFIXES = ["/", "/home", "/admin", "/org", "/access", "/roster", "/onboard"] as const;
+
+function isAllowedNextPath(pathname: string) {
+  return ALLOWED_NEXT_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
+
 function safeNextParam(req: NextRequest) {
-  // Preserve path + query. Never allow external redirects.
-  const full = req.nextUrl.pathname + (req.nextUrl.search || "");
-  return full.startsWith("/") ? full : "/";
+  const pathname = req.nextUrl.pathname;
+  if (!pathname.startsWith("/")) return "/";
+  if (!isAllowedNextPath(pathname)) return "/";
+  return pathname + (req.nextUrl.search || "");
+}
+
+const DISALLOWED_NEXT_PREFIXES = ["/login", "/access", "/auth"] as const;
+
+function isDisallowedNextPath(pathname: string) {
+  return DISALLOWED_NEXT_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
 function safeNextFromQuery(req: NextRequest, fallback: string) {
-  const n = req.nextUrl.searchParams.get("next");
-  if (!n) return fallback;
-  // Prevent open redirect
-  return n.startsWith("/") ? n : fallback;
+  const raw = req.nextUrl.searchParams.get("next");
+  if (!raw) return fallback;
+
+  // Only internal absolute paths; block protocol-relative
+  if (!raw.startsWith("/") || raw.startsWith("//")) return fallback;
+
+  // Strip query/hash
+  const pathname = raw.split("?")[0].split("#")[0];
+
+  // Prevent loops back into auth doors
+  if (isDisallowedNextPath(pathname)) return fallback;
+
+  // Prevent nonsense/404 redirects
+  if (!isAllowedNextPath(pathname)) return fallback;
+
+  return pathname;
 }
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+
+  // ✅ HARD BLOCK: /dev/kit should never render in non-development environments.
+  // This must run BEFORE any auth redirects, so logged-out users also go to "/".
+  if (pathname.startsWith("/dev/kit") && process.env.NODE_ENV !== "development") {
+    const redirectUrl = req.nextUrl.clone();
+    redirectUrl.pathname = "/";
+    redirectUrl.search = "";
+    return NextResponse.redirect(redirectUrl);
+  }
 
   // Always create a response so Supabase can refresh cookies if needed.
   let res = NextResponse.next({ request: { headers: req.headers } });
@@ -44,8 +91,12 @@ export async function middleware(req: NextRequest) {
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!url || !anon) {
-    // Hard fail is better than silently bypassing auth in prod.
     console.error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+    return res;
+  }
+
+  // Public paths short-circuit early (still allow /api/auth/* without session)
+  if (isPublicUiPath(pathname) || isPublicApiPath(pathname)) {
     return res;
   }
 
@@ -67,7 +118,10 @@ export async function middleware(req: NextRequest) {
 
   // ---- Not signed in ----
   if (!user) {
-    if (isPublicPath(pathname)) return res;
+    // API requests should return JSON 401 (not redirect HTML)
+    if (isApiPath(pathname)) {
+      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    }
 
     const redirectUrl = req.nextUrl.clone();
     redirectUrl.pathname = "/login";
@@ -76,7 +130,7 @@ export async function middleware(req: NextRequest) {
   }
 
   // ---- Signed in ----
-  // Don’t let signed-in users hang out on login routes.
+  // Don’t let signed-in users linger on login routes.
   if (pathname.startsWith("/login")) {
     const dest = safeNextFromQuery(req, OWNER_LANDING);
     const redirectUrl = req.nextUrl.clone();
@@ -89,37 +143,45 @@ export async function middleware(req: NextRequest) {
   let isOwner = false;
   try {
     const { data } = await supabase.rpc("is_owner");
-    isOwner = !!data;
+    isOwner = Boolean(data);
   } catch {
     isOwner = false;
   }
-  if (isOwner) return res;
 
-  // Gate by user_profile.status
-  let status: string | null = null;
-  try {
-    const { data: profile, error } = await supabase
+  if (!isOwner) {
+    // Fetch profile status for gating
+    const { data: profile, error: profileErr } = await supabase
       .from("user_profile")
       .select("status")
-      .eq("auth_user_id", user.id)
+      .eq("user_id", user.id)
       .maybeSingle();
 
-    if (!error && profile) status = (profile as { status?: string }).status ?? null;
-  } catch {
-    status = null;
-  }
+    // If profile missing or error, force /access
+    if (profileErr || !profile) {
+      if (isApiPath(pathname)) {
+        return NextResponse.json({ ok: false, error: "forbidden_inactive" }, { status: 403 });
+      }
 
-  const isActive = status === "active";
+      const redirectUrl = req.nextUrl.clone();
+      redirectUrl.pathname = "/access";
+      redirectUrl.search = "";
+      return NextResponse.redirect(redirectUrl);
+    }
 
-  // Not active → force /access (but allow public)
-  if (!isActive) {
-    if (pathname.startsWith("/access")) return res;
-    if (isPublicPath(pathname)) return res;
+    // Inactive users must go to /access (UI) or get 403 (API)
+    if (profile.status !== "active") {
+      if (isApiPath(pathname)) {
+        return NextResponse.json({ ok: false, error: "forbidden_inactive" }, { status: 403 });
+      }
 
-    const redirectUrl = req.nextUrl.clone();
-    redirectUrl.pathname = "/access";
-    redirectUrl.search = "";
-    return NextResponse.redirect(redirectUrl);
+      // Allow /access itself
+      if (pathname.startsWith("/access")) return res;
+
+      const redirectUrl = req.nextUrl.clone();
+      redirectUrl.pathname = "/access";
+      redirectUrl.search = "";
+      return NextResponse.redirect(redirectUrl);
+    }
   }
 
   // Active users don’t need /access anymore.

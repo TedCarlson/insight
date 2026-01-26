@@ -1,4 +1,4 @@
-// apps/web/src/app/kit/SegmentedDemo.tsx
+// apps/web/src/app/dev/kit/SegmentedDemo.tsx
 "use client";
 
 import { useState } from "react";

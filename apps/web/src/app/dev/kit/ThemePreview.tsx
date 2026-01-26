@@ -1,4 +1,4 @@
-// apps/web/src/app/kit/ThemePreview.tsx
+// apps/web/src/app/dev/kit/ThemePreview.tsx
 "use client";
 
 import type { ReactNode } from "react";

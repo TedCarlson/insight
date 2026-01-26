@@ -23,9 +23,10 @@ type InviteBody = {
  *   - NEXT_PUBLIC_SITE_URL (optional; defaults to http://localhost:3000)
  */
 export async function GET() {
-  // Simple ping to prove the route exists (browser GET should show this JSON, not a 404 page)
-  return NextResponse.json({ ok: true, route: "/api/admin/invite" });
+  // Avoid “success” responses for an admin endpoint via browser GET.
+  return NextResponse.json({ ok: false, error: "Method Not Allowed" }, { status: 405 });
 }
+
 
 export async function POST(req: Request) {
   try {

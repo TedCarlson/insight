@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
@@ -13,7 +13,6 @@ type SessionStatus = { signedIn: boolean; active: boolean };
 
 export default function CoreNav() {
   const pathname = usePathname();
-  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
   const [email, setEmail] = useState<string | null>(null);
@@ -68,17 +67,12 @@ export default function CoreNav() {
   if (!ready || !email) return null;
   if (!status?.active) return null;
 
-  async function onSignOut() {
-  // Clear any client-side session state…
-  try {
-    await supabase.auth.signOut();
-  } finally {
-    // …then force a full reload through server signout to clear SSR cookies.
+  function onSignOut() {
+    // Single source of truth: this page handles localStorage + server cookie signout.
     window.location.assign("/auth/signout");
   }
-  }
 
-    return (
+  return (
     <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur">
       <div className="flex w-full items-center justify-between px-6 py-3">
         <div className="flex items-center gap-4">
@@ -101,7 +95,6 @@ export default function CoreNav() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Org scope lives at the top-level header so every org-scoped surface inherits it. */}
           <div className="hidden sm:block">
             <OrgSelector label="PC" />
           </div>

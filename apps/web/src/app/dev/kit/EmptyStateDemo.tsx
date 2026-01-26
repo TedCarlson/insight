@@ -1,4 +1,4 @@
-// apps/web/src/app/kit/EmptyStateDemo.tsx
+// apps/web/src/app/dev/kit/EmptyStateDemo.tsx
 "use client";
 
 import { useState } from "react";

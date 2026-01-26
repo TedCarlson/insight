@@ -520,6 +520,60 @@ export class ApiClient {
     return (data as any) ?? null;
   }
 
+
+  /**
+   * Grants-aware person upsert.
+   *
+   * Primary path: DB RPC `person_upsert` (uses RLS).
+   * Fallback path: server route `/api/org/person-upsert` which re-checks org access + permission grants
+   * and performs a service-role write (policy exception).
+   *
+   * This is additive and does NOT change behavior for other callers of `personUpsert`.
+   */
+  async personUpsertWithGrants(input: {
+    person_id: string;
+    full_name?: string | null;
+    emails?: string | null;
+    mobile?: string | null;
+    fuse_emp_id?: string | null;
+    person_notes?: string | null;
+    person_nt_login?: string | null;
+    person_csg_id?: string | null;
+    active?: boolean | null;
+    role?: string | null;
+    co_ref_id?: string | null;
+    co_code?: string | null;
+  }): Promise<PersonRow | null> {
+    try {
+      return await this.personUpsert(input);
+    } catch (e: any) {
+      const msg = String(e?.message ?? "");
+      const code = String(e?.code ?? "");
+      const looksLikeRls =
+        code === "42501" ||
+        /row-level security/i.test(msg) ||
+        /violates row-level security/i.test(msg);
+
+      if (!looksLikeRls) throw e;
+
+      const res = await fetch("/api/org/person-upsert", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+
+      const json = await res.json().catch(() => ({} as any));
+
+      if (!res.ok || !json?.ok) {
+        // Preserve original context where possible
+        throw new Error(String(json?.error ?? msg ?? `Person save blocked (${res.status})`));
+      }
+
+      return (json.person as any) ?? null;
+    }
+  }
+
   /**
    * Update an existing assignment row (public.assignment).
    * Non-destructive: only provided keys are updated.

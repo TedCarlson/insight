@@ -565,7 +565,7 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
     setSavingPerson(true);
     setPersonErr(null);
     try {
-      const updated = await api.personUpsert(patch);
+      const updated = await api.personUpsertWithGrants(patch);
       setEditingPerson(false);
       if (updated) {
         setPerson(updated);

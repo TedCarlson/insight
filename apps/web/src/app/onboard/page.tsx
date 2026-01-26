@@ -218,7 +218,7 @@ const { selectedOrgId, orgs, orgsLoading } = useOrg();
 
     try {
       // Derived fields are handled by the app/DB. We only send direct user inputs.
-      const saved = await api.personUpsert({
+      const saved = await api.personUpsertWithGrants({
         person_id: String(personDraft.person_id),
         full_name: personDraft.full_name ?? null,
         emails: (personDraft as any).emails ?? (personDraft as any).email ?? null,

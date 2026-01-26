@@ -12,6 +12,8 @@ Generated from `apps/web/src/app/**` (Next.js App Router).
 
 Source: `apps/web/middleware.ts`
 
+- `/favicon.ico` is allowlisted to avoid auth redirects for browser icon requests (even if the file is not created yet).
+
 - **Public UI:** `/`, `/login*`, `/access*`, `/auth*`, `/favicon.ico`
 - **Public API:** `/api/auth/*` only
 - Everything else requires a session
@@ -57,7 +59,8 @@ Source: `apps/web/middleware.ts`
 |---|---|---|---|---|---|
 | `/auth/callback` | Handler | Public | None | None | `apps/web/src/app/auth/callback/route.ts` |
 
-## Known nuance: `/dev/kit` in prod
-- Signed-in in prod: redirected to `/` by `apps/web/src/app/dev/kit/layout.tsx`
-- Signed-out in prod: middleware will redirect to `/login` before the layout runs
-- If you want **always `/dev/kit` → `/` in prod**, add an early middleware redirect rule for `/dev/kit` when not development.
+## `/dev/kit` in prod
+- In non-development environments, middleware redirects `/dev/kit*` → `/` before auth checks.
+- `/` redirects to `/home` only when signed in; otherwise it renders a public landing.
+
+

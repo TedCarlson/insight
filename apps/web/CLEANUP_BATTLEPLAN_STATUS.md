@@ -37,5 +37,5 @@
 
 #### 3.3.3 — Generate route catalog (IN PROGRESS)
 - ✅ Generated `apps/web/ROUTES_AND_GUARDS.md` (path → type → auth requirement → role requirement → notes).
-- ☐ Confirm `/dev/kit` is guarded in prod (redirects to `/`).
-- ☐ Review public surface area (pages + APIs) and confirm intent.
+- ✅  Confirm `/dev/kit` is guarded in prod (redirects to `/`).
+- ✅  Review public surface area (pages + APIs) and confirm intent.

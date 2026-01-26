@@ -25,7 +25,14 @@ export async function GET(req: Request) {
     | "email_change"
     | null;
 
-  const next = pickNext(url);
+  const rawNext = pickNext(url);
+
+  // For invite + recovery flows, always land on set-password first,
+  // then continue to the intended next.
+  const forceSetPassword = type === "invite" || type === "recovery";
+  const next = forceSetPassword
+    ? `/auth/set-password?next=${encodeURIComponent(rawNext)}`
+    : rawNext;
 
   const cookieStore = await cookies();
 
@@ -111,6 +118,12 @@ export async function GET(req: Request) {
         var nextAll = params.getAll("next");
         var next = (nextAll.length ? nextAll[nextAll.length - 1] : "/") || "/";
         if (typeof next !== "string" || next[0] !== "/") next = "/";
+
+        var type = params.get("type");
+        if (type === "invite" || type === "recovery") {
+          next = "/auth/set-password?next=" + encodeURIComponent(next);
+        }
+
         // Preserve fragment tokens
         var hash = window.location.hash || "";
         window.location.replace(next + hash);

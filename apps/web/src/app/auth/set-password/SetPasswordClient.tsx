@@ -97,7 +97,11 @@ export default function SetPasswordPage() {
       const ok = await ensureSessionFromHashIfNeeded();
       if (!ok) return;
 
-      const { error } = await supabase.auth.updateUser({ password });
+      const { error } = await supabase.auth.updateUser({
+        password,
+        data: { password_set: true },
+      });
+
       if (error) {
         setOut(`Error setting password: ${error.message}`);
         return;

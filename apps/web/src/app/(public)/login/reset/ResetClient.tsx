@@ -13,10 +13,19 @@ export default function ResetClient() {
   const [out, setOut] = useState<string>("");
   const [actionLink, setActionLink] = useState<string>("");
   const [sending, setSending] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState<number>(0);
 
-  async function onSend() {
+    async function onSend() {
     setOut("");
     setActionLink("");
+
+    const now = Date.now();
+    if (cooldownUntil && now < cooldownUntil) {
+      const secs = Math.ceil((cooldownUntil - now) / 1000);
+      setOut(`Please wait ${secs}s before trying again.`);
+      return;
+    }
+
 
     const normalized = email.trim().toLowerCase();
     if (!normalized || !normalized.includes("@") || !normalized.includes(".")) {
@@ -40,13 +49,21 @@ export default function ResetClient() {
         json = null;
       }
 
-      if (!res.ok) {
+            if (!res.ok) {
+        if (res.status === 429 && json?.error === "email_rate_limited") {
+          // 60s UI cooldown to prevent hammering
+          setCooldownUntil(Date.now() + 60_000);
+          setOut(json?.message ?? "Too many email attempts. Please wait a minute and try again.");
+          return;
+        }
+
         setOut(
           `ERROR: HTTP ${res.status}\n` +
             (json ? JSON.stringify(json, null, 2) : text || "(empty)")
         );
         return;
       }
+
 
       const link = json?.action_link ?? "";
       if (!link) {
@@ -92,11 +109,11 @@ export default function ResetClient() {
 
         <button
           onClick={onSend}
-          disabled={sending}
+          disabled={sending || (cooldownUntil ? Date.now() < cooldownUntil : false)}
           className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
           style={{ borderColor: "var(--to-border)" }}
         >
-          {sending ? "Generating..." : "Generate reset link"}
+          {sending ? "Generating..." : cooldownUntil && Date.now() < cooldownUntil ? "Please wait…" : "Generate reset link"}
         </button>
 
         {actionLink && (

@@ -61,16 +61,33 @@ export async function POST(req: NextRequest) {
       options: { redirectTo },
     });
 
-    if (linkRes.error) {
-      // Avoid leaking internals in production
+       if (linkRes.error) {
       const isProd = process.env.NODE_ENV === "production";
+      const status = (linkRes.error as any)?.status ?? 400;
+      const msg = String((linkRes.error as any)?.message ?? "");
+
+      // Supabase can throttle auth emails (seen as: "429: email rate limit exceeded")
+      const isRateLimited =
+        status === 429 || msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("email rate");
+
+      if (isRateLimited) {
+        return NextResponse.json(
+          {
+            error: "email_rate_limited",
+            message: "Too many email attempts. Please wait a few minutes and try again.",
+          },
+          { status: 429 }
+        );
+      }
+
       return NextResponse.json(
         isProd
           ? { error: "generateLink(recovery) failed" }
           : { error: "generateLink(recovery) failed", details: linkRes.error },
-        { status: 400 }
+        { status: status >= 400 ? status : 400 }
       );
     }
+
 
     // In production, do NOT return the action_link (security footgun).
     const isProd = process.env.NODE_ENV === "production";

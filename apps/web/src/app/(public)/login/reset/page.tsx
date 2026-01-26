@@ -1,3 +1,5 @@
+//apps/web/src/app/(public)/login/reset/page.tsx
+
 import { Suspense } from "react";
 import ResetClient from "./ResetClient";
 

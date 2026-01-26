@@ -13,6 +13,7 @@ OUTDIR="${OUTDIR:-./snapshots}"
 ZIP="${OUTDIR}/repo-${DATE}.zip"
 
 mkdir -p "$OUTDIR"
+rm -f "$ZIP"
 
 # Build a file list without ever walking excluded dirs (more reliable than zip -x globs)
 # Then zip from stdin with -@.
@@ -20,24 +21,25 @@ mkdir -p "$OUTDIR"
 find . \
   \( \
     -path "./.git" -o -path "./.git/*" -o \
+    -path "./snapshots" -o -path "./snapshots/*" -o \
     -path "./node_modules" -o -path "./node_modules/*" -o \
-    -path "./**/node_modules" -o -path "./**/node_modules/*" -o \
-    -path "./**/.next" -o -path "./**/.next/*" -o \
-    -path "./**/dist" -o -path "./**/dist/*" -o \
-    -path "./**/build" -o -path "./**/build/*" -o \
-    -path "./**/out" -o -path "./**/out/*" -o \
-    -path "./**/.turbo" -o -path "./**/.turbo/*" -o \
-    -path "./**/.vercel" -o -path "./**/.vercel/*" -o \
-    -path "./**/coverage" -o -path "./**/coverage/*" -o \
-    -path "./**/.pnpm-store" -o -path "./**/.pnpm-store/*" -o \
-    -path "./**/.cache" -o -path "./**/.cache/*" -o \
-    -path "./**/tmp" -o -path "./**/tmp/*" -o \
-    -path "./**/.vscode" -o -path "./**/.vscode/*" -o \
-    -path "./**/.idea" -o -path "./**/.idea/*" -o \
-    -path "./**/.aws" -o -path "./**/.aws/*" -o \
-    -path "./**/.ssh" -o -path "./**/.ssh/*" -o \
-    -path "./**/__MACOSX" -o -path "./**/__MACOSX/*" -o \
-    -path "./**/.AppleDouble" -o -path "./**/.AppleDouble/*" \
+    -path "*/node_modules" -o -path "*/node_modules/*" -o \
+    -path "*/.next" -o -path "*/.next/*" -o \
+    -path "*/dist" -o -path "*/dist/*" -o \
+    -path "*/build" -o -path "*/build/*" -o \
+    -path "*/out" -o -path "*/out/*" -o \
+    -path "*/.turbo" -o -path "*/.turbo/*" -o \
+    -path "*/.vercel" -o -path "*/.vercel/*" -o \
+    -path "*/coverage" -o -path "*/coverage/*" -o \
+    -path "*/.pnpm-store" -o -path "*/.pnpm-store/*" -o \
+    -path "*/.cache" -o -path "*/.cache/*" -o \
+    -path "*/tmp" -o -path "*/tmp/*" -o \
+    -path "*/.vscode" -o -path "*/.vscode/*" -o \
+    -path "*/.idea" -o -path "*/.idea/*" -o \
+    -path "*/.aws" -o -path "*/.aws/*" -o \
+    -path "*/.ssh" -o -path "*/.ssh/*" -o \
+    -path "*/__MACOSX" -o -path "*/__MACOSX/*" -o \
+    -path "*/.AppleDouble" -o -path "*/.AppleDouble/*" \
   \) -prune -o \
   -type f \
   ! -name ".DS_Store" \

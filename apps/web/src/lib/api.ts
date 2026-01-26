@@ -587,6 +587,8 @@ export class ApiClient {
     active?: boolean | null;
   }): Promise<AssignmentRow | null> {
     const assignment_id = input.assignment_id;
+
+    // Non-destructive: only provided keys are updated.
     const patch = this.compactRecord({
       tech_id: input.tech_id ?? undefined,
       start_date: input.start_date ?? undefined,
@@ -595,13 +597,12 @@ export class ApiClient {
       active: input.active ?? undefined,
     });
 
-    const { data, error } = await this.supabase
-      .from("assignment")
-      .update(patch as any)
-      .eq("assignment_id", assignment_id)
-      .select("*")
-      .maybeSingle();
+    const args = this.compactRecord({
+      p_assignment_id: assignment_id,
+      p_patch: patch,
+    });
 
+    const { data, error } = await this.supabase.rpc("assignment_patch", args as any);
     if (error) throw this.normalize(error);
     return (data as any) ?? null;
   }
@@ -618,32 +619,18 @@ export class ApiClient {
     start_date: string;
     end_date?: string | null;
   }): Promise<AssignmentReportingRow | null> {
-    const assignment_reporting_id = input.assignment_reporting_id ?? null;
-
-    const patch = this.compactRecord({
-      child_assignment_id: input.child_assignment_id,
-      parent_assignment_id: input.parent_assignment_id,
-      start_date: input.start_date,
-      end_date: input.end_date ?? undefined,
+    const args = this.compactRecord({
+      p_assignment_reporting_id: input.assignment_reporting_id ?? undefined,
+      p_child_assignment_id: input.child_assignment_id,
+      p_parent_assignment_id: input.parent_assignment_id,
+      p_start_date: input.start_date,
+      p_end_date: input.end_date ?? undefined,
     });
 
-    if (assignment_reporting_id) {
-      const { data, error } = await this.supabase
-        .from("assignment_reporting")
-        .update(patch as any)
-        .eq("assignment_reporting_id", assignment_reporting_id)
-        .select("*")
-        .maybeSingle();
-
-      if (error) throw this.normalize(error);
-      return (data as any) ?? null;
-    }
-
-    const { data, error } = await this.supabase
-      .from("assignment_reporting")
-      .insert(patch as any)
-      .select("*")
-      .maybeSingle();
+    const { data, error } = await this.supabase.rpc(
+      "assignment_reporting_upsert_safe",
+      args as any
+    );
 
     if (error) throw this.normalize(error);
     return (data as any) ?? null;

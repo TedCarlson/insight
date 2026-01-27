@@ -11,12 +11,14 @@ import CoreNav from "@/components/CoreNav";
 import FooterHelp from "@/components/FooterHelp";
 import { OrgProvider } from "@/state/org";
 import { SessionProvider } from "@/state/session";
+import { ToastProvider } from "@/components/ui/Toast";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-theme="glass">
       <body className="min-h-screen bg-[var(--to-surface-soft)] text-[var(--to-ink)]">
-        <SessionProvider>
+        <ToastProvider>
+          <SessionProvider>
           <OrgProvider>
             <div className="min-h-screen flex flex-col">
               <CoreNav />
@@ -24,7 +26,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
               <FooterHelp />
             </div>
           </OrgProvider>
-        </SessionProvider>
+          </SessionProvider>
+        </ToastProvider>
       </body>
     </html>
   );

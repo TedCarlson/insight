@@ -27,11 +27,11 @@ export function Button({
 
   const vPrimary =
     // Core
-    "to-btn--primary" +
+    "to-btn--primary text-[var(--to-ink)]" +
     // Slight highlight + depth (still neutral; uses your surface tokens)
     " shadow-[0_10px_28px_rgba(15,23,42,0.12)]" +
     // Subtle hover polish (avoid gaudy glow)
-    " hover:opacity-95";
+    " hover:bg-[var(--to-surface-2)]";
 
   const vSecondary =
     // Core surface button

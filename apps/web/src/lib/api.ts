@@ -332,6 +332,47 @@ export class ApiClient {
     }
   }
 
+
+/**
+ * Privileged write wrapper to `/api/org/rpc`.
+ * Keeps writes behind your Edge grant checks + service-role route.
+ */
+private async rpcWrite<T>(
+  schema: "api" | "public",
+  fn: string,
+  args?: Record<string, any> | null
+): Promise<T> {
+  await this.ensureSessionFresh();
+
+  const auth: any = (this.supabase as any)?.auth;
+  const { data: sessionData } =
+    auth?.getSession ? await auth.getSession() : ({ data: null } as any);
+  const token: string = sessionData?.session?.access_token ?? "";
+
+  const res = await fetch("/api/org/rpc", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ schema, fn, args: args ?? null }),
+  });
+
+  const json: any = await res.json().catch(() => ({}));
+
+  if (!res.ok || !json?.ok) {
+    const msg = json?.error ?? json?.message ?? `RPC write failed (${res.status})`;
+    const err: any = new Error(String(msg));
+    err.status = res.status;
+    err.code = json?.code ?? undefined;
+    err.details = json?.details ?? null;
+    throw err;
+  }
+
+  return (json?.data as T) ?? (json as T);
+}
+
   /**
    * Remove keys with value === undefined so PostgREST doesn't treat them as provided params.
    * (Keeping null is intentional; null means "set to null" when the RPC supports that param.)
@@ -612,7 +653,29 @@ export class ApiClient {
    * - If assignment_reporting_id is provided, updates that row.
    * - Otherwise inserts a new row.
    */
-  async assignmentReportingUpsert(input: {
+  
+
+/**
+ * End THIS PERSON'S association to a PC Org (person_pc_org).
+ * This is a privileged write via `/api/org/rpc` because DB grants may block direct client updates.
+ */
+async personPcOrgEndAssociation(input: {
+  person_id: string;
+  pc_org_id: string;
+  end_date?: string; // YYYY-MM-DD (defaults to today server-side)
+}): Promise<{ ok: true }> {
+  const { person_id, pc_org_id } = input;
+  const end_date = input.end_date ?? null;
+
+  await this.rpcWrite<any>("public", "person_pc_org_end_association", {
+    person_id,
+    pc_org_id,
+    end_date,
+  });
+
+  return { ok: true };
+}
+async assignmentReportingUpsert(input: {
     assignment_reporting_id?: string | null;
     child_assignment_id: string;
     parent_assignment_id: string;

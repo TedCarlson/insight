@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
+const OWNER_AUTH_USER_ID = "b327ee2e-fbf6-45f1-8cc5-a9c0e16ce514";
+
+
 /**
  * Org-scoped user list for Edge Permissions Console.
  *
@@ -58,6 +61,23 @@ function firstEmail(emails: unknown): string | null {
   return hit ?? (parts[0] ?? null);
 }
 
+
+function isItgSupervisorPlus(status: unknown): boolean {
+  if (typeof status !== "string") return false;
+  const s = status.toLowerCase();
+  const isItg = s.includes("itg");
+  const senior =
+    s.includes("supervisor") ||
+    s.includes("manager") ||
+    s.includes("director") ||
+    s.includes("vp") ||
+    s.includes("vice") ||
+    s.includes("chief") ||
+    s.includes("president") ||
+    s.includes("owner");
+  return isItg && senior;
+}
+
 type UserHit = {
   auth_user_id: string;
   full_name: string | null;
@@ -69,6 +89,7 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const pc_org_id = (url.searchParams.get("pc_org_id") ?? "").trim();
+    const min_title = (url.searchParams.get("min_title") ?? "").trim();
 
     if (!pc_org_id || !isUuid(pc_org_id)) {
       return NextResponse.json({ ok: false, error: "missing_or_invalid_pc_org_id" }, { status: 400 });
@@ -90,6 +111,14 @@ export async function GET(req: Request) {
 
     const admin = supabaseAdmin();
 
+// Exclude owners from dropdown targets
+const owners = await admin.from("app_owners").select("auth_user_id").limit(2000);
+const ownerIds = new Set<string>(
+  (owners.data ?? []).map((r: any) => String(r.auth_user_id ?? "").trim()).filter(Boolean),
+);
+ownerIds.add(OWNER_AUTH_USER_ID);
+
+
     // Eligible users for this org (bounded but typically small)
     const elig = await admin
       .from("user_pc_org_eligibility")
@@ -103,14 +132,39 @@ export async function GET(req: Request) {
       .map((r: any) => String(r.auth_user_id ?? "").trim())
       .filter(Boolean);
 
-    if (!eligibleIds.length) {
+    
+
+// Optionally widen the dropdown to include org-scoped ITG Supervisor+ users,
+// so management teams can manage grants locally.
+let orgScopedIds: string[] = [];
+if (min_title === "itg_supervisor_plus") {
+  try {
+    const scoped = await admin
+      .from("exec_pc_org_access_derived")
+      .select("auth_user_id")
+      .eq("pc_org_id", pc_org_id)
+      .limit(2000);
+
+    if (!scoped.error) {
+      orgScopedIds = (scoped.data ?? [])
+        .map((r: any) => String(r.auth_user_id ?? "").trim())
+        .filter(Boolean);
+    }
+  } catch {
+    orgScopedIds = [];
+  }
+}
+
+const candidateIds = Array.from(new Set([...eligibleIds, ...orgScopedIds]))
+  .filter((id) => !!id && !ownerIds.has(id));
+if (!candidateIds.length) {
       return NextResponse.json({ ok: true, users: [] satisfies UserHit[] }, { status: 200 });
     }
 
     const prof = await admin
       .from("user_profile" as any)
       .select("auth_user_id,status,person:person_id(full_name,emails)")
-      .in("auth_user_id", eligibleIds)
+      .in("auth_user_id", candidateIds)
       .limit(500);
 
     if (prof.error) return NextResponse.json({ ok: false, error: prof.error.message }, { status: 500 });
@@ -122,7 +176,22 @@ export async function GET(req: Request) {
         full_name: r.person?.full_name ?? null,
         email: firstEmail(r.person?.emails),
       }))
-      .sort((a: UserHit, b: UserHit) => {
+
+.filter((u: UserHit) => {
+  // Never include owners
+  if (ownerIds.has(u.auth_user_id)) return false;
+
+  // If requested, include ALL ITG Supervisor+ org-scoped users
+  // plus the normal eligible list for the org.
+  if (min_title === "itg_supervisor_plus") {
+    const isEligible = eligibleIds.includes(u.auth_user_id);
+    return isEligible || isItgSupervisorPlus(u.status);
+  }
+
+  return true;
+})
+.sort
+((a: UserHit, b: UserHit) => {
         const A = (a.full_name ?? a.email ?? a.auth_user_id).toLowerCase();
         const B = (b.full_name ?? b.email ?? b.auth_user_id).toLowerCase();
         return A.localeCompare(B);

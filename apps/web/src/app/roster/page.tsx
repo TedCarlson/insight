@@ -71,6 +71,7 @@ export default function RosterPage() {
   // combined company+contractor dropdown:
   // "all" | "company::<name>" | "contractor::<name>"
   const [affKey, setAffKey] = useState<string>("all");
+  const [supervisorKey, setSupervisorKey] = useState<string>("all");
 
   const validatedOrgId = useMemo(() => {
     if (orgsLoading) return null;
@@ -172,10 +173,37 @@ export default function RosterPage() {
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
   }, [rosterRoleFiltered]);
 
+const supervisorOptions = useMemo(() => {
+  // list supervisors by unique reports_to_person_id from roster rows (tech view)
+  const rows = rosterRoleFiltered ?? [];
+  const map = new Map<string, string>(); // id -> name
+
+  for (const r of rows as any[]) {
+    const sid = String(r?.reports_to_person_id ?? "").trim();
+    const sname = String(r?.reports_to_full_name ?? "").trim();
+    if (!sid || !sname) continue;
+    if (!map.has(sid)) map.set(sid, sname);
+  }
+
+  return Array.from(map.entries())
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}, [rosterRoleFiltered]);
+
+
+
   useEffect(() => {
     if (affKey === "all") return;
     if (!affiliationOptions.some((o) => o.key === affKey)) setAffKey("all");
+                  setSupervisorKey("all");
   }, [affKey, affiliationOptions]);
+
+useEffect(() => {
+  if (supervisorKey === "all") return;
+  if (!supervisorOptions.some((o) => o.id === supervisorKey)) setSupervisorKey("all");
+}, [supervisorKey, supervisorOptions]);
+
+
 
   const filteredRoster = useMemo(() => {
     const rows = (rosterRoleFiltered ?? []).slice();
@@ -204,7 +232,22 @@ export default function RosterPage() {
       return String(r?.co_type ?? "") === type && String(r?.co_name ?? "") === name;
     };
 
-    const out = rows.filter((r: any) => matchesAff(r) && matchesSearch(r));
+    
+
+const matchesSupervisor = (r: any) => {
+  if (supervisorKey === "all") return true;
+  return String(r?.reports_to_person_id ?? "").trim() === String(supervisorKey).trim();
+};
+
+const hasActiveOrgAssociation = (r: any) => {
+  // Active association: no end date on person_pc_org association, and still scoped to this org
+  const end = String(r?.person_pc_org_end_date ?? r?.pc_org_end_date ?? "").trim();
+  const orgId = String(r?.pc_org_id ?? "").trim();
+  if (orgId && validatedOrgId && orgId !== String(validatedOrgId)) return false;
+  return !end && (!!orgId || !!validatedOrgId);
+};
+
+const out = rows.filter((r: any) => matchesAff(r) && matchesSearch(r) && matchesSupervisor(r) && hasActiveOrgAssociation(r));
 
     // Default sort: tech_id then full_name
     out.sort((a: any, b: any) => {
@@ -219,7 +262,121 @@ export default function RosterPage() {
     });
 
     return out;
-  }, [rosterRoleFiltered, query, affKey]);
+  }, [rosterRoleFiltered, query, affKey, supervisorKey, validatedOrgId]);
+
+
+const rosterStats = useMemo(() => {
+  // Tech stats are based on the CURRENT view (filteredRoster), since managers will filter by supervisor/search/etc.
+  const techRows = filteredRoster ?? [];
+
+  const totalTechs = techRows.length;
+  const itgTechs = techRows.filter((r: any) => String(r?.co_type ?? "").trim() === "company").length;
+  const bpTechs = techRows.filter((r: any) => String(r?.co_type ?? "").trim() === "contractor").length;
+
+  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
+
+  // We still compute these for housekeeping (but we won't render the numbers)
+  const assignmentSet = techRows.filter((r: any) => {
+    const end = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
+    const active = Boolean(r?.assignment_active ?? r?.active ?? true);
+    return active && !end && !!String(r?.assignment_id ?? "").trim();
+  }).length;
+
+  const leadershipSet = techRows.filter((r: any) => {
+    const end = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
+    const rid =
+      r?.reports_to_reporting_id ??
+      r?.assignment_reporting_id ??
+      r?.reporting_id ??
+      r?.id ??
+      null;
+    return !!rid && !end;
+  }).length;
+const scheduleReady = techRows.filter((r: any) => {
+  const assignmentEnd = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
+  const assignmentActive = Boolean(r?.assignment_active ?? r?.active ?? true);
+  const hasAssignment = !!String(r?.assignment_id ?? "").trim() && assignmentActive && !assignmentEnd;
+
+  const leadershipEnd = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
+  const leadershipId =
+    r?.reports_to_reporting_id ??
+    r?.assignment_reporting_id ??
+    r?.reporting_id ??
+    r?.id ??
+    null;
+  const hasLeadership = !!leadershipId && !leadershipEnd;
+
+  return hasAssignment && hasLeadership;
+}).length;
+
+
+  const clean = totalTechs > 0 && totalTechs === assignmentSet && totalTechs === leadershipSet;
+
+  // Supervisor stats: supervisors referenced by the tech rows in this view
+  const supIds = Array.from(
+    new Set(
+      techRows
+        .map((r: any) => String(r?.reports_to_person_id ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  // Best-effort supervisor classification:
+  // if a supervisor appears as a roster row, use their co_type to classify ITG vs BP.
+  const allRows = roster ?? [];
+  const hasActiveOrgAssociation = (r: any) => {
+    const end = String(r?.person_pc_org_end_date ?? r?.pc_org_end_date ?? "").trim();
+    const orgId = String(r?.pc_org_id ?? "").trim();
+    if (orgId && validatedOrgId && orgId !== String(validatedOrgId)) return false;
+    return !end && (!!orgId || !!validatedOrgId);
+  };
+
+  const activeRowsAll = allRows.filter((r: any) => hasActiveOrgAssociation(r));
+  const supervisorById = new Map<string, any>();
+  for (const r of activeRowsAll as any[]) {
+    const pid = String(r?.person_id ?? "").trim();
+    if (!pid) continue;
+    if (!supervisorById.has(pid)) supervisorById.set(pid, r);
+  }
+
+  let itgSups = 0;
+  let bpSups = 0;
+  let unknownSups = 0;
+
+  for (const sid of supIds) {
+    const sr = supervisorById.get(String(sid));
+    const t = String(sr?.co_type ?? "").trim();
+    if (t === "company") itgSups++;
+    else if (t === "contractor") bpSups++;
+    else unknownSups++;
+  }
+
+  const totalSups = supIds.length;
+
+  return {
+    totalTechs,
+    itgTechs,
+    bpTechs,
+    techPctITG: pct(itgTechs, totalTechs),
+    techPctBP: pct(bpTechs, totalTechs),
+
+    totalSups,
+    itgSups,
+    bpSups,
+    supPctITG: pct(itgSups, totalSups),
+    supPctBP: pct(bpSups, totalSups),
+    unknownSups,
+
+    readinessA: assignmentSet,
+    readinessL: leadershipSet,
+    readinessS: scheduleReady,
+
+    clean,
+  };
+}, [filteredRoster, roster, validatedOrgId]);
+
+
+
 
   const anyFiltersActive = Boolean(query.trim()) || roleFilter !== "technician" || affKey !== "all";
   const headerRefreshDisabled = orgsLoading || !canLoad || loading;
@@ -289,11 +446,44 @@ export default function RosterPage() {
         <div className="mb-3 flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-semibold">Current roster</div>
-            <div className="text-xs text-[var(--to-ink-muted)]">
-              Showing <span className="text-[var(--to-ink)]">{filteredRoster.length}</span> of{" "}
-              <span className="text-[var(--to-ink)]">{rosterRoleFiltered.length}</span>
+
+          <div className="text-xs text-[var(--to-ink-muted)] text-right">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span>Readiness:</span>
+              <span className="inline-flex items-center rounded-full border px-3 py-1 text-[11px]">
+                A<span className="text-[var(--to-ink)]">{rosterStats.readinessA}</span>
+              </span>
+              <span className="inline-flex items-center rounded-full border px-3 py-1 text-[11px]">
+                L<span className="text-[var(--to-ink)]">{rosterStats.readinessL}</span>
+              </span>
+              <span className="inline-flex items-center rounded-full border px-3 py-1 text-[11px]">
+                S<span className="text-[var(--to-ink)]">{rosterStats.readinessS}</span>
+              </span>
+            </div>
+
+            <div className="mt-2 flex justify-end">
+              <span
+                className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]"
+                style={
+                  rosterStats.clean
+                    ? {
+                        background: "rgba(34, 197, 94, 0.14)",
+                        borderColor: "var(--to-status-success)",
+                        color: "var(--to-status-success)",
+                      }
+                    : {
+                        background: "rgba(249, 115, 22, 0.16)",
+                        borderColor: "var(--to-status-warning)",
+                        color: "var(--to-status-warning)",
+                      }
+                }
+              >
+                {rosterStats.clean ? "Clean" : "Needs housekeeping"}
+              </span>
             </div>
           </div>
+        </div>
+
 
           <div className="flex flex-wrap items-center gap-2">
             {/* Role pills */}
@@ -360,6 +550,22 @@ export default function RosterPage() {
               ))}
             </Select>
 
+{/* Supervisor filter */}
+<Select
+  value={supervisorKey}
+  onChange={(e) => setSupervisorKey(e.target.value)}
+  className="w-full sm:w-80"
+  disabled={supervisorOptions.length === 0}
+>
+  <option value="all">All supervisors</option>
+  {supervisorOptions.map((o) => (
+    <option key={o.id} value={o.id}>
+      {o.name}
+    </option>
+  ))}
+</Select>
+
+
             {anyFiltersActive && (
               <Button
                 type="button"
@@ -368,6 +574,7 @@ export default function RosterPage() {
                   setQuery("");
                   setRoleFilter("technician");
                   setAffKey("all");
+                  setSupervisorKey("all");
                 }}
               >
                 Clear
@@ -415,7 +622,11 @@ export default function RosterPage() {
       {validatedOrgId ? (
         <RosterRowModule
           open={detailsOpen}
-          onClose={() => setDetailsOpen(false)}
+          onClose={() => {
+            setDetailsOpen(false);
+            // Ensure roster reflects any edits after closing the overlay
+            void loadAll();
+          }}
           pcOrgId={validatedOrgId}
           pcOrgName={selectedOrgName}
           row={selectedRow}

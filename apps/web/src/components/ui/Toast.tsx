@@ -110,9 +110,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 export function useToast() {
   const ctx = useContext(ToastCtx);
-  if (!ctx) throw new Error("useToast must be used within <ToastProvider />");
+
+  // In some pages the provider may not be mounted yet (or intentionally omitted).
+  // Avoid crashing the app; return a no-op API instead.
+  if (!ctx) {
+    return {
+      push: () => {},
+      dismiss: () => {},
+      clear: () => {},
+    } satisfies ToastApi;
+  }
+
   return ctx;
 }
+
 
 function ToastViewport({
   toasts,

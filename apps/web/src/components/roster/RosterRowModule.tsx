@@ -11,9 +11,11 @@ import { Card } from "@/components/ui/Card";
 import { TextInput } from "@/components/ui/TextInput";
 import { Select } from "@/components/ui/Select";
 import { Notice } from "@/components/ui/Notice";
+import { useToast } from "@/components/ui/Toast";
+import { createClient } from "@/lib/supabase/client";
 
 
-type TabKey = "person" | "assignment" | "leadership" | "invite";
+type TabKey = "person" | "org" | "assignment" | "leadership" | "invite";
 
 function formatJson(v: any) {
   try {
@@ -156,6 +158,8 @@ export function RosterRowModule({
   row: RosterRow | null;
 }) {
   const [tab, setTab] = useState<TabKey>("person");
+  const [orgAssociationEndedAt, setOrgAssociationEndedAt] = useState<string | null>(null);
+  const supabase = useMemo(() => createClient(), []);
 
   const personId = (row as any)?.person_id ?? null;
   const assignmentId = (row as any)?.assignment_id ?? null;
@@ -380,14 +384,16 @@ const PERSON_FIELDS = [
   ] as const;
 
   const options = useMemo(
-    () => [
-      { value: "person" as const, label: "Person" },
-      { value: "assignment" as const, label: "Assignment" },
-      { value: "leadership" as const, label: "Leadership" },
-      { value: "invite" as const, label: "Invite" },
-    ],
-    []
-  );
+  () => [
+    { value: "person" as const, label: "Person" },
+    { value: "org" as const, label: "Org" },
+    { value: "assignment" as const, label: "Assignments" },
+    { value: "leadership" as const, label: "Leadership" },
+    { value: "invite" as const, label: "Invite" },
+  ],
+  []
+);
+
 
   useEffect(() => {
     if (!open) return;
@@ -414,6 +420,7 @@ const PERSON_FIELDS = [
     setDrilldown(null);
     setDrillErr(null);
     setLoadingDrill(false);
+    setOrgAssociationEndedAt(null);
   }, [open, row]);
 
 
@@ -488,6 +495,10 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
       void loadDrilldown();
       // roster_master provides manager candidates for the reporting dropdown
       void loadMaster();
+    }
+    if (tab === "org") {
+      void loadMaster();
+      void loadDrilldown();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tab]);
@@ -582,12 +593,26 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
   }
 
   const masterForPerson = useMemo(() => {
-    if (!master || !master.length || !personId) return null;
-    const match =
-      master.find((r: any) => String(r.person_id) === String(personId)) ??
-      master.find((r: any) => String(r.assignment_id) === String(assignmentId));
-    return match ?? null;
-  }, [master, personId, assignmentId]);
+  if (!master || !master.length || !personId) return null;
+
+  const pid = String(personId);
+  const aid = assignmentId ? String(assignmentId) : null;
+
+  const isActive = (r: any) => {
+    const end = String(r?.end_date ?? "").trim();
+    const active = r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true;
+    return !end && Boolean(active);
+  };
+
+  const activeMatches = (master as any[]).filter((r) => String(r.person_id) === pid).filter(isActive);
+  if (activeMatches.length > 0) return activeMatches[0] as any;
+
+  const byAssignment =
+    (aid ? (master as any[]).find((r) => String(r.assignment_id) === aid && isActive(r)) : null) ?? null;
+
+  return byAssignment ?? null;
+}, [master, personId, assignmentId]);
+
 
   useEffect(() => {
     // Keep baseline/draft synced to the loaded record (but don't clobber while editing).
@@ -701,11 +726,48 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
 
 
   const drillForPerson = useMemo(() => {
-    if (!drilldown || !drilldown.length) return [];
-    const pid = personId ? String(personId) : null;
-    const aid = assignmentId ? String(assignmentId) : null;
-    return drilldown.filter((r: any) => (pid && String(r.person_id) === pid) || (aid && String(r.assignment_id) === aid));
-  }, [drilldown, personId, assignmentId]);
+  if (!drilldown || !drilldown.length) return [];
+  const pid = personId ? String(personId) : null;
+  const aid = assignmentId ? String(assignmentId) : null;
+
+  const isActiveRel = (r: any) => {
+    const end = String((r?.reports_to_end_date ?? r?.end_date ?? "")).trim();
+    return !end;
+  };
+
+  return drilldown
+    .filter((r: any) => (pid && String(r.person_id) === pid) || (aid && String(r.assignment_id) === aid))
+    .filter(isActiveRel);
+}, [drilldown, personId, assignmentId]);
+
+// --- Derived "Set / Not set" signals (active-only, no hard blocks) ---
+const activeAssignmentCount = useMemo(() => {
+  if (!Array.isArray(master) || !personId) return 0;
+  return (master as any[])
+    .filter((r) => String(r?.person_id ?? "") === String(personId))
+    .filter((r) => {
+      const end = String(r?.end_date ?? "").trim();
+      const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
+      return active && !end;
+    }).length;
+}, [master, personId]);
+
+const activeLeadershipCount = useMemo(() => {
+  if (!Array.isArray(drillForPerson)) return 0;
+  return (drillForPerson as any[]).filter((r) => {
+    const end = String((r?.reports_to_end_date ?? r?.end_date ?? "")).trim();
+    const rid =
+      r?.reports_to_reporting_id ??
+      r?.assignment_reporting_id ??
+      r?.reporting_id ??
+      r?.id ??
+      null;
+    return !!rid && !end;
+  }).length;
+}, [drillForPerson]);
+
+
+
 
   const leadershipContext = useMemo(() => {
     const first = drillForPerson?.[0] ?? null;
@@ -724,6 +786,128 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
       reports_to_end_date: (row as any)?.reports_to_end_date ?? null,
     };
   }, [drillForPerson, row, assignmentId, pcOrgId]);
+
+const toast = useToast();
+
+const orgStartDate =
+  (row as any)?.pc_org_start_date ??
+  (row as any)?.org_start_date ??
+  (row as any)?.org_event_start_date ??
+  (row as any)?.start_date ??
+  null;
+
+function Pill({ label, ok }: { label: string; ok: boolean }) {
+  return (
+    <span
+      className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold"
+      style={{
+        borderColor: ok ? "var(--to-status-success)" : "var(--to-status-warning)",
+        color: ok ? "var(--to-status-success)" : "var(--to-status-warning)",
+        backgroundColor: ok ? "rgba(34, 197, 94, 0.14)" : "rgba(249, 115, 22, 0.16)",
+      }}
+    >
+      {label}: {ok ? "Set" : "Not set"}
+    </span>
+  );
+}
+
+
+const recordStatus = useMemo(() => {
+  const personOk = !!String((personDraft ?? person ?? {})?.full_name ?? "").trim();
+
+  // "Org" is set when there is a current pcOrgId AND the association is not ended.
+  // We use a local "ended" flag to immediately flip pills after the action, without waiting for parent refresh.
+  const ended =
+    orgAssociationEndedAt ??
+    (row as any)?.person_pc_org_end_date ??
+    (row as any)?.pc_org_end_date ??
+    null;
+
+  const orgOk = !!String(pcOrgId ?? "").trim() && !String(ended ?? "").trim();
+
+  // "Assignments" and "Leadership" are active-only in this overlay context.
+  const assignmentOk = activeAssignmentCount > 0;
+  const leadershipOk = activeLeadershipCount > 0;
+
+  const missing: string[] = [];
+  if (!personOk) missing.push("Person");
+  if (!orgOk) missing.push("Org");
+  if (!assignmentOk) missing.push("Assignments");
+  if (!leadershipOk) missing.push("Leadership");
+
+  return { personOk, orgOk, assignmentOk, leadershipOk, missing, complete: missing.length === 0 };
+}, [personDraft, person, pcOrgId, row, orgAssociationEndedAt, activeAssignmentCount, activeLeadershipCount]);
+
+async function submitRosterRecord(mode: "complete" | "incomplete") {
+  const incomplete = !recordStatus.complete;
+
+  if (mode === "complete" && incomplete) {
+    toast.push({
+      title: "Incomplete roster record",
+      message: `Missing: ${recordStatus.missing.join(", ")}`,
+      variant: "warning",
+      durationMs: 3200,
+    });
+  }
+
+  if (mode === "incomplete") {
+    toast.push({
+      title: "Submitted incomplete",
+      message: `Reminder: Missing: ${recordStatus.missing.join(", ") || "None"}`,
+      variant: incomplete ? "warning" : "success",
+      durationMs: 3200,
+    });
+  } else {
+    toast.push({
+      title: "Submitted",
+      message: incomplete ? "Submitted with missing fields." : "Roster record looks complete.",
+      variant: incomplete ? "warning" : "success",
+      durationMs: 2600,
+    });
+  }
+
+  onClose();
+}
+
+async function endPcOrgCascade() {
+  // NOTE: This does NOT end the PC Org itself (dimension table).
+  // It ends THIS PERSON'S association to the current PC Org (person_pc_org).
+  const ok = window.confirm(
+    "End Org association for this person? This will set an end date (today) on the person ↔ org association so they return to the unassigned pool. Continue?"
+  );
+  if (!ok) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  try {
+    if (!personId || !pcOrgId) throw new Error("Missing personId or pcOrgId");
+
+    await api.personPcOrgEndAssociation({
+      person_id: String(personId),
+      pc_org_id: String(pcOrgId),
+      end_date: today,
+    });
+
+    toast.push({
+      title: "Org association ended",
+      message: "This person is now eligible for reassignment.",
+      variant: "success",
+      durationMs: 3200,
+    });
+
+    // Flip Org pill immediately in this overlay session
+    setOrgAssociationEndedAt(today);
+
+    await refreshCurrent();
+  } catch (e: any) {
+    toast.push({
+      title: "End org association failed",
+      message: String(e?.message ?? e),
+      variant: "danger",
+      durationMs: 4200,
+    });
+  }
+}
 
   useEffect(() => {
     // Keep baseline/draft in sync while not editing.
@@ -842,26 +1026,45 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
     if (tab === "person") return loadPerson();
     if (tab === "assignment") return loadMaster();
     if (tab === "leadership") return loadDrilldown();
+    if (tab === "org") {
+      await loadMaster();
+      return loadDrilldown();
+    }
   };
 
   const refreshing =
-    (tab === "person" && loadingPerson) || (tab === "assignment" && loadingMaster) || (tab === "leadership" && loadingDrill);
+    (tab === "person" && loadingPerson) || (tab === "assignment" && loadingMaster) || (tab === "leadership" && loadingDrill) || (tab === "org" && (loadingMaster || loadingDrill));
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0 truncate">{title}</div>
-          <div className="shrink-0 text-xs text-[var(--to-ink-muted)]">
-            {pcOrgName ?? "Org"} • {String(pcOrgId).slice(0, 8)}
+        <div className="min-w-0">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 truncate">{title}</div>
+            <div className="shrink-0 text-xs text-[var(--to-ink-muted)]">
+              {pcOrgName ?? "Org"} • {String(pcOrgId).slice(0, 8)}
+            </div>
+          </div>
+
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Pill label="Person" ok={recordStatus.personOk} />
+            <Pill label="Org" ok={recordStatus.orgOk} />
+            <Pill label="Assignments" ok={recordStatus.assignmentOk} />
+            <Pill label="Leadership" ok={recordStatus.leadershipOk} />
           </div>
         </div>
       }
       size="lg"
       footer={
         <>
+          <Button variant="secondary" type="button" onClick={() => submitRosterRecord("complete")}>
+            Submit
+          </Button>
+          <Button variant="ghost" type="button" onClick={() => submitRosterRecord("incomplete")}>
+            Submit incomplete
+          </Button>
           <Button variant="ghost" type="button" onClick={onClose}>
             Close
           </Button>
@@ -1068,7 +1271,19 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                   </div>
                 ) : null}
 
-                <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
+                  <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">PC</div>
+                  <div className="col-span-8">{row?.pc_number ?? row?.pc_id ?? "—"}</div>
+
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">MSO</div>
+                  <div className="col-span-8">{row?.mso_name ?? "—"}</div>
+
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">Division</div>
+                  <div className="col-span-8">{row?.division_name ?? "—"}</div>
+
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">Region</div>
+                  <div className="col-span-8">{row?.region_name ?? "—"}</div>
+
                   <div className="col-span-4 text-[var(--to-ink-muted)]">Email</div>
                   <div className="col-span-8">
                     <TextInput value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder={inferredEmail || "name@company.com"} />
@@ -1088,6 +1303,50 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
               </Card>
             </div>
           ) : null}
+
+{tab === "org" ? (
+  <div className="space-y-3">
+    <Card title="Org">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="text-sm font-semibold">{pcOrgName ?? "Org"}</div>
+          {orgStartDate ? (
+            <div className="text-xs text-[var(--to-ink-muted)]">Start date: {String(orgStartDate).slice(0, 10)}</div>
+          ) : null}
+          <div className="text-xs text-[var(--to-ink-muted)]">
+            Actions here affect this person’s org association (soft close; no deletes).
+          </div>
+        </div>
+
+        <Button variant="secondary" onClick={endPcOrgCascade}>
+          End Org association
+        </Button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
+          <div className="col-span-4 text-[var(--to-ink-muted)]">PC</div>
+          <div className="col-span-8">
+            {(row as any)?.pc_name ??
+              (row as any)?.pc_number ??
+              ((row as any)?.pc_id ? String((row as any)?.pc_id) : "—")}
+          </div>
+
+          <div className="col-span-4 text-[var(--to-ink-muted)]">MSO</div>
+          <div className="col-span-8">{(row as any)?.mso_name ?? "—"}</div>
+
+          <div className="col-span-4 text-[var(--to-ink-muted)]">Division</div>
+          <div className="col-span-8">{(row as any)?.division_name ?? "—"}</div>
+
+          <div className="col-span-4 text-[var(--to-ink-muted)]">Region</div>
+          <div className="col-span-8">{(row as any)?.region_name ?? "—"}</div>
+      </div>
+
+      <div className="mt-3 text-xs text-[var(--to-ink-muted)]">
+        “End Org association” sets <code className="px-1">end_date</code> to today on the <code className="px-1">person_pc_org</code> row for this person. No rows are deleted.
+      </div>
+    </Card>
+  </div>
+) : null}
 
 {tab === "assignment" ? (
             <div className="space-y-3">
@@ -1110,7 +1369,7 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
                       Assignment is the source of truth for position + dates. Edit inline to confirm hydration and write.
                     </div>
                     {!masterForPerson && !loadingMaster ? (
-                      <div className="text-sm text-[var(--to-ink-muted)]">No matching assignment row found.</div>
+                      <div className="text-sm text-[var(--to-ink-muted)]">No active assignment found (end date is set).</div>
                     ) : null}
                   </div>
 

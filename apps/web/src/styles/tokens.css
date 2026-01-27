@@ -7,6 +7,15 @@
   --to-surface: #0f1624;
   --to-surface-2: rgba(255, 255, 255, 0.04);
 
+    /* Segmented control + Pills */
+  --to-seg-active-bg: var(--to-row-hover);
+  --to-pill-active-bg: transparent;
+
+  /* Empty state tint */
+  --to-empty-bg: var(--to-surface);
+  --to-empty-border: var(--to-border);
+  --to-empty-icon-bg: var(--to-surface-2);
+
   /* Ink */
   --to-ink: rgba(255, 255, 255, 0.92);
   --to-ink-muted: rgba(255, 255, 255, 0.62);
@@ -31,3 +40,4 @@
   /* Overlay (modal/backdrop) */
   --to-overlay: rgba(0, 0, 0, 0.55);
 }
+

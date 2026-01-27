@@ -35,17 +35,20 @@ export function EmptyState({
 }) {
   return (
     <div
-      className={cls("rounded border bg-[var(--to-surface)]", compact ? "p-4" : "p-6")}
-      style={{ borderColor: "var(--to-border)" }}
+      className={cls("rounded border", compact ? "p-4" : "p-6")}
+      style={{
+        borderColor: "var(--to-empty-border, var(--to-border))",
+        background: "var(--to-empty-bg, var(--to-surface))",
+      }}
     >
       <div className={cls("flex gap-4", compact ? "items-start" : "items-center")}>
         {icon ? (
           <div
-            className={cls(
-              "flex items-center justify-center rounded-xl border",
-              compact ? "h-9 w-9" : "h-10 w-10"
-            )}
-            style={{ borderColor: "var(--to-border)", background: "var(--to-surface-2)" }}
+            className={cls("flex items-center justify-center rounded-xl border", compact ? "h-9 w-9" : "h-10 w-10")}
+            style={{
+              borderColor: "var(--to-border)",
+              background: "var(--to-empty-icon-bg, var(--to-surface-2))",
+            }}
             aria-hidden="true"
           >
             {icon}

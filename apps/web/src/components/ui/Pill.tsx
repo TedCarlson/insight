@@ -16,11 +16,14 @@ export function Pill({
       {...props}
       type={props.type ?? "button"}
       className={cls(
-        "rounded-full border px-3 py-1 text-sm hover:bg-[var(--to-surface-2)]",
+        "rounded-full border px-3 py-1 text-sm transition-colors hover:bg-[var(--to-surface-2)]",
         active && "font-semibold",
         className
       )}
-      style={{ borderColor: "var(--to-border)" }}
+      style={{
+        borderColor: "var(--to-border)",
+        background: active ? "var(--to-pill-active-bg, transparent)" : "transparent",
+      }}
     />
   );
 }

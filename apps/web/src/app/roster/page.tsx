@@ -300,30 +300,44 @@ export default function RosterPage() {
             <div className="flex items-center gap-1 rounded-full border border-[var(--to-border)] p-1">
               <Button
                 type="button"
-                variant="secondary"
-                className={`rounded-full px-3 py-1 text-xs ${roleFilter === "technician" ? "" : "opacity-60"}`}
+                variant={roleFilter === "technician" ? "secondary" : "ghost"}
+                className="rounded-full px-3 py-1 text-xs"
+                style={
+                  roleFilter === "technician"
+                    ? { background: "var(--to-toggle-active-bg)", borderColor: "var(--to-toggle-active-border)" }
+                    : undefined
+                }
                 onClick={() => setRoleFilter("technician")}
               >
                 Technician
               </Button>
               <Button
                 type="button"
-                variant="secondary"
-                className={`rounded-full px-3 py-1 text-xs ${roleFilter === "supervisor" ? "" : "opacity-60"}`}
+                variant={roleFilter === "supervisor" ? "secondary" : "ghost"}
+                className="rounded-full px-3 py-1 text-xs"
+                style={
+                  roleFilter === "supervisor"
+                    ? { background: "var(--to-toggle-active-bg)", borderColor: "var(--to-toggle-active-border)" }
+                    : undefined
+                }
                 onClick={() => setRoleFilter("supervisor")}
               >
                 Supervisor
               </Button>
               <Button
                 type="button"
-                variant="secondary"
-                className={`rounded-full px-3 py-1 text-xs ${roleFilter === "all" ? "" : "opacity-60"}`}
+                variant={roleFilter === "all" ? "secondary" : "ghost"}
+                className="rounded-full px-3 py-1 text-xs"
+                style={
+                  roleFilter === "all"
+                    ? { background: "var(--to-toggle-active-bg)", borderColor: "var(--to-toggle-active-border)" }
+                    : undefined
+                }
                 onClick={() => setRoleFilter("all")}
               >
                 All
               </Button>
             </div>
-
             <TextInput
               value={query}
               onChange={(e) => setQuery(e.target.value)}

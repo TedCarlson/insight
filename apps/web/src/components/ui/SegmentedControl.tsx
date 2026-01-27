@@ -31,7 +31,10 @@ export function SegmentedControl<T extends string>({
   return (
     <div
       className={cls("inline-flex rounded-full border p-1", className)}
-      style={{ borderColor: "var(--to-border)", background: "var(--to-surface)" }}
+      style={{
+        borderColor: "var(--to-border)",
+        background: "var(--to-surface)",
+      }}
       role="tablist"
       aria-label="Segmented control"
     >
@@ -49,7 +52,9 @@ export function SegmentedControl<T extends string>({
               active ? "text-[var(--to-ink)]" : "text-[var(--to-ink-muted)] hover:text-[var(--to-ink)]"
             )}
             style={{
-              background: active ? "var(--to-row-hover)" : "transparent",
+              // Use token so themes can decide the highlight color.
+              // Glass theme will set this to a soft green tint.
+              background: active ? "var(--to-seg-active-bg, var(--to-row-hover))" : "transparent",
             }}
           >
             {opt.label}

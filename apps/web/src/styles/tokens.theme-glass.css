@@ -9,6 +9,19 @@
   --to-surface: #ffffff;          /* card surface */
   --to-surface-2: rgba(37, 99, 235, 0.03); /* subtle hover fill (blue tint) */
 
+  /* Segmented / pill toggle active fill */
+--to-toggle-active-bg: color-mix(in srgb, #22c55e 16%, var(--to-surface) 84%);
+--to-toggle-active-border: color-mix(in srgb, #22c55e 28%, var(--to-border) 72%);
+
+    /* Segmented control active tint (soft green highlight) */
+  --to-seg-active-bg: color-mix(in srgb, var(--to-accent-2) 16%, var(--to-surface) 84%);
+  --to-pill-active-bg: color-mix(in srgb, var(--to-accent-2) 12%, var(--to-surface) 88%);
+
+  /* Empty state contrast (faint blue tint for glass theme) */
+  --to-empty-bg: color-mix(in srgb, var(--to-info) 9%, var(--to-surface) 91%);
+  --to-empty-border: color-mix(in srgb, var(--to-info) 18%, var(--to-border) 82%);
+  --to-empty-icon-bg: color-mix(in srgb, var(--to-info) 10%, var(--to-surface-2) 90%);
+
   /* Ink */
   --to-ink: #0f172a;              /* slate-900 */
   --to-ink-muted: rgba(15, 23, 42, 0.62);

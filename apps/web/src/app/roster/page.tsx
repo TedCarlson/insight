@@ -4,6 +4,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, type RosterRow } from "@/lib/api";
+import { createClient } from "@/lib/supabase/client";
+import { fetchActiveRosterPersonIdSet } from "@/lib/activeRoster";
 import { useOrg } from "@/state/org";
 
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
@@ -100,7 +102,20 @@ export default function RosterPage() {
 
     try {
       const r = await api.rosterCurrentFull(validatedOrgId, null);
-      setRoster(r);
+
+      // Enforce: roster shows ONLY persons with ACTIVE person↔org membership for this scoped pc_org.
+// Source of truth: public.v_roster_active (filters person_pc_org.active = true).
+const supabase = createClient();
+const activePersonIds = await fetchActiveRosterPersonIdSet(supabase as any, validatedOrgId);
+
+const filtered = (r ?? []).filter((row: any) => {
+  const pid = String(row?.person_id ?? "").trim();
+  return Boolean(pid) && activePersonIds.has(pid);
+});
+
+
+
+setRoster(filtered);
     } catch (e: any) {
       setRoster([]);
       setErr(e?.message ?? "Failed to load roster");
@@ -239,15 +254,16 @@ const matchesSupervisor = (r: any) => {
   return String(r?.reports_to_person_id ?? "").trim() === String(supervisorKey).trim();
 };
 
-const hasActiveOrgAssociation = (r: any) => {
-  // Active association: no end date on person_pc_org association, and still scoped to this org
-  const end = String(r?.person_pc_org_end_date ?? r?.pc_org_end_date ?? "").trim();
+const isInScopedOrg = (r: any) => {
+  // Roster membership is already filtered by v_roster_active; this check only ensures
+  // the row is aligned to the currently scoped org (when pc_org_id is present).
+  if (!validatedOrgId) return false;
   const orgId = String(r?.pc_org_id ?? "").trim();
-  if (orgId && validatedOrgId && orgId !== String(validatedOrgId)) return false;
-  return !end && (!!orgId || !!validatedOrgId);
+  return !orgId || orgId === String(validatedOrgId);
 };
 
-const out = rows.filter((r: any) => matchesAff(r) && matchesSearch(r) && matchesSupervisor(r) && hasActiveOrgAssociation(r));
+
+const out = rows.filter((r: any) => matchesAff(r) && matchesSearch(r) && matchesSupervisor(r) && isInScopedOrg(r));
 
     // Default sort: tech_id then full_name
     out.sort((a: any, b: any) => {
@@ -324,14 +340,16 @@ const scheduleReady = techRows.filter((r: any) => {
   // Best-effort supervisor classification:
   // if a supervisor appears as a roster row, use their co_type to classify ITG vs BP.
   const allRows = roster ?? [];
-  const hasActiveOrgAssociation = (r: any) => {
-    const end = String(r?.person_pc_org_end_date ?? r?.pc_org_end_date ?? "").trim();
-    const orgId = String(r?.pc_org_id ?? "").trim();
-    if (orgId && validatedOrgId && orgId !== String(validatedOrgId)) return false;
-    return !end && (!!orgId || !!validatedOrgId);
-  };
+  const isInScopedOrg = (r: any) => {
+  // Roster membership is already filtered by v_roster_active; this check only ensures
+  // the row is aligned to the currently scoped org (when pc_org_id is present).
+  if (!validatedOrgId) return false;
+  const orgId = String(r?.pc_org_id ?? "").trim();
+  return !orgId || orgId === String(validatedOrgId);
+};
 
-  const activeRowsAll = allRows.filter((r: any) => hasActiveOrgAssociation(r));
+
+  const activeRowsAll = allRows.filter((r: any) => isInScopedOrg(r));
   const supervisorById = new Map<string, any>();
   for (const r of activeRowsAll as any[]) {
     const pid = String(r?.person_id ?? "").trim();

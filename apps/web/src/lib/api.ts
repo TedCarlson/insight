@@ -87,6 +87,22 @@ export type AssignmentRow = {
   [k: string]: any;
 };
 
+/** person_pc_org table (public.person_pc_org) */
+export type PersonPcOrgRow = {
+  person_pc_org_id: UUID;
+  person_id: UUID;
+  pc_org_id: UUID;
+  status: string;
+  start_date?: string | null; // date (YYYY-MM-DD)
+  end_date?: string | null; // date (YYYY-MM-DD)
+  active?: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  [k: string]: any;
+};
+
+
 /** assignment_reporting table (public.assignment_reporting) */
 export type AssignmentReportingRow = {
   assignment_reporting_id: UUID;
@@ -362,13 +378,15 @@ private async rpcWrite<T>(
   const json: any = await res.json().catch(() => ({}));
 
   if (!res.ok || !json?.ok) {
-    const msg = json?.error ?? json?.message ?? `RPC write failed (${res.status})`;
-    const err: any = new Error(String(msg));
-    err.status = res.status;
-    err.code = json?.code ?? undefined;
-    err.details = json?.details ?? null;
-    throw err;
-  }
+  const msg = json?.error ?? json?.message ?? `RPC write failed (${res.status})`;
+  const err: any = new Error(String(msg));
+  err.status = res.status;
+  err.code = json?.code ?? undefined;
+  err.details = json?.details ?? null;
+  err.debug = json?.debug ?? null; // <-- add this
+  throw err;
+}
+
 
   return (json?.data as T) ?? (json as T);
 }
@@ -482,14 +500,17 @@ private async rpcWrite<T>(
   }
 
   async rosterCurrentFull(pc_org_id: string, position_title?: string | null): Promise<RosterCurrentFullRow[]> {
-    const p_position_title = position_title ?? null;
-    return (
-      (await this.rpcWithFallback<RosterCurrentFullRow[]>("roster_current_full", [
-        { p_pc_org_id: pc_org_id, p_position_title },
-        { pc_org_id, position_title: p_position_title },
-      ])) ?? []
-    );
-  }
+  const p_position_title = position_title ?? null;
+
+  const { data, error } = await (this.api() as any).rpc("roster_current_full", {
+    p_pc_org_id: pc_org_id,
+    p_position_title,
+  });
+
+  if (error) throw this.normalize(error);
+  return (data as any) ?? [];
+}
+
 
   async rosterDrilldown(pc_org_id: string): Promise<RosterDrilldownRow[]> {
     return (
@@ -537,9 +558,7 @@ private async rpcWrite<T>(
     person_nt_login?: string | null;
     person_csg_id?: string | null;
     active?: boolean | null;
-    role?: string | null;
     co_ref_id?: string | null;
-    co_code?: string | null;
   }): Promise<PersonRow | null> {
     const args = this.compactRecord({
       p_person_id: input.person_id,
@@ -551,13 +570,10 @@ private async rpcWrite<T>(
       p_person_nt_login: input.person_nt_login ?? undefined,
       p_person_csg_id: input.person_csg_id ?? undefined,
       p_active: input.active ?? undefined,
-      p_role: input.role ?? undefined,
       p_co_ref_id: input.co_ref_id ?? undefined,
-      p_co_code: input.co_code ?? undefined,
     });
 
-    const { data, error } = await this.supabase.rpc("person_upsert", args as any);
-    if (error) throw this.normalize(error);
+    const data = await this.rpcWrite<any>("public", "person_upsert", args as any);
     return (data as any) ?? null;
   }
 
@@ -757,20 +773,17 @@ async assignmentReportingUpsert(input: {
   async wizardProcessToRoster(input: {
     pc_org_id: string;
     person_id: string;
-    position_title?: string | null;
-    start_date: string;
-    notes?: string | null;
-  }): Promise<AssignmentRow> {
+    start_date?: string | null; // YYYY-MM-DD
+  }): Promise<PersonPcOrgRow | null> {
     const args = this.compactRecord({
       p_pc_org_id: input.pc_org_id,
       p_person_id: input.person_id,
-      p_position_title: input.position_title ?? null,
-      p_start_date: input.start_date,
-      p_notes: input.notes ?? null,
+      // Omit p_start_date to allow DB default (current_date)
+      p_start_date: input.start_date ?? undefined,
     });
 
-    const data = await this.rpcWithFallback<any>("wizard_process_to_roster", [args]);
-    return data as AssignmentRow;
+    const data = await this.rpcWrite<any>("api", "wizard_process_to_roster", args as any);
+    return (data as any) ?? null;
   }
 
   /**

@@ -205,7 +205,7 @@ const personHuman = useMemo(() => {
   const [assignmentBaseline, setAssignmentBaseline] = useState<any | null>(null);
   const [assignmentDraft, setAssignmentDraft] = useState<any | null>(null);
 
-  // Position title lookup (shared rules with OnboardWizardModal to prevent free-text drift)
+  // Position title lookup 
   type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
   const [positionTitles, setPositionTitles] = useState<PositionTitleRow[]>([]);
   const [positionTitlesLoading, setPositionTitlesLoading] = useState(false);
@@ -240,11 +240,10 @@ const personHuman = useMemo(() => {
 
   useEffect(() => {
     if (!open) return;
-    if (tab !== "assignment") return;
+    if (tab !== "assignment" && tab !== "leadership") return;
     void loadPositionTitles();
   }, [open, tab]);
-
-  const positionTitleOptions = useMemo(() => {
+const positionTitleOptions = useMemo(() => {
     const list = [...positionTitles];
     // server already sorts, but keep deterministic
     list.sort(
@@ -899,6 +898,9 @@ async function endPcOrgCascade() {
     setOrgAssociationEndedAt(today);
 
     await refreshCurrent();
+
+    // Close the overlay so the parent roster re-fetches and the person disappears from the list.
+    onClose();
   } catch (e: any) {
     toast.push({
       title: "End org association failed",
@@ -920,25 +922,154 @@ async function endPcOrgCascade() {
   }, [leadershipContext, editingLeadership]);
 
   const managerOptions = useMemo(() => {
-    const rows: any[] = (master ?? []) as any[];
-    const childId = String(assignmentId ?? "");
-    return rows
-      .filter((r) => {
+  const rows: any[] = (master ?? []) as any[];
+  const childAssignmentId = String(assignmentId ?? "");
+  const childTitle = String((masterForPerson as any)?.position_title ?? (row as any)?.position_title ?? "");
+  const childAff = String(
+    (row as any)?.affiliation ??
+      (row as any)?.co_name ??
+      (row as any)?.company_name ??
+      (row as any)?.contractor_name ??
+      ""
+  );
+
+  const norm = (s: any) => String(s ?? "").toLowerCase().trim();
+
+  const isITG = (r: any) => {
+    const aff = norm(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
+    return aff.includes("integrated tech") || aff === "itg" || aff.includes("itg ");
+  };
+
+  const isBP = (r: any) => {
+    const aff = norm(r?.affiliation ?? r?.co_name ?? r?.company_name ?? "");
+    const title = norm(r?.position_title ?? r?.title ?? "");
+    return title.includes("bp") || aff.includes("bp");
+  };
+
+  const isContractorPerson = (affRaw: string) => {
+    const aff = norm(affRaw);
+    if (!aff) return false;
+    if (aff.includes("integrated tech") || aff.startsWith("itg")) return false;
+    if (aff.includes("bp")) return false;
+    return true;
+  };
+
+  const titleRankFallback = (titleRaw: string) => {
+    const t = norm(titleRaw);
+    if (t.includes("technician")) return 10;
+    if (t.includes("supervisor")) return 20;
+    if (t.includes("manager")) return 30;
+    if (t.includes("director")) return 40;
+    if (t.includes("vp") || t.includes("vice president")) return 50;
+    return 25;
+  };
+
+  const sortOrderByTitle = new Map<string, number>();
+  for (const pt of positionTitles ?? []) {
+    const key = String((pt as any)?.position_title ?? "").trim();
+    const so = Number((pt as any)?.sort_order ?? NaN);
+    if (key && Number.isFinite(so)) sortOrderByTitle.set(key, so);
+  }
+
+  // Determine whether sort_order increases with seniority (preferred) or decreases.
+  const techSo = sortOrderByTitle.get("Technician");
+  const supSo = sortOrderByTitle.get("Supervisor");
+  const sortIncreasesWithSeniority =
+    typeof techSo === "number" && typeof supSo === "number" ? techSo < supSo : true;
+
+  const getRank = (titleRaw: string) => {
+    const t = String(titleRaw ?? "").trim();
+    const so = sortOrderByTitle.get(t);
+    if (typeof so === "number") return so;
+    return titleRankFallback(t);
+  };
+
+  const childRank = getRank(childTitle);
+  const isHigherRank = (candidateTitle: string) => {
+    const candRank = getRank(candidateTitle);
+    return sortIncreasesWithSeniority ? candRank > childRank : candRank < childRank;
+  };
+
+  const childIsITG = isITG({ affiliation: childAff });
+  const childIsBP = norm(childTitle).includes("bp") || norm(childAff).includes("bp");
+  const childIsContractor = isContractorPerson(childAff);
+  const childIsTech = norm(childTitle).includes("technician");
+  const childIsSupervisor = norm(childTitle).includes("supervisor");
+
+  const candidatePassesAffiliationRules = (r: any) => {
+    // Always allow ITG leadership as available (still rank gated)
+    if (isITG(r)) return true;
+
+    // BP position titles should report to ITG (company POC)
+    if (childIsBP) return false;
+
+    // ITG/company reports to ITG/company
+    if (childIsITG) return false;
+
+    // Contractor logic
+    if (childIsContractor) {
+      const candAff = String(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
+      const sameContractor = norm(candAff) === norm(childAff);
+
+      // Contractor technicians can report to BP Supervisors when present + ITG fallback (handled above)
+      if (childIsTech) {
+        const candBP = isBP(r);
+        const candSupOrAbove = isHigherRank(String(r?.position_title ?? r?.title ?? "")) || norm(r?.position_title ?? "").includes("supervisor") || norm(r?.position_title ?? "").includes("manager") || norm(r?.position_title ?? "").includes("director");
+        if (candBP && candSupOrAbove) return true;
+        return sameContractor;
+      }
+
+      // Contractor supervisors/managers: same contractor (and ITG fallback already allowed)
+      return sameContractor;
+    }
+
+    // Default: keep same affiliation (company → company)
+    const candAff = String(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
+    return norm(candAff) === norm(childAff);
+  };
+
+  const candidates = rows.filter((r) => {
+    const aid = String(r?.assignment_id ?? "");
+    if (!aid) return false;
+    if (childAssignmentId && aid === childAssignmentId) return false;
+
+    const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
+    if (!active) return false;
+
+    const candTitle = String(r?.position_title ?? r?.title ?? "");
+    // Rank constraint: min next upward rank + all above
+    if (!isHigherRank(candTitle)) return false;
+
+    // Affiliation constraint
+    return candidatePassesAffiliationRules(r);
+  });
+
+  // Safety net: if filtering is too tight, relax progressively so user isn't blocked.
+  const relaxed = candidates.length
+    ? candidates
+    : rows.filter((r) => {
         const aid = String(r?.assignment_id ?? "");
         if (!aid) return false;
-        if (childId && aid === childId) return false;
+        if (childAssignmentId && aid === childAssignmentId) return false;
         const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
-        return active;
-      })
-      .map((r) => {
-        const aid = String(r?.assignment_id ?? "");
-        const name = (r?.full_name ?? r?.person_name ?? r?.name ?? r?.reports_to_full_name ?? "—") as string;
-        const title = (r?.position_title ?? r?.title ?? "") as string;
-        const label = title ? `${name} — ${title}` : name;
-        return { value: aid, label };
-      })
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [master, assignmentId]);
+        if (!active) return false;
+        const candTitle = String(r?.position_title ?? r?.title ?? "");
+        return isHigherRank(candTitle) && (isITG(r) || norm(String(r?.affiliation ?? r?.co_name ?? "")) === norm(childAff));
+      });
+
+  const finalList = relaxed.length ? relaxed : rows.filter((r) => Boolean(String(r?.assignment_id ?? "")));
+
+  return finalList
+    .map((r) => {
+      const aid = String(r?.assignment_id ?? "");
+      const name = (r?.full_name ?? r?.person_name ?? r?.name ?? r?.reports_to_full_name ?? "—") as string;
+      const title = (r?.position_title ?? r?.title ?? "") as string;
+      const aff = String(r?.affiliation ?? r?.co_name ?? "");
+      const label = title ? `${name} — ${title}${aff ? ` (${aff})` : ""}` : `${name}${aff ? ` (${aff})` : ""}`;
+      return { value: aid, label };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}, [master, assignmentId, masterForPerson, row, positionTitles]);
 
   function beginEditLeadership() {
     setLeadershipErr(null);
@@ -958,68 +1089,70 @@ async function endPcOrgCascade() {
   }
 
   async function saveLeadership() {
-    const childId = String(assignmentId ?? "");
-    if (!childId) {
-      setLeadershipErr("No assignment_id for this roster row.");
-      setEditingLeadership(false);
-      return;
-    }
+  const childId = String(assignmentId ?? "");
+  if (!childId) {
+    setLeadershipErr("No assignment_id for this roster row.");
+    setEditingLeadership(false);
+    return;
+  }
 
-    const selectedParent = String((leadershipDraft as any)?.reports_to_assignment_id ?? "").trim();
-    const baselineParent = String((leadershipContext as any)?.reports_to_assignment_id ?? "").trim();
+  const selectedParent = String((leadershipDraft as any)?.reports_to_assignment_id ?? "").trim();
+  const baselineParent = String((leadershipContext as any)?.reports_to_assignment_id ?? "").trim();
 
-    if (selectedParent === childId) {
-      setLeadershipErr("An assignment cannot report to itself.");
-      return;
-    }
+  if (selectedParent === childId) {
+    setLeadershipErr("An assignment cannot report to itself.");
+    return;
+  }
 
-    // No change
-    if (selectedParent === baselineParent) {
-      setEditingLeadership(false);
-      return;
-    }
+  // No change
+  if (selectedParent === baselineParent) {
+    setEditingLeadership(false);
+    return;
+  }
 
-    setSavingLeadership(true);
-    setLeadershipErr(null);
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const reportingId = (leadershipContext as any)?.reports_to_reporting_id
-        ? String((leadershipContext as any).reports_to_reporting_id)
-        : null;
+  setSavingLeadership(true);
+  setLeadershipErr(null);
+  try {
+    const today = new Date().toISOString().slice(0, 10);
 
-      // Clear manager: end-date the current relationship (cannot null parent_assignment_id).
-      if (!selectedParent) {
-        if (reportingId) {
-          await api.assignmentReportingUpsert({
-            assignment_reporting_id: reportingId,
-            child_assignment_id: childId,
-            parent_assignment_id: baselineParent,
-            start_date: (leadershipContext as any)?.reports_to_start_date ?? today,
-            end_date: today,
-          });
-        }
-        setEditingLeadership(false);
-        await loadDrilldown();
-        return;
-      }
+    const currentReportingId = (leadershipContext as any)?.reports_to_reporting_id
+      ? String((leadershipContext as any).reports_to_reporting_id)
+      : null;
 
-      // Set/change manager
+    const currentStartDate = String((leadershipContext as any)?.reports_to_start_date ?? "").trim();
+
+    // 1) End current relationship if one exists
+    if (currentReportingId) {
       await api.assignmentReportingUpsert({
-        assignment_reporting_id: reportingId,
+        assignment_reporting_id: currentReportingId,
+        child_assignment_id: childId,
+        parent_assignment_id: baselineParent || (leadershipContext as any)?.reports_to_assignment_id,
+        start_date: currentStartDate || today,
+        end_date: today,
+      });
+    }
+
+    // 2) If user picked a new manager, start a NEW relationship row with start_date=today
+    //    (Do NOT reuse old start_date; unique grain is (child, parent, start_date) and start_date must differ for history.)
+    if (selectedParent) {
+      await api.assignmentReportingUpsert({
+        assignment_reporting_id: null,
         child_assignment_id: childId,
         parent_assignment_id: selectedParent,
-        start_date: (leadershipContext as any)?.reports_to_start_date ?? (masterForPerson as any)?.start_date ?? today,
+        start_date: today,
         end_date: null,
       });
-
-      setEditingLeadership(false);
-      await loadDrilldown();
-    } catch (e: any) {
-      setLeadershipErr(e?.message ?? "Failed to save reporting relationship");
-    } finally {
-      setSavingLeadership(false);
     }
+
+    setEditingLeadership(false);
+    await loadDrilldown();
+  } catch (e: any) {
+    setLeadershipErr(e?.message ?? "Failed to save reporting relationship");
+  } finally {
+    setSavingLeadership(false);
   }
+}
+
 
 
   const refreshCurrent = async () => {

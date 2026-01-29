@@ -171,6 +171,7 @@ export default function OnboardPage() {
   }, [supabase]);
 
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"active" | "inactive">("active");
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -356,13 +357,12 @@ export default function OnboardPage() {
   );
 
   const loadPeople = useCallback(
-    async (nextQuery: string) => {
-      const q = (nextQuery ?? "").trim();
+    async (_nextQuery: string) => {
       setLoading(true);
       setNotice(null);
 
       try {
-        const r = (await api.peopleGlobalUnassignedSearch(q, 100)) ?? [];
+        const r = (await api.peopleGlobalUnassignedSearch("", 100)) ?? [];
         const base = r.slice(0, 50);
         setRows(base);
         void hydratePeople(base);
@@ -474,6 +474,54 @@ function handleAddPerson() {
     return opt?.name ?? "";
   }
 
+
+const filteredRows = useMemo(() => {
+  const q = (query ?? "").trim().toLowerCase();
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const qDigits = digitsOnly(q);
+
+  function matches(row: PersonRow) {
+    if (tokens.length === 0) return true;
+
+    const pid = String((row as any)?.person_id ?? "").trim();
+    const d = (pid ? draftByPersonId.get(pid) : null) ?? ({} as any);
+
+    const full = String(d.full_name ?? (row as any)?.full_name ?? (row as any)?.first_name ?? (row as any)?.last_name ?? "");
+    const emails = String(d.emails ?? (row as any)?.emails ?? (row as any)?.email ?? "");
+    const mobile = String(d.mobile ?? (row as any)?.mobile ?? (row as any)?.phone ?? (row as any)?.mobile_phone ?? "");
+    const fuse = String(d.fuse_emp_id ?? (row as any)?.fuse_emp_id ?? "");
+    const nt = String(d.person_nt_login ?? (row as any)?.person_nt_login ?? "");
+    const csg = String(d.person_csg_id ?? (row as any)?.person_csg_id ?? "");
+
+    const affId = String(d.co_ref_id ?? (row as any)?.co_ref_id ?? "").trim();
+    const affOpt = affId ? coRefById.get(affId) : undefined;
+    const affiliation = String(affOpt?.name ?? "");
+    const affiliationCode = String(affOpt?.code ?? "");
+
+    const hay = [full, emails, mobile, fuse, nt, csg, affiliation, affiliationCode].join(" ").toLowerCase();
+
+    // If the query is mostly digits, allow a direct digits-only match for phone/id fields.
+    if (qDigits && qDigits.length >= 3) {
+      const mobileDigits = digitsOnly(mobile);
+      const fuseDigits = digitsOnly(fuse);
+      const csgDigits = digitsOnly(csg);
+      if (mobileDigits.includes(qDigits) || fuseDigits.includes(qDigits) || csgDigits.includes(qDigits)) return true;
+    }
+
+    return tokens.every((t) => hay.includes(t));
+  }
+
+  return (rows ?? []).filter((row) => {
+    const pid = String((row as any)?.person_id ?? "").trim();
+    const d = (pid ? draftByPersonId.get(pid) : null) ?? ({} as any);
+    const active = ((d?.active ?? (row as any)?.active) !== false) === true;
+
+    if (statusFilter === "active" && !active) return false;
+    if (statusFilter === "inactive" && active) return false;
+
+    return matches(row);
+  });
+}, [rows, query, statusFilter, coRefById, draftByPersonId]);
   const onboardGridStyle = useMemo(
     () => ({
       gridTemplateColumns: [
@@ -620,6 +668,26 @@ function handleAddPerson() {
                 <Button variant="ghost" onClick={() => loadPeople(query)} disabled={loading}>
                   Refresh
                 </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant={statusFilter === "active" ? "secondary" : "ghost"}
+                    onClick={() => setStatusFilter("active")}
+                    disabled={loading}
+                    title="Show active people"
+                  >
+                    Active
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={statusFilter === "inactive" ? "secondary" : "ghost"}
+                    onClick={() => setStatusFilter("inactive")}
+                    disabled={loading}
+                    title="Show inactive people"
+                  >
+                    Inactive
+                  </Button>
+</div>
                 {hydrating ? <div className="text-xs text-[var(--to-ink-muted)]">Hydrating…</div> : null}
               </div>
             }
@@ -651,6 +719,15 @@ function handleAddPerson() {
             </Card>
           ) : rows.length === 0 ? (
             <EmptyState title="No results" message="Try a different search query." />
+          ) : filteredRows.length === 0 ? (
+            <EmptyState
+              title="No matches"
+              message={
+                statusFilter === "active"
+                  ? "No active people match your search."
+                  : "No inactive people match your search."
+              }
+            />
           ) : (
               <DataTable
                 zebra
@@ -674,7 +751,7 @@ function handleAddPerson() {
               </DataTableHeader>
 
               <DataTableBody>
-                {rows.map((row) => {
+                {filteredRows.map((row) => {
                   const pid = String((row as any).person_id ?? "").trim();
                   const saving = isSaving(pid);
                   const onboardSending = Boolean(onboardSendingByPersonId.get(pid));

@@ -1,8 +1,8 @@
 /**
  * Active roster helper utilities.
  *
- * Single source of truth for "active membership" is the DB view:
- *   public.v_roster_active  (filters on person_pc_org.active = true)
+ * Single source of truth for "current membership" is the DB view:
+ *   public.v_roster_current  (filters on person_pc_org.active = true AND current date range)
  *
  * All callers should scope by pc_org_id.
  */
@@ -20,7 +20,7 @@ type ActiveRosterResult = {
 };
 
 /**
- * Fetch full rows from v_roster_active for an org.
+ * Fetch full rows from v_roster_current for an org.
  * Fails closed (throws) if the view isn't readable or query fails.
  */
 export async function fetchActiveRosterForOrg(
@@ -33,14 +33,14 @@ export async function fetchActiveRosterForOrg(
   }
 
   const { data, error } = await supabase
-    .from("v_roster_active")
+    .from("v_roster_current")
     .select("pc_org_id, person_id")
     .eq("pc_org_id", oid);
 
   if (error) {
     // Fail closed – do not allow callers to "show all" if this read fails.
     throw new Error(
-      `Could not load active roster membership (v_roster_active) for pc_org_id=${oid}: ${error.message}`
+      `Could not load current roster membership (v_roster_current) for pc_org_id=${oid}: ${error.message}`
     );
   }
 
@@ -75,12 +75,12 @@ export async function fetchActiveRosterPersonIdSet(
 }
 
 /**
- * Fetch a map of person_id -> pc_org_id for ACTIVE memberships across ANY org.
+ * Fetch a map of person_id -> pc_org_id for CURRENT memberships across ANY org.
  *
  * Used for UI labelling (show current membership org) and for hard-blocking "Unassigned"
- * views from showing people who already have an active membership somewhere.
+ * views from showing people who already have a current membership somewhere.
  *
- * If a person has multiple active memberships, the lexicographically-smallest pc_org_id
+ * If a person has multiple current memberships, the lexicographically-smallest pc_org_id
  * is returned for determinism.
  */
 export async function fetchActiveMembershipOrgByPersonIds(
@@ -99,13 +99,13 @@ export async function fetchActiveMembershipOrgByPersonIds(
     const chunk = ids.slice(i, i + chunkSize);
 
     const { data, error } = await supabase
-      .from("v_roster_active")
+      .from("v_roster_current")
       .select("person_id, pc_org_id")
       .in("person_id", chunk)
       .order("pc_org_id", { ascending: true });
 
     if (error) {
-      throw new Error(`Could not load active membership map (v_roster_active): ${error.message}`);
+      throw new Error(`Could not load current membership map (v_roster_current): ${error.message}`);
     }
 
     const rows = (Array.isArray(data) ? data : []) as unknown as Array<{ person_id?: any; pc_org_id?: any }>;

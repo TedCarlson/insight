@@ -103,15 +103,15 @@ export default function RosterPage() {
     try {
       const r = await api.rosterCurrentFull(validatedOrgId, null);
 
-      // Enforce: roster shows ONLY persons with ACTIVE person↔org membership for this scoped pc_org.
-// Source of truth: public.v_roster_active (filters person_pc_org.active = true).
-const supabase = createClient();
-const activePersonIds = await fetchActiveRosterPersonIdSet(supabase as any, validatedOrgId);
+  // Enforce: roster shows ONLY persons with ACTIVE person↔org membership for this scoped pc_org.
+  // Source of truth: public.v_roster_current (filters to current membership by date + active).
+  const supabase = createClient();
+  const activePersonIds = await fetchActiveRosterPersonIdSet(supabase as any, validatedOrgId);
 
-const filtered = (r ?? []).filter((row: any) => {
-  const pid = String(row?.person_id ?? "").trim();
-  return Boolean(pid) && activePersonIds.has(pid);
-});
+  const filtered = (r ?? []).filter((row: any) => {
+    const pid = String(row?.person_id ?? "").trim();
+    return Boolean(pid) && activePersonIds.has(pid);
+  });
 
 
 

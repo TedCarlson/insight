@@ -508,8 +508,63 @@ private async rpcWrite<T>(
   });
 
   if (error) throw this.normalize(error);
-  return (data as any) ?? [];
+
+  const rows = (Array.isArray(data) ? data : []) as unknown as RosterCurrentFullRow[];
+
+  // Filter out historical rows to prevent multi-row renders for the same person.
+  // Keep rows that are "current" by explicit flag OR by date-window inference.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const isIsoDate = (s: any) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  const isCurrent = (r: any) => {
+    // Prefer DB-computed field when present (roster_row_module_v provides this).
+    if (r?.assignment_active === true) return true;
+    if (r?.assignment_active === false) return false;
+
+    // If DB didn't send assignment_active, infer from record_active + date range when available.
+    if (r?.assignment_record_active === false) return false;
+
+    const start = r?.start_date ?? r?.assignment_start_date ?? null;
+    const end = r?.end_date ?? r?.assignment_end_date ?? null;
+
+    if (isIsoDate(start)) {
+      if (start > todayIso) return false;
+      if (isIsoDate(end) && end < todayIso) return false;
+    }
+    return true;
+  };
+
+  // Safety: also ensure we stay scoped to the org in case an RPC regression occurs.
+  const scoped = rows.filter((r: any) => String(r?.pc_org_id ?? "") === String(pc_org_id ?? ""));
+
+  // Apply "current-only" filter to avoid historical duplicates.
+  const currentOnly = scoped.filter(isCurrent);
+
+  // Optional extra safety: if multiple current rows still exist for same person, keep the newest start_date.
+  // (This should be rare once DB is cleaned; this is a last-resort deterministic tie-break.)
+  const byPerson = new Map<string, RosterCurrentFullRow>();
+  for (const r of currentOnly) {
+    const pid = String((r as any)?.person_id ?? "").trim();
+    if (!pid) continue;
+
+    const existing = byPerson.get(pid);
+    if (!existing) {
+      byPerson.set(pid, r);
+      continue;
+    }
+
+    const a = String((existing as any)?.start_date ?? "");
+    const b = String((r as any)?.start_date ?? "");
+    if (isIsoDate(b) && (!isIsoDate(a) || b > a)) byPerson.set(pid, r);
+  }
+
+  // Preserve non-person rows if any (unlikely, but safe)
+  const personRows = Array.from(byPerson.values());
+  const nonPersonRows = currentOnly.filter((r: any) => !String(r?.person_id ?? "").trim());
+
+  return [...personRows, ...nonPersonRows];
 }
+
 
 
   async rosterDrilldown(pc_org_id: string): Promise<RosterDrilldownRow[]> {

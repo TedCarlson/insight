@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { TextInput } from "@/components/ui/TextInput";
 import { Select } from "@/components/ui/Select";
+import { AffiliationSelector, type AffiliationOption } from "@/components/affiliation/AffiliationSelector";
 import { Notice } from "@/components/ui/Notice";
 import { useToast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase/client";
@@ -123,7 +124,7 @@ function seedPersonFromRow(row: any): any | null {
     person_nt_login: row.person_nt_login ?? null,
     person_csg_id: row.person_csg_id ?? null,
     active: row.active ?? row.person_active ?? null,
-    role: row.co_type ?? row.role ?? null,
+    role: row.role ?? null,
     co_code: row.co_code ?? null,
     co_ref_id: row.co_ref_id ?? null,
   };
@@ -531,6 +532,10 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
       "person_nt_login",
       "person_csg_id",
       "active",
+      // Affiliation + derived fields
+      "co_ref_id",
+      "co_code",
+      "role",
     ] as const;
 
     const patch: any = { person_id: String(personId) };
@@ -581,6 +586,17 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
         setPerson(updated);
         setPersonBaseline({ ...(updated as any) });
         setPersonDraft({ ...(updated as any) });
+
+        // Refresh derived display for Company/Contractor name + kind
+        try {
+          const resolved = await api.resolveCoDisplay({
+            co_ref_id: (updated as any)?.co_ref_id ?? null,
+            co_code: (updated as any)?.co_code ?? null,
+          });
+          setCoResolved(resolved);
+        } catch {
+          setCoResolved(null);
+        }
       } else {
         await loadPerson();
       }
@@ -1348,17 +1364,66 @@ async function endPcOrgCascade() {
               </Card>
 
               {person ? (
-                <Card title="Company / Role">
-                  <div className="space-y-1">
-                    <KVRow
-                      label="Organization"
-                      value={coResolved?.name ?? (person as any)?.co_code ?? (person as any)?.co_ref_id ?? "—"}
-                    />
-                    <KVRow label="Type" value={coResolved?.kind ?? (row as any)?.co_type ?? "—"} />
-                    <KVRow label="Role" value={(person as any)?.role ?? (row as any)?.role ?? "—"} />
-                    <KVRow label="Code" value={(person as any)?.co_code ?? "—"} />
-                  </div>
-                </Card>
+                
+<Card title="Company / Role">
+  {editingPerson ? (
+    <AffiliationSelector
+      value={(() => {
+        const src: any = (personDraft ?? person ?? {}) as any;
+        const co_ref_id = String(src?.co_ref_id ?? "").trim();
+        if (!co_ref_id) return null;
+
+        const roleRaw = String(src?.role ?? "").toLowerCase();
+        const kind: "company" | "contractor" =
+          (coResolved?.kind as any) ??
+          ((row as any)?.co_type === "contractor" || roleRaw.includes("contract") ? "contractor" : "company");
+
+        return {
+          kind,
+          co_ref_id,
+          co_code: src?.co_code ? String(src.co_code) : null,
+          name: coResolved?.name ?? (src?.co_code ? String(src.co_code) : co_ref_id),
+        } as AffiliationOption;
+      })()}
+      onChange={(next) =>
+        setPersonDraft((p: any) => {
+          const n: any = ensurePersonIdentity(p, row as any);
+
+          if (!next) {
+            n.co_ref_id = null;
+            n.co_code = null;
+            n.role = null;
+          } else {
+            n.co_ref_id = String(next.co_ref_id);
+            n.co_code = next.co_code ? String(next.co_code) : null;
+
+            // IMPORTANT: role drives co_type derivation in roster views (contractor vs company).
+            n.role = next.kind === "contractor" ? "contractor" : null;
+          }
+
+          // Keep full_name safe for upsert writes
+          if (!n.full_name || String(n.full_name).trim() === "") {
+            const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
+            if (fb) n.full_name = fb;
+          }
+
+          return n;
+        })
+      }
+      help="Set the person’s Organization. This writes co_ref_id/co_code and updates role so contractor/company type derives correctly."
+    />
+  ) : null}
+
+  <div className="space-y-1">
+    <KVRow
+      label="Organization"
+      value={coResolved?.name ?? (person as any)?.co_code ?? (person as any)?.co_ref_id ?? "—"}
+    />
+    <KVRow label="Type" value={coResolved?.kind ?? (row as any)?.co_type ?? "—"} />
+    <KVRow label="Role" value={(person as any)?.role ?? (row as any)?.role ?? "—"} />
+    <KVRow label="Code" value={(person as any)?.co_code ?? "—"} />
+  </div>
+</Card>
               ) : null}
 
 </div>

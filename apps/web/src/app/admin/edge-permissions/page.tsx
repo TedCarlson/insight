@@ -1,8 +1,11 @@
+//apps/web/src/app/admin/edge-permissions/page.tsx
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOrg } from "@/state/org";
 import { api, type PcOrgPermissionGrantRow, type PermissionDefRow, type PcOrgChoice, type PcOrgEligibilityRow } from "@/lib/api";
+
 
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
@@ -33,6 +36,12 @@ function displayUser(u: UserHit) {
   const email = u.email ? ` (${u.email})` : "";
   return `${label}${email}`;
 }
+
+
+
+
+// Hide the owner/super-user from dropdown lists (owner can still use the console)
+const OWNER_AUTH_USER_ID = process.env.NEXT_PUBLIC_OWNER_AUTH_USER_ID ?? "";
 
 export default function EdgePermissionsConsolePage() {
   const { selectedOrgId, orgs, orgsLoading } = useOrg();
@@ -159,11 +168,13 @@ export default function EdgePermissionsConsolePage() {
     setUsersLoading(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/admin/org-users?pc_org_id=${encodeURIComponent(selectedOrgId)}&min_title=itg_supervisor_plus`, { cache: "no-store" });
+      const r = await fetch(`/api/admin/org-users?pc_org_id=${encodeURIComponent(selectedOrgId)}`, { cache: "no-store" });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error ?? `Failed to load users (${r.status})`);
-      setUsers(((j?.users ?? []) as UserHit[]));
-    } catch (e: any) {
+      const list = (j?.users ?? []) as UserHit[];
+      const filtered = OWNER_AUTH_USER_ID ? list.filter((u) => u.auth_user_id !== OWNER_AUTH_USER_ID) : list;
+      setUsers(filtered);
+} catch (e: any) {
       setUsers([]);
       setErr(e?.message ?? "Failed to load users");
     } finally {

@@ -4,8 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOrg } from "@/state/org";
 import { api, type PcOrgPermissionGrantRow, type PermissionDefRow, type PcOrgChoice, type PcOrgEligibilityRow } from "@/lib/api";
 
-const OWNER_AUTH_USER_ID = "b327ee2e-fbf6-45f1-8cc5-a9c0e16ce514";
-
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -35,23 +33,6 @@ function displayUser(u: UserHit) {
   const email = u.email ? ` (${u.email})` : "";
   return `${label}${email}`;
 }
-
-function isSupervisorPlus(status: string | null) {
-  if (!status) return true; // if backend doesn't provide titles yet, do not hide users
-  const s = status.toLowerCase();
-  const isItg = s.includes("itg");
-  const senior =
-    s.includes("supervisor") ||
-    s.includes("manager") ||
-    s.includes("director") ||
-    s.includes("vp") ||
-    s.includes("vice") ||
-    s.includes("chief") ||
-    s.includes("president") ||
-    s.includes("owner");
-  return isItg && senior;
-}
-
 
 export default function EdgePermissionsConsolePage() {
   const { selectedOrgId, orgs, orgsLoading } = useOrg();
@@ -181,7 +162,7 @@ export default function EdgePermissionsConsolePage() {
       const r = await fetch(`/api/admin/org-users?pc_org_id=${encodeURIComponent(selectedOrgId)}&min_title=itg_supervisor_plus`, { cache: "no-store" });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error ?? `Failed to load users (${r.status})`);
-      setUsers(((j?.users ?? []) as UserHit[]).filter((u) => u.auth_user_id !== OWNER_AUTH_USER_ID).filter((u) => isSupervisorPlus(u.status)));
+      setUsers(((j?.users ?? []) as UserHit[]));
     } catch (e: any) {
       setUsers([]);
       setErr(e?.message ?? "Failed to load users");

@@ -5,18 +5,17 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 
 const OWNER_AUTH_USER_ID = "b327ee2e-fbf6-45f1-8cc5-a9c0e16ce514";
 
-
 /**
  * Org-scoped user list for Edge Permissions Console.
  *
- * Per project goals:
- * - No "typeahead search" on each keystroke.
- * - Return ALL eligible users for the org (typically small: < 20).
+ * Goals:
+ * - Return authenticated users that can be granted permissions (user_profile-backed).
+ * - Keep org-relevant users at the top (eligible / already granted / selected org / org-scoped exec access).
  *
  * Security:
  * - MUST be gated by api.can_manage_pc_org_console(pc_org_id)
  *
- * Schema:
+ * Notes:
  * - person.emails exists (plural), not person.email.
  */
 
@@ -56,11 +55,13 @@ function firstEmail(emails: unknown): string | null {
     }
   }
 
-  const parts = raw.split(EMAIL_SPLIT_RE).map((s) => s.trim()).filter(Boolean);
+  const parts = raw
+    .split(EMAIL_SPLIT_RE)
+    .map((s) => s.trim())
+    .filter(Boolean);
   const hit = parts.find((p) => p.includes("@"));
   return hit ?? (parts[0] ?? null);
 }
-
 
 function isItgSupervisorPlus(status: unknown): boolean {
   if (typeof status !== "string") return false;
@@ -83,6 +84,12 @@ type UserHit = {
   full_name: string | null;
   email: string | null;
   status: string | null;
+
+  // optional UX flags
+  eligible_for_org?: boolean;
+  has_grant_in_org?: boolean;
+  selected_org?: boolean;
+  org_scoped_exec_access?: boolean;
 };
 
 export async function GET(req: Request) {
@@ -101,7 +108,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
     }
 
-    // Gate access using Step 3 function
+    // Gate access
     const { data: allowed, error: allowErr } = await (sb as any)
       .schema("api")
       .rpc("can_manage_pc_org_console", { p_pc_org_id: pc_org_id });
@@ -111,87 +118,114 @@ export async function GET(req: Request) {
 
     const admin = supabaseAdmin();
 
-// Exclude owners from dropdown targets
-const owners = await admin.from("app_owners").select("auth_user_id").limit(2000);
-const ownerIds = new Set<string>(
-  (owners.data ?? []).map((r: any) => String(r.auth_user_id ?? "").trim()).filter(Boolean),
-);
-ownerIds.add(OWNER_AUTH_USER_ID);
+    // Exclude owners from dropdown targets
+    const owners = await admin.from("app_owners").select("auth_user_id").limit(2000);
+    const ownerIds = new Set<string>(
+      (owners.data ?? []).map((r: any) => String(r.auth_user_id ?? "").trim()).filter(Boolean),
+    );
+    ownerIds.add(OWNER_AUTH_USER_ID);
 
-
-    // Eligible users for this org (bounded but typically small)
+    // --- org-scoped sets (for sorting / badging) ---
     const elig = await admin
       .from("user_pc_org_eligibility")
       .select("auth_user_id")
       .eq("pc_org_id", pc_org_id)
       .limit(500);
-
     if (elig.error) return NextResponse.json({ ok: false, error: elig.error.message }, { status: 500 });
+    const eligibleIds = new Set<string>(
+      (elig.data ?? []).map((r: any) => String(r.auth_user_id ?? "").trim()).filter(Boolean),
+    );
 
-    const eligibleIds = (elig.data ?? [])
-      .map((r: any) => String(r.auth_user_id ?? "").trim())
-      .filter(Boolean);
-
-    
-
-// Optionally widen the dropdown to include org-scoped ITG Supervisor+ users,
-// so management teams can manage grants locally.
-let orgScopedIds: string[] = [];
-if (min_title === "itg_supervisor_plus") {
-  try {
-    const scoped = await admin
-      .from("exec_pc_org_access_derived")
+    const grants = await admin
+      .from("pc_org_permission_grant")
       .select("auth_user_id")
       .eq("pc_org_id", pc_org_id)
       .limit(2000);
+    if (grants.error) return NextResponse.json({ ok: false, error: grants.error.message }, { status: 500 });
+    const grantIds = new Set<string>(
+      (grants.data ?? []).map((r: any) => String(r.auth_user_id ?? "").trim()).filter(Boolean),
+    );
 
-    if (!scoped.error) {
-      orgScopedIds = (scoped.data ?? [])
-        .map((r: any) => String(r.auth_user_id ?? "").trim())
-        .filter(Boolean);
+    // Optional widen: org-scoped exec access derived => leader_person_id -> user_profile.person_id -> auth_user_id
+    const execScopedIds = new Set<string>();
+    if (min_title === "itg_supervisor_plus") {
+      const derived = await admin
+        .from("exec_pc_org_access_derived")
+        .select("leader_person_id")
+        .eq("pc_org_id", pc_org_id)
+        .limit(2000);
+
+      if (!derived.error) {
+        const leaderPersonIds = (derived.data ?? [])
+          .map((r: any) => String(r.leader_person_id ?? "").trim())
+          .filter(Boolean);
+
+        if (leaderPersonIds.length) {
+          const leaderProfiles = await admin
+            .from("user_profile" as any)
+            .select("auth_user_id,person_id,status")
+            .in("person_id", leaderPersonIds)
+            .limit(2000);
+
+          if (!leaderProfiles.error) {
+            for (const r of leaderProfiles.data ?? []) {
+              const id = String((r as any).auth_user_id ?? "").trim();
+              if (id) execScopedIds.add(id);
+            }
+          }
+        }
+      }
     }
-  } catch {
-    orgScopedIds = [];
-  }
-}
 
-const candidateIds = Array.from(new Set([...eligibleIds, ...orgScopedIds]))
-  .filter((id) => !!id && !ownerIds.has(id));
-if (!candidateIds.length) {
-      return NextResponse.json({ ok: true, users: [] satisfies UserHit[] }, { status: 200 });
-    }
-
+    // --- base universe: authenticated users (user_profile-backed) ---
+    // This keeps the console usable even when eligibility isn't populated yet.
     const prof = await admin
       .from("user_profile" as any)
-      .select("auth_user_id,status,person:person_id(full_name,emails)")
-      .in("auth_user_id", candidateIds)
-      .limit(500);
+      .select("auth_user_id,status,selected_pc_org_id,person:person_id(full_name,emails)")
+      .not("auth_user_id", "is", null)
+      .limit(2000);
 
     if (prof.error) return NextResponse.json({ ok: false, error: prof.error.message }, { status: 500 });
 
     const users: UserHit[] = (prof.data ?? [])
-      .map((r: any) => ({
-        auth_user_id: String(r.auth_user_id ?? ""),
-        status: r.status ?? null,
-        full_name: r.person?.full_name ?? null,
-        email: firstEmail(r.person?.emails),
-      }))
+      .map((r: any) => {
+        const auth_user_id = String(r.auth_user_id ?? "").trim();
+        const status = r.status ?? null;
+        const full_name = r.person?.full_name ?? null;
+        const email = firstEmail(r.person?.emails);
 
-.filter((u: UserHit) => {
-  // Never include owners
-  if (ownerIds.has(u.auth_user_id)) return false;
+        return {
+          auth_user_id,
+          status,
+          full_name,
+          email,
+          eligible_for_org: eligibleIds.has(auth_user_id),
+          has_grant_in_org: grantIds.has(auth_user_id),
+          selected_org: String(r.selected_pc_org_id ?? "").trim() === pc_org_id,
+          org_scoped_exec_access: execScopedIds.has(auth_user_id),
+        };
+      })
+      .filter((u) => !!u.auth_user_id && !ownerIds.has(u.auth_user_id))
+      .filter((u) => {
+        // If requested, include ITG Supervisor+ users, but don't exclude others;
+        // this mode just boosts who is "interesting" in the UI.
+        if (min_title === "itg_supervisor_plus") {
+          return u.eligible_for_org || u.org_scoped_exec_access || isItgSupervisorPlus(u.status) || u.has_grant_in_org || u.selected_org;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        // Relevance first (grants/selected/eligible/exec), then name/email/id.
+        const score = (u: UserHit) =>
+          (u.has_grant_in_org ? 1000 : 0) +
+          (u.selected_org ? 100 : 0) +
+          (u.eligible_for_org ? 50 : 0) +
+          (u.org_scoped_exec_access ? 10 : 0);
 
-  // If requested, include ALL ITG Supervisor+ org-scoped users
-  // plus the normal eligible list for the org.
-  if (min_title === "itg_supervisor_plus") {
-    const isEligible = eligibleIds.includes(u.auth_user_id);
-    return isEligible || isItgSupervisorPlus(u.status);
-  }
+        const sa = score(a);
+        const sb = score(b);
+        if (sa !== sb) return sb - sa;
 
-  return true;
-})
-.sort
-((a: UserHit, b: UserHit) => {
         const A = (a.full_name ?? a.email ?? a.auth_user_id).toLowerCase();
         const B = (b.full_name ?? b.email ?? b.auth_user_id).toLowerCase();
         return A.localeCompare(B);

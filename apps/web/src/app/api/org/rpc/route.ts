@@ -7,7 +7,6 @@ export const runtime = "nodejs";
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-const EDGE_PERMISSIONS_URL = process.env.EDGE_PERMISSIONS_URL ?? "";
 
 // Actively tied to UI events – do not remove
 const WRITE_RPC_ALLOWLIST = new Set<string>([
@@ -177,31 +176,6 @@ function normalizeFn(x: any): string {
   return String(x ?? "").trim();
 }
 
-/**
- * Permissions gate
- * - If EDGE_PERMISSIONS_URL is missing:
- *   - allow in dev/test
- *   - deny in production (fail-closed)
- */
-async function hasGrant(userId: string, schema: RpcSchema, fn: string, args: any): Promise<boolean> {
-  if (!EDGE_PERMISSIONS_URL) {
-    return process.env.NODE_ENV !== "production";
-  }
-
-  try {
-    const res = await fetch(EDGE_PERMISSIONS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, schema, fn, args }),
-    });
-
-    if (!res.ok) return false;
-    const jsonVal = await res.json().catch(() => ({} as any));
-    return !!jsonVal?.allowed;
-  } catch {
-    return false;
-  }
-}
 
 function httpStatusForRpcError(err: any): number {
   const code = String(err?.code ?? "");
@@ -244,8 +218,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Authenticate as the real user (so auth.uid() works inside DB functions)
+    const gatewayHeaders: Record<string, string> = { "x-rpc-gateway": "1" };
+    if (authHeader) gatewayHeaders["Authorization"] = authHeader;
+
     const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
+      global: { headers: gatewayHeaders },
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
@@ -282,11 +259,6 @@ export async function POST(req: NextRequest) {
       return json(403, { ok: false, request_id: rid, error: "RPC not allowed", code: "rpc_not_allowed", fn });
     }
 
-    const allowed = await hasGrant(user.id, schema, fn, args);
-    if (!allowed) {
-      return json(403, { ok: false, request_id: rid, error: "Forbidden", code: "forbidden", fn, schema });
-    }
-
     /**
      * IMPORTANT: direct table write: person_pc_org_end_association
      * This write intentionally uses service role to bypass RLS,
@@ -305,6 +277,7 @@ export async function POST(req: NextRequest) {
       const today = new Date().toISOString().slice(0, 10);
 
       const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        global: { headers: { "x-rpc-gateway": "1" } },
         auth: { persistSession: false, autoRefreshToken: false },
       });
 

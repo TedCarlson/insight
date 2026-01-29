@@ -610,12 +610,6 @@ function handleAddPerson() {
                   <div className="text-xs text-[var(--to-ink-muted)]">{new Date(exitSave.at).toLocaleString()}</div>
                 ) : null}
               </div>
-
-              {"result" in exitSave && exitSave.result ? (
-                <pre className="mt-2 max-h-56 overflow-auto rounded bg-[var(--to-surface-2)] p-2 text-xs">
-{JSON.stringify(exitSave.result, null, 2)}
-                </pre>
-              ) : null}
             </Card>
           ) : null}
 

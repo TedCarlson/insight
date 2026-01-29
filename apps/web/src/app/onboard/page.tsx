@@ -184,7 +184,15 @@ export default function OnboardPage() {
   const [rpcLog, setRpcLog] = useState<RpcLog | null>(null);
 
   const [editMode, setEditMode] = useState(false);
-
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createDraft, setCreateDraft] = useState<PersonEditDraft>({
+    active: true,
+    co_ref_id: null,
+  });
+  const createName = String(createDraft.full_name ?? "").trim();
+  const createAff = String(createDraft.co_ref_id ?? "").trim();
+  const createValid = Boolean(createName) && Boolean(createAff);
   const [draftByPersonId, setDraftByPersonId] = useState<Map<string, PersonEditDraft>>(new Map());
   const [savingByPersonId, setSavingByPersonId] = useState<Map<string, boolean>>(new Map());
 
@@ -382,8 +390,79 @@ export default function OnboardPage() {
   }, [query, validatedOrgId, loadPeople]);
 
 
-function handleAddPerson() {
-    setNotice("Add person is not wired yet.");
+  function handleAddPerson() {
+    if (editMode || exitSave.state === "saving") return;
+    setNotice(null);
+    setRpcLog(null);
+    setCreateDraft({ active: true, co_ref_id: null });
+    setCreateOpen(true);
+  }
+
+  async function handleCreatePerson(opts: { onboard: boolean }) {
+    if (!validatedOrgId) {
+      setNotice("Select a scoped PC Org first.");
+      return;
+    }
+    if (editMode || exitSave.state === "saving") return;
+    if (createSaving) return;
+
+    const full_name = String(createDraft.full_name ?? "").trim();
+    if (!full_name) {
+      setNotice("Full name is required.");
+      return;
+    }
+
+    const co_ref_id = String(createDraft.co_ref_id ?? "").trim();
+    if (!co_ref_id) {
+      setNotice("Affiliation is required (Company/Contractor).");
+      return;
+    }
+
+    setCreateSaving(true);
+    try {
+      setNotice(null);
+      setRpcLog(null);
+
+      const person_id =
+        (globalThis.crypto as any)?.randomUUID?.() ??
+        `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+      await api.personUpsert({
+        person_id,
+        full_name,
+        emails: createDraft.emails,
+        mobile: createDraft.mobile,
+        fuse_emp_id: createDraft.fuse_emp_id,
+        person_notes: createDraft.person_notes,
+        person_nt_login: createDraft.person_nt_login,
+        person_csg_id: createDraft.person_csg_id,
+        active: createDraft.active !== false,
+        co_ref_id,
+      });
+
+      if (opts.onboard) {
+        const start_date = new Date().toISOString().slice(0, 10);
+        await api.wizardProcessToRoster({
+          pc_org_id: String(validatedOrgId),
+          person_id,
+          start_date,
+        });
+      }
+
+      setCreateOpen(false);
+      setCreateDraft({ active: true, co_ref_id: null });
+
+      // Make it easy to see the result
+      setQuery(full_name);
+      await loadPeople(full_name);
+
+      setNotice(opts.onboard ? `Created + onboarded: ${full_name}` : `Created: ${full_name}`);
+    } catch (e: any) {
+      setNotice(e?.message ?? "Failed to create person");
+      logRpc(opts.onboard ? "create_and_onboard" : "create_person", e);
+    } finally {
+      setCreateSaving(false);
+    }
   }
 
   async function handleRowOnboard(row: PersonRow) {
@@ -647,7 +726,169 @@ const filteredRows = useMemo(() => {
               </Button>
             </div>
           </Card>
+                      {createOpen ? (
+            <Card className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">Add person</div>
+                  <div className="text-xs text-[var(--to-ink-muted)]">
+                    Fill out the person record, choose affiliation, then create (optionally onboard).
+                  </div>
+                </div>
 
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    if (createSaving) return;
+                    setCreateOpen(false);
+                  }}
+                >
+                  Close
+                </Button>
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                <div className="sm:col-span-2">
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">Full name *</div>
+                  <TextInput
+                    autoFocus
+                    value={String(createDraft.full_name ?? "")}
+                    onChange={(e) => setCreateDraft((d) => ({ ...d, full_name: e.target.value }))}
+                    placeholder="Jane Doe"
+                  />
+                  {!createName ? (
+                    <div className="mt-1 text-xs" style={{ color: "var(--to-status-danger)" }}>
+                      Full name is required.
+                    </div>
+                  ) : null}
+                </div>
+
+
+                <div>
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">Emails</div>
+                  <TextInput
+                    value={String(createDraft.emails ?? "")}
+                    onChange={(e) => setCreateDraft((d) => ({ ...d, emails: e.target.value }))}
+                    placeholder="jane@acme.com, jane.doe@acme.com"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">Mobile</div>
+                  <TextInput
+                    value={String(createDraft.mobile ?? "")}
+                    onChange={(e) => setCreateDraft((d) => ({ ...d, mobile: e.target.value }))}
+                    placeholder="(555) 555-5555"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">Fuse Emp ID</div>
+                  <TextInput
+                    value={String(createDraft.fuse_emp_id ?? "")}
+                    onChange={(e) => setCreateDraft((d) => ({ ...d, fuse_emp_id: e.target.value }))}
+                    placeholder="123456"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">NT Login</div>
+                  <TextInput
+                    value={String(createDraft.person_nt_login ?? "")}
+                    onChange={(e) => setCreateDraft((d) => ({ ...d, person_nt_login: e.target.value }))}
+                    placeholder="jdoe"
+                  />
+                </div>
+
+                <div>
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">CSG ID</div>
+                  <TextInput
+                    value={String(createDraft.person_csg_id ?? "")}
+                    onChange={(e) => setCreateDraft((d) => ({ ...d, person_csg_id: e.target.value }))}
+                    placeholder="987654"
+                  />
+                </div>
+
+                                <div className="sm:col-span-2">
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">Affiliation (Company/Contractor) *</div>
+                  <Select
+                    value={String(createDraft.co_ref_id ?? "")}
+                    onChange={(e) =>
+                      setCreateDraft((d) => ({ ...d, co_ref_id: e.target.value ? e.target.value : null }))
+                    }
+                    disabled={affiliationOptions.length === 0}
+                  >
+                    <option value="">Select affiliation…</option>
+                    {affiliationOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </Select>
+
+                  {!createAff ? (
+                    <div className="mt-1 text-xs" style={{ color: "var(--to-status-danger)" }}>
+                      Affiliation is required.
+                    </div>
+                  ) : null}
+                </div>
+
+
+                                <div className="sm:col-span-2">
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">Notes</div>
+                  <textarea
+                    value={String(createDraft.person_notes ?? "")}
+                    onChange={(e) => setCreateDraft((d) => ({ ...d, person_notes: e.target.value }))}
+                    placeholder="Optional"
+                    className="min-h-[90px] w-full resize-y rounded-md border border-[var(--to-border)] bg-[var(--to-surface)] px-3 py-2 text-sm text-[var(--to-ink)]"
+                  />
+                </div>
+
+
+                <div className="sm:col-span-2 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={createDraft.active !== false}
+                    onChange={(e) => setCreateDraft((d) => ({ ...d, active: e.target.checked }))}
+                  />
+                  <span className="text-sm">Active</span>
+                </div>
+
+                <div className="sm:col-span-2 flex items-center justify-end gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      if (createSaving) return;
+                      setCreateOpen(false);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+
+                                    <Button
+                    type="button"
+                    onClick={() => void handleCreatePerson({ onboard: false })}
+                    disabled={createSaving || !createValid}
+                  >
+                    {createSaving ? "Creating…" : "Create"}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void handleCreatePerson({ onboard: true })}
+                    disabled={createSaving || !createValid}
+                    title="Creates the person then immediately runs the onboarding wizard into roster."
+                  >
+                    {createSaving ? "Working…" : "Create & Onboard"}
+                  </Button>
+
+                </div>
+              </div>
+            </Card>
+          ) : null}
           {exitSave.state !== "idle" ? (
             <Card className="p-3">
               <div className="flex items-center justify-between gap-3">

@@ -7,6 +7,8 @@ import { api, type RosterRow } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 import { fetchActiveRosterPersonIdSet } from "@/lib/activeRoster";
 import { useOrg } from "@/state/org";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { useToast } from "@/components/ui/Toast";
 
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
@@ -52,6 +54,76 @@ function isTechnicianRow(r: any): boolean {
 export default function RosterPage() {
   const { selectedOrgId, orgs, orgsLoading } = useOrg();
   const router = useRouter();
+  const toast = useToast();
+
+  const [modifyMode, setModifyMode] = useState<"open" | "locked">("locked");
+
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [quickRow, setQuickRow] = useState<RosterRow | null>(null);
+  const [quickPos, setQuickPos] = useState<{ top: number; left: number } | null>(null);
+
+  const closeQuick = () => {
+    setQuickOpen(false);
+    setQuickRow(null);
+    setQuickPos(null);
+  };
+
+  const openQuick = (row: RosterRow, anchorEl: HTMLElement) => {
+    const rect = anchorEl.getBoundingClientRect();
+    const width = 420;
+    const pad = 12;
+    const estHeight = 260;
+
+    const topBelow = rect.bottom + 10;
+    const top =
+      typeof window !== "undefined" && topBelow + estHeight > window.innerHeight - pad
+        ? Math.max(pad, rect.top - 10 - estHeight)
+        : topBelow;
+
+    const left =
+      typeof window !== "undefined"
+        ? Math.min(Math.max(pad, rect.left), window.innerWidth - width - pad)
+        : rect.left;
+
+    setQuickRow(row);
+    setQuickPos({ top, left });
+    setQuickOpen(true);
+  };
+
+  const copyQuickContents = async () => {
+    try {
+      if (!quickRow) return;
+
+      const name = pickName(quickRow);
+      const techId = String((quickRow as any)?.tech_id ?? "—");
+      const personId = String((quickRow as any)?.person_id ?? "—");
+
+      const mobile = String((quickRow as any)?.mobile ?? "—") || "—";
+      const ntLogin = String((quickRow as any)?.person_nt_login ?? "—") || "—";
+      const csg = String((quickRow as any)?.person_csg_id ?? "—") || "—";
+      const affiliation = String((quickRow as any)?.co_name ?? "—") || "—";
+      const reportsTo = String((quickRow as any)?.reports_to_full_name ?? "—") || "—";
+
+      const pad = (k: string, n = 12) => (k + ":").padEnd(n, " ");
+
+      const text =
+        `${name}
+    Tech ID: ${techId} • Person: ${personId}
+
+    ${pad("Mobile")}${mobile}
+    ${pad("NT Login")}${ntLogin}
+    ${pad("CSG")}${csg}
+    ${pad("Affiliation")}${affiliation}
+    ${pad("Reports To")}${reportsTo}`.trim();
+
+
+      await navigator.clipboard.writeText(text);
+      toast.push({ variant: "success", title: "Copied", message: "Popup contents copied to clipboard." });
+    } catch {
+      toast.push({ variant: "danger", title: "Copy failed", message: "Clipboard unavailable in this browser context." });
+    }
+  };
+
 
   const [roster, setRoster] = useState<RosterRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -103,19 +175,19 @@ export default function RosterPage() {
     try {
       const r = await api.rosterCurrentFull(validatedOrgId, null);
 
-  // Enforce: roster shows ONLY persons with ACTIVE person↔org membership for this scoped pc_org.
-  // Source of truth: public.v_roster_current (filters to current membership by date + active).
-  const supabase = createClient();
-  const activePersonIds = await fetchActiveRosterPersonIdSet(supabase as any, validatedOrgId);
+      // Enforce: roster shows ONLY persons with ACTIVE person↔org membership for this scoped pc_org.
+      // Source of truth: public.v_roster_current (filters to current membership by date + active).
+      const supabase = createClient();
+      const activePersonIds = await fetchActiveRosterPersonIdSet(supabase as any, validatedOrgId);
 
-  const filtered = (r ?? []).filter((row: any) => {
-    const pid = String(row?.person_id ?? "").trim();
-    return Boolean(pid) && activePersonIds.has(pid);
-  });
+      const filtered = (r ?? []).filter((row: any) => {
+        const pid = String(row?.person_id ?? "").trim();
+        return Boolean(pid) && activePersonIds.has(pid);
+      });
 
 
 
-setRoster(filtered);
+      setRoster(filtered);
     } catch (e: any) {
       setRoster([]);
       setErr(e?.message ?? "Failed to load roster");
@@ -123,6 +195,10 @@ setRoster(filtered);
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (modifyMode === "open") closeQuick();
+  }, [modifyMode]);
 
   useEffect(() => {
     loadAll();
@@ -188,35 +264,35 @@ setRoster(filtered);
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
   }, [rosterRoleFiltered]);
 
-const supervisorOptions = useMemo(() => {
-  // list supervisors by unique reports_to_person_id from roster rows (tech view)
-  const rows = rosterRoleFiltered ?? [];
-  const map = new Map<string, string>(); // id -> name
+  const supervisorOptions = useMemo(() => {
+    // list supervisors by unique reports_to_person_id from roster rows (tech view)
+    const rows = rosterRoleFiltered ?? [];
+    const map = new Map<string, string>(); // id -> name
 
-  for (const r of rows as any[]) {
-    const sid = String(r?.reports_to_person_id ?? "").trim();
-    const sname = String(r?.reports_to_full_name ?? "").trim();
-    if (!sid || !sname) continue;
-    if (!map.has(sid)) map.set(sid, sname);
-  }
+    for (const r of rows as any[]) {
+      const sid = String(r?.reports_to_person_id ?? "").trim();
+      const sname = String(r?.reports_to_full_name ?? "").trim();
+      if (!sid || !sname) continue;
+      if (!map.has(sid)) map.set(sid, sname);
+    }
 
-  return Array.from(map.entries())
-    .map(([id, name]) => ({ id, name }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-}, [rosterRoleFiltered]);
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }, [rosterRoleFiltered]);
 
 
 
   useEffect(() => {
     if (affKey === "all") return;
     if (!affiliationOptions.some((o) => o.key === affKey)) setAffKey("all");
-                  setSupervisorKey("all");
+    setSupervisorKey("all");
   }, [affKey, affiliationOptions]);
 
-useEffect(() => {
-  if (supervisorKey === "all") return;
-  if (!supervisorOptions.some((o) => o.id === supervisorKey)) setSupervisorKey("all");
-}, [supervisorKey, supervisorOptions]);
+  useEffect(() => {
+    if (supervisorKey === "all") return;
+    if (!supervisorOptions.some((o) => o.id === supervisorKey)) setSupervisorKey("all");
+  }, [supervisorKey, supervisorOptions]);
 
 
 
@@ -247,23 +323,23 @@ useEffect(() => {
       return String(r?.co_type ?? "") === type && String(r?.co_name ?? "") === name;
     };
 
-    
-
-const matchesSupervisor = (r: any) => {
-  if (supervisorKey === "all") return true;
-  return String(r?.reports_to_person_id ?? "").trim() === String(supervisorKey).trim();
-};
-
-const isInScopedOrg = (r: any) => {
-  // Roster membership is already filtered by v_roster_active; this check only ensures
-  // the row is aligned to the currently scoped org (when pc_org_id is present).
-  if (!validatedOrgId) return false;
-  const orgId = String(r?.pc_org_id ?? "").trim();
-  return !orgId || orgId === String(validatedOrgId);
-};
 
 
-const out = rows.filter((r: any) => matchesAff(r) && matchesSearch(r) && matchesSupervisor(r) && isInScopedOrg(r));
+    const matchesSupervisor = (r: any) => {
+      if (supervisorKey === "all") return true;
+      return String(r?.reports_to_person_id ?? "").trim() === String(supervisorKey).trim();
+    };
+
+    const isInScopedOrg = (r: any) => {
+      // Roster membership is already filtered by v_roster_active; this check only ensures
+      // the row is aligned to the currently scoped org (when pc_org_id is present).
+      if (!validatedOrgId) return false;
+      const orgId = String(r?.pc_org_id ?? "").trim();
+      return !orgId || orgId === String(validatedOrgId);
+    };
+
+
+    const out = rows.filter((r: any) => matchesAff(r) && matchesSearch(r) && matchesSupervisor(r) && isInScopedOrg(r));
 
     // Default sort: tech_id then full_name
     out.sort((a: any, b: any) => {
@@ -281,123 +357,131 @@ const out = rows.filter((r: any) => matchesAff(r) && matchesSearch(r) && matches
   }, [rosterRoleFiltered, query, affKey, supervisorKey, validatedOrgId]);
 
 
-const rosterStats = useMemo(() => {
-  // Tech stats are based on the CURRENT view (filteredRoster), since managers will filter by supervisor/search/etc.
-  const techRows = filteredRoster ?? [];
+  const rosterStats = useMemo(() => {
+    // Tech stats are based on the CURRENT view (filteredRoster), since managers will filter by supervisor/search/etc.
+    const techRows = filteredRoster ?? [];
 
-  const totalTechs = techRows.length;
-  const itgTechs = techRows.filter((r: any) => String(r?.co_type ?? "").trim() === "company").length;
-  const bpTechs = techRows.filter((r: any) => String(r?.co_type ?? "").trim() === "contractor").length;
+    const totalTechs = techRows.length;
+    const itgTechs = techRows.filter((r: any) => String(r?.co_type ?? "").trim() === "company").length;
+    const bpTechs = techRows.filter((r: any) => String(r?.co_type ?? "").trim() === "contractor").length;
 
-  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
+    const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
 
-  // We still compute these for housekeeping (but we won't render the numbers)
-  const assignmentSet = techRows.filter((r: any) => {
-    const end = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
-    const active = Boolean(r?.assignment_active ?? r?.active ?? true);
-    return active && !end && !!String(r?.assignment_id ?? "").trim();
-  }).length;
+    // We still compute these for housekeeping (but we won't render the numbers)
+    const assignmentSet = techRows.filter((r: any) => {
+      const end = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
+      const active = Boolean(r?.assignment_active ?? r?.active ?? true);
+      return active && !end && !!String(r?.assignment_id ?? "").trim();
+    }).length;
 
-  const leadershipSet = techRows.filter((r: any) => {
-    const end = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
-    const rid =
-      r?.reports_to_reporting_id ??
-      r?.assignment_reporting_id ??
-      r?.reporting_id ??
-      r?.id ??
-      null;
-    return !!rid && !end;
-  }).length;
-const scheduleReady = techRows.filter((r: any) => {
-  const assignmentEnd = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
-  const assignmentActive = Boolean(r?.assignment_active ?? r?.active ?? true);
-  const hasAssignment = !!String(r?.assignment_id ?? "").trim() && assignmentActive && !assignmentEnd;
+    const leadershipSet = techRows.filter((r: any) => {
+      const end = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
+      const rid =
+        r?.reports_to_reporting_id ??
+        r?.assignment_reporting_id ??
+        r?.reporting_id ??
+        r?.id ??
+        null;
+      return !!rid && !end;
+    }).length;
+    const scheduleReady = techRows.filter((r: any) => {
+      const assignmentEnd = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
+      const assignmentActive = Boolean(r?.assignment_active ?? r?.active ?? true);
+      const hasAssignment = !!String(r?.assignment_id ?? "").trim() && assignmentActive && !assignmentEnd;
 
-  const leadershipEnd = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
-  const leadershipId =
-    r?.reports_to_reporting_id ??
-    r?.assignment_reporting_id ??
-    r?.reporting_id ??
-    r?.id ??
-    null;
-  const hasLeadership = !!leadershipId && !leadershipEnd;
+      const leadershipEnd = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
+      const leadershipId =
+        r?.reports_to_reporting_id ??
+        r?.assignment_reporting_id ??
+        r?.reporting_id ??
+        r?.id ??
+        null;
+      const hasLeadership = !!leadershipId && !leadershipEnd;
 
-  return hasAssignment && hasLeadership;
-}).length;
-
-
-  const clean = totalTechs > 0 && totalTechs === assignmentSet && totalTechs === leadershipSet;
-
-  // Supervisor stats: supervisors referenced by the tech rows in this view
-  const supIds = Array.from(
-    new Set(
-      techRows
-        .map((r: any) => String(r?.reports_to_person_id ?? "").trim())
-        .filter(Boolean)
-    )
-  );
-
-  // Best-effort supervisor classification:
-  // if a supervisor appears as a roster row, use their co_type to classify ITG vs BP.
-  const allRows = roster ?? [];
-  const isInScopedOrg = (r: any) => {
-  // Roster membership is already filtered by v_roster_active; this check only ensures
-  // the row is aligned to the currently scoped org (when pc_org_id is present).
-  if (!validatedOrgId) return false;
-  const orgId = String(r?.pc_org_id ?? "").trim();
-  return !orgId || orgId === String(validatedOrgId);
-};
+      return hasAssignment && hasLeadership;
+    }).length;
 
 
-  const activeRowsAll = allRows.filter((r: any) => isInScopedOrg(r));
-  const supervisorById = new Map<string, any>();
-  for (const r of activeRowsAll as any[]) {
-    const pid = String(r?.person_id ?? "").trim();
-    if (!pid) continue;
-    if (!supervisorById.has(pid)) supervisorById.set(pid, r);
-  }
+    const clean = totalTechs > 0 && totalTechs === assignmentSet && totalTechs === leadershipSet;
 
-  let itgSups = 0;
-  let bpSups = 0;
-  let unknownSups = 0;
+    // Supervisor stats: supervisors referenced by the tech rows in this view
+    const supIds = Array.from(
+      new Set(
+        techRows
+          .map((r: any) => String(r?.reports_to_person_id ?? "").trim())
+          .filter(Boolean)
+      )
+    );
 
-  for (const sid of supIds) {
-    const sr = supervisorById.get(String(sid));
-    const t = String(sr?.co_type ?? "").trim();
-    if (t === "company") itgSups++;
-    else if (t === "contractor") bpSups++;
-    else unknownSups++;
-  }
+    // Best-effort supervisor classification:
+    // if a supervisor appears as a roster row, use their co_type to classify ITG vs BP.
+    const allRows = roster ?? [];
+    const isInScopedOrg = (r: any) => {
+      // Roster membership is already filtered by v_roster_active; this check only ensures
+      // the row is aligned to the currently scoped org (when pc_org_id is present).
+      if (!validatedOrgId) return false;
+      const orgId = String(r?.pc_org_id ?? "").trim();
+      return !orgId || orgId === String(validatedOrgId);
+    };
 
-  const totalSups = supIds.length;
 
-  return {
-    totalTechs,
-    itgTechs,
-    bpTechs,
-    techPctITG: pct(itgTechs, totalTechs),
-    techPctBP: pct(bpTechs, totalTechs),
+    const activeRowsAll = allRows.filter((r: any) => isInScopedOrg(r));
+    const supervisorById = new Map<string, any>();
+    for (const r of activeRowsAll as any[]) {
+      const pid = String(r?.person_id ?? "").trim();
+      if (!pid) continue;
+      if (!supervisorById.has(pid)) supervisorById.set(pid, r);
+    }
 
-    totalSups,
-    itgSups,
-    bpSups,
-    supPctITG: pct(itgSups, totalSups),
-    supPctBP: pct(bpSups, totalSups),
-    unknownSups,
+    let itgSups = 0;
+    let bpSups = 0;
+    let unknownSups = 0;
 
-    readinessA: assignmentSet,
-    readinessL: leadershipSet,
-    readinessS: scheduleReady,
+    for (const sid of supIds) {
+      const sr = supervisorById.get(String(sid));
+      const t = String(sr?.co_type ?? "").trim();
+      if (t === "company") itgSups++;
+      else if (t === "contractor") bpSups++;
+      else unknownSups++;
+    }
 
-    clean,
-  };
-}, [filteredRoster, roster, validatedOrgId]);
+    const totalSups = supIds.length;
+
+    return {
+      totalTechs,
+      itgTechs,
+      bpTechs,
+      techPctITG: pct(itgTechs, totalTechs),
+      techPctBP: pct(bpTechs, totalTechs),
+
+      totalSups,
+      itgSups,
+      bpSups,
+      supPctITG: pct(itgSups, totalSups),
+      supPctBP: pct(bpSups, totalSups),
+      unknownSups,
+
+      readinessA: assignmentSet,
+      readinessL: leadershipSet,
+      readinessS: scheduleReady,
+
+      clean,
+    };
+  }, [filteredRoster, roster, validatedOrgId]);
 
 
 
 
   const anyFiltersActive = Boolean(query.trim()) || roleFilter !== "technician" || affKey !== "all";
   const headerRefreshDisabled = orgsLoading || !canLoad || loading;
+  const modifyToggleVars =
+    modifyMode === "open"
+      ? ({
+        "--to-toggle-active-bg": "rgba(249, 115, 22, 0.16)", // orange tint
+        "--to-toggle-active-border": "var(--to-status-warning)",
+        "--to-toggle-active-ink": "var(--to-status-warning)",
+      } as React.CSSProperties)
+      : undefined;
 
   return (
     <PageShell>
@@ -465,43 +549,47 @@ const scheduleReady = techRows.filter((r: any) => {
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-semibold">Current roster</div>
 
-          <div className="text-xs text-[var(--to-ink-muted)] text-right">
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <span>Readiness:</span>
-              <span className="inline-flex items-center rounded-full border px-3 py-1 text-[11px]">
-                A<span className="text-[var(--to-ink)]">{rosterStats.readinessA}</span>
-              </span>
-              <span className="inline-flex items-center rounded-full border px-3 py-1 text-[11px]">
-                L<span className="text-[var(--to-ink)]">{rosterStats.readinessL}</span>
-              </span>
-              <span className="inline-flex items-center rounded-full border px-3 py-1 text-[11px]">
-                S<span className="text-[var(--to-ink)]">{rosterStats.readinessS}</span>
-              </span>
-            </div>
+            <div className="text-xs text-[var(--to-ink-muted)] text-right">
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] leading-[22px] text-[var(--to-ink-muted)]">Modify</span>
+                  <span style={modifyToggleVars}>
+                    <SegmentedControl
+                      value={modifyMode}
+                      onChange={(v) => setModifyMode(v as "open" | "locked")}
+                      options={[
+                        { value: "locked", label: "Locked" },
+                        { value: "open", label: "Open" },
+                      ]}
+                      size="sm"
+                    />
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span>Readiness:</span>
 
-            <div className="mt-2 flex justify-end">
-              <span
-                className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]"
-                style={
-                  rosterStats.clean
-                    ? {
-                        background: "rgba(34, 197, 94, 0.14)",
-                        borderColor: "var(--to-status-success)",
-                        color: "var(--to-status-success)",
-                      }
-                    : {
-                        background: "rgba(249, 115, 22, 0.16)",
-                        borderColor: "var(--to-status-warning)",
-                        color: "var(--to-status-warning)",
-                      }
-                }
-              >
-                {rosterStats.clean ? "Clean" : "Needs housekeeping"}
-              </span>
+                  <span
+                    className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]"
+                    style={
+                      rosterStats.clean
+                        ? {
+                          background: "rgba(34, 197, 94, 0.14)",
+                          borderColor: "var(--to-status-success)",
+                          color: "var(--to-status-success)",
+                        }
+                        : {
+                          background: "rgba(249, 115, 22, 0.16)",
+                          borderColor: "var(--to-status-warning)",
+                          color: "var(--to-status-warning)",
+                        }
+                    }
+                  >
+                    {rosterStats.clean ? "Ready" : "Incomplete Profiles"}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-
 
           <div className="flex flex-wrap items-center gap-2">
             {/* Role pills */}
@@ -546,6 +634,7 @@ const scheduleReady = techRows.filter((r: any) => {
                 All
               </Button>
             </div>
+
             <TextInput
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -568,21 +657,20 @@ const scheduleReady = techRows.filter((r: any) => {
               ))}
             </Select>
 
-{/* Supervisor filter */}
-<Select
-  value={supervisorKey}
-  onChange={(e) => setSupervisorKey(e.target.value)}
-  className="w-full sm:w-80"
-  disabled={supervisorOptions.length === 0}
->
-  <option value="all">All supervisors</option>
-  {supervisorOptions.map((o) => (
-    <option key={o.id} value={o.id}>
-      {o.name}
-    </option>
-  ))}
-</Select>
-
+            {/* Supervisor filter */}
+            <Select
+              value={supervisorKey}
+              onChange={(e) => setSupervisorKey(e.target.value)}
+              className="w-full sm:w-80"
+              disabled={supervisorOptions.length === 0}
+            >
+              <option value="all">All supervisors</option>
+              {supervisorOptions.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </Select>
 
             {anyFiltersActive && (
               <Button
@@ -629,13 +717,78 @@ const scheduleReady = techRows.filter((r: any) => {
           <RosterTable
             roster={filteredRoster}
             pickName={pickName}
+            modifyMode={modifyMode}
             onRowOpen={(row) => {
+              closeQuick();
               setSelectedRow(row);
               setDetailsOpen(true);
+            }}
+            onRowQuickView={(row, el) => {
+              setSelectedRow(row); // optional: keeps selection consistent
+              setDetailsOpen(false);
+              openQuick(row, el);
             }}
           />
         )}
       </Card>
+
+      {quickOpen && quickRow && quickPos ? (
+        <div className="fixed inset-0 z-50" onMouseDown={closeQuick}>
+          <div
+            className="fixed z-50 w-[420px]"
+            style={{ top: quickPos.top, left: quickPos.left }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <Card>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">{pickName(quickRow)}</div>
+                  <div className="text-xs text-[var(--to-ink-muted)]">
+                    Tech ID: {String((quickRow as any)?.tech_id ?? "—")}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" className="px-2 py-1 text-xs" onClick={copyQuickContents}>
+                    Copy
+                  </Button>
+
+                  <Button variant="ghost" className="px-2 py-1 text-xs" onClick={closeQuick}>
+                    Close
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-3 grid gap-2 text-sm">
+                <div className="grid grid-cols-12 items-center gap-3">
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">Mobile</div>
+                  <div className="col-span-8 font-medium">{(quickRow as any)?.mobile ?? "—"}</div>
+                </div>
+
+                <div className="grid grid-cols-12 items-center gap-3">
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">NT Login</div>
+                  <div className="col-span-8 font-medium">{(quickRow as any)?.person_nt_login ?? "—"}</div>
+                </div>
+
+                <div className="grid grid-cols-12 items-center gap-3">
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">CSG</div>
+                  <div className="col-span-8 font-medium">{(quickRow as any)?.person_csg_id ?? "—"}</div>
+                </div>
+
+                <div className="grid grid-cols-12 items-center gap-3">
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">Affiliation</div>
+                  <div className="col-span-8 font-medium">{(quickRow as any)?.co_name ?? "—"}</div>
+                </div>
+
+                <div className="grid grid-cols-12 items-center gap-3">
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">Reports To</div>
+                  <div className="col-span-8 font-medium">{(quickRow as any)?.reports_to_full_name ?? "—"}</div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </div>
+      ) : null}
 
       {validatedOrgId ? (
         <RosterRowModule

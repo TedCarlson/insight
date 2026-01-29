@@ -7,7 +7,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeNext } from "@/lib/navigation/next";
 
-
 type BootstrapResponse = {
   ok: boolean;
   auth_user_id: string;
@@ -23,6 +22,13 @@ type BootstrapResponse = {
 function hardNavigate(to: string) {
   // Forces a full navigation so middleware + SSR cookies take effect immediately.
   window.location.assign(to);
+}
+
+function getHashParams(): URLSearchParams {
+  if (typeof window === "undefined") return new URLSearchParams();
+  const h = window.location.hash || "";
+  const raw = h.startsWith("#") ? h.slice(1) : h;
+  return new URLSearchParams(raw);
 }
 
 async function callBootstrap(): Promise<BootstrapResponse | null> {
@@ -58,6 +64,27 @@ export default function LoginPage() {
   const [bootMsg, setBootMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // IMPORTANT: If Supabase drops invite/recovery tokens onto /login (hash fragment),
+  // forward the user to /auth/set-password while preserving the fragment.
+  // This fixes the "invite link opens login instead of set-password" loop.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const hp = getHashParams();
+    const access_token = hp.get("access_token");
+    const refresh_token = hp.get("refresh_token");
+    const type = (hp.get("type") || "").toLowerCase();
+
+    const isInviteOrRecovery = type === "invite" || type === "recovery";
+
+    if (access_token && refresh_token && isInviteOrRecovery) {
+      // Preserve hash so SetPassword page can setSession() from tokens.
+      window.location.replace(
+        `/auth/set-password?next=${encodeURIComponent(next)}` + window.location.hash
+      );
+    }
+  }, [next]);
+
   // If a session exists, bounce to next (middleware usually handles this, but this prevents edge-case flashes)
   useEffect(() => {
     let alive = true;
@@ -72,7 +99,6 @@ export default function LoginPage() {
         const boot = await callBootstrap();
         if (boot?.ok) setBootMsg(`bootstrap ok (status=${boot.status ?? "?"})`);
         hardNavigate(next);
-
       }
     })();
 

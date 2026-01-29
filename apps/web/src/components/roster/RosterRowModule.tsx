@@ -175,26 +175,26 @@ export function RosterRowModule({
   const [personBaseline, setPersonBaseline] = useState<any | null>(null);
   const [personDraft, setPersonDraft] = useState<any | null>(null);
 
-  
+
   const [coResolved, setCoResolved] = useState<{ kind: "company" | "contractor"; name: string; matched_on: "id" | "code" } | null>(null);
 
 
-const personHuman = useMemo(() => {
-  if (!person) return null;
-  const base: any = { ...(person as any) };
+  const personHuman = useMemo(() => {
+    if (!person) return null;
+    const base: any = { ...(person as any) };
 
-  const coId = (person as any)?.co_ref_id ?? null;
-  const coCode = (person as any)?.co_code ?? null;
+    const coId = (person as any)?.co_ref_id ?? null;
+    const coCode = (person as any)?.co_code ?? null;
 
-  if (coResolved?.name) {
-  // Display company/contractor name only (no UUID/code)
-  base.co_ref_id = coResolved.name;
-}
+    if (coResolved?.name) {
+      // Display company/contractor name only (no UUID/code)
+      base.co_ref_id = coResolved.name;
+    }
 
 
-  return base;
-}, [person, coResolved]);
-// Assignment read model (primary source for assignment tab = api.roster_master)
+    return base;
+  }, [person, coResolved]);
+  // Assignment read model (primary source for assignment tab = api.roster_master)
   const [master, setMaster] = useState<RosterMasterRow[] | null>(null);
   const [masterErr, setMasterErr] = useState<string | null>(null);
   const [loadingMaster, setLoadingMaster] = useState(false);
@@ -244,7 +244,7 @@ const personHuman = useMemo(() => {
     if (tab !== "assignment" && tab !== "leadership") return;
     void loadPositionTitles();
   }, [open, tab]);
-const positionTitleOptions = useMemo(() => {
+  const positionTitleOptions = useMemo(() => {
     const list = [...positionTitles];
     // server already sorts, but keep deterministic
     list.sort(
@@ -296,7 +296,7 @@ const positionTitleOptions = useMemo(() => {
     };
   }, [pcOrgId, pcOrgName, personId, assignmentId]);
 
-  
+
   // Invite workflow (email is sent by server route; server enforces owner-only for launch)
   const [inviteEmail, setInviteEmail] = useState<string>("");
   const [inviteStatus, setInviteStatus] = useState<
@@ -372,7 +372,7 @@ const positionTitleOptions = useMemo(() => {
     if (inviteStatus === "error") return { label: "Error", tone: "danger" as const };
     return { label: "Not sent", tone: "neutral" as const };
   }, [inviteStatus]);
-const PERSON_FIELDS = [
+  const PERSON_FIELDS = [
     { key: "full_name", label: "Full name" },
     { key: "emails", label: "Emails" },
     { key: "mobile", label: "Mobile" },
@@ -384,15 +384,15 @@ const PERSON_FIELDS = [
   ] as const;
 
   const options = useMemo(
-  () => [
-    { value: "person" as const, label: "Person" },
-    { value: "org" as const, label: "Org" },
-    { value: "assignment" as const, label: "Assignments" },
-    { value: "leadership" as const, label: "Leadership" },
-    { value: "invite" as const, label: "Invite" },
-  ],
-  []
-);
+    () => [
+      { value: "person" as const, label: "Person" },
+      { value: "org" as const, label: "Org" },
+      { value: "leadership" as const, label: "Leadership" },
+      { value: "assignment" as const, label: "Assignments" },
+      { value: "invite" as const, label: "Invite" },
+    ],
+    []
+  );
 
 
   useEffect(() => {
@@ -429,24 +429,24 @@ const PERSON_FIELDS = [
     setLoadingPerson(true);
     setPersonErr(null);
     try {
-const data = await api.personGet(String(personId));
-const merged = ensurePersonIdentity(data, row as any);
-setPerson(merged);
+      const data = await api.personGet(String(personId));
+      const merged = ensurePersonIdentity(data, row as any);
+      setPerson(merged);
 
-// Derived display (company/contractor name) for co_ref_id/co_code
-try {
-  const resolved = await api.resolveCoDisplay({
-    co_ref_id: (merged as any)?.co_ref_id ?? null,
-    co_code: (merged as any)?.co_code ?? null,
-  });
-  setCoResolved(resolved);
-} catch {
-  setCoResolved(null);
-}
+      // Derived display (company/contractor name) for co_ref_id/co_code
+      try {
+        const resolved = await api.resolveCoDisplay({
+          co_ref_id: (merged as any)?.co_ref_id ?? null,
+          co_code: (merged as any)?.co_code ?? null,
+        });
+        setCoResolved(resolved);
+      } catch {
+        setCoResolved(null);
+      }
 
-// baseline drives dirty detection; draft is only for editing
-setPersonBaseline(merged ? { ...(merged as any) } : null);
-setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merged as any) } : null));
+      // baseline drives dirty detection; draft is only for editing
+      setPersonBaseline(merged ? { ...(merged as any) } : null);
+      setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merged as any) } : null));
 
     } catch (e: any) {
       setPersonErr(e?.message ?? "Failed to load person");
@@ -488,20 +488,18 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
 
   useEffect(() => {
     if (!open) return;
-    // lazy-by-tab: person tab loads person automatically
+
+    // Hydrate status pills immediately on open (even if user never visits these tabs)
+    void loadMaster();
+    void loadDrilldown();
+
+    // Lazy-by-tab: only fetch the person row when the Person tab is active
     if (tab === "person") void loadPerson();
-    if (tab === "assignment") void loadMaster();
-    if (tab === "leadership") {
-      void loadDrilldown();
-      // roster_master provides manager candidates for the reporting dropdown
-      void loadMaster();
-    }
-    if (tab === "org") {
-      void loadMaster();
-      void loadDrilldown();
-    }
+
+    // Other tabs reuse the hydrated master/drilldown state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, tab]);
+  }, [open, tab, pcOrgId]);
+
 
   function beginEditPerson() {
     if (!person) return;
@@ -608,25 +606,25 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
   }
 
   const masterForPerson = useMemo(() => {
-  if (!master || !master.length || !personId) return null;
+    if (!master || !master.length || !personId) return null;
 
-  const pid = String(personId);
-  const aid = assignmentId ? String(assignmentId) : null;
+    const pid = String(personId);
+    const aid = assignmentId ? String(assignmentId) : null;
 
-  const isActive = (r: any) => {
-    const end = String(r?.end_date ?? "").trim();
-    const active = r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true;
-    return !end && Boolean(active);
-  };
+    const isActive = (r: any) => {
+      const end = String(r?.end_date ?? "").trim();
+      const active = r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true;
+      return !end && Boolean(active);
+    };
 
-  const activeMatches = (master as any[]).filter((r) => String(r.person_id) === pid).filter(isActive);
-  if (activeMatches.length > 0) return activeMatches[0] as any;
+    const activeMatches = (master as any[]).filter((r) => String(r.person_id) === pid).filter(isActive);
+    if (activeMatches.length > 0) return activeMatches[0] as any;
 
-  const byAssignment =
-    (aid ? (master as any[]).find((r) => String(r.assignment_id) === aid && isActive(r)) : null) ?? null;
+    const byAssignment =
+      (aid ? (master as any[]).find((r) => String(r.assignment_id) === aid && isActive(r)) : null) ?? null;
 
-  return byAssignment ?? null;
-}, [master, personId, assignmentId]);
+    return byAssignment ?? null;
+  }, [master, personId, assignmentId]);
 
 
   useEffect(() => {
@@ -741,47 +739,75 @@ setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merg
 
 
   const drillForPerson = useMemo(() => {
-  if (!drilldown || !drilldown.length) return [];
-  const pid = personId ? String(personId) : null;
-  const aid = assignmentId ? String(assignmentId) : null;
+    if (!drilldown || !drilldown.length) return [];
+    const pid = personId ? String(personId) : null;
+    const aid = assignmentId ? String(assignmentId) : null;
 
-  const isActiveRel = (r: any) => {
-    const end = String((r?.reports_to_end_date ?? r?.end_date ?? "")).trim();
-    return !end;
-  };
+    const isActiveRel = (r: any) => {
+      const end = String(
+        (
+          r?.reports_to_end_date ??
+          r?.assignment_reporting_end_date ??
+          r?.reporting_end_date ??
+          r?.end_date ??
+          ""
+        )
+      ).trim();
+      return !end;
+    };
 
-  return drilldown
-    .filter((r: any) => (pid && String(r.person_id) === pid) || (aid && String(r.assignment_id) === aid))
-    .filter(isActiveRel);
-}, [drilldown, personId, assignmentId]);
 
-// --- Derived "Set / Not set" signals (active-only, no hard blocks) ---
-const activeAssignmentCount = useMemo(() => {
-  if (!Array.isArray(master) || !personId) return 0;
-  return (master as any[])
-    .filter((r) => String(r?.person_id ?? "") === String(personId))
-    .filter((r) => {
-      const end = String(r?.end_date ?? "").trim();
-      const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
-      return active && !end;
+    return drilldown
+      .filter((r: any) => (pid && String(r.person_id) === pid) || (aid && String(r.assignment_id) === aid))
+      .filter(isActiveRel);
+  }, [drilldown, personId, assignmentId]);
+
+  // --- Derived "Set / Not set" signals (active-only, no hard blocks) ---
+  const activeAssignmentCount = useMemo(() => {
+    if (!Array.isArray(master) || !personId) return 0;
+    return (master as any[])
+      .filter((r) => String(r?.person_id ?? "") === String(personId))
+      .filter((r) => {
+        const end = String(r?.end_date ?? "").trim();
+        const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
+        return active && !end;
+      }).length;
+  }, [master, personId]);
+
+  const activeLeadershipCount = useMemo(() => {
+    // Prefer source-of-truth for "current" reports-to (same as what Assignment tab displays)
+    const m: any = masterForPerson as any;
+
+    const masterHasLeader =
+      !!m?.reports_to_assignment_id || !!m?.reports_to_person_id || !!String(m?.reports_to_full_name ?? "").trim();
+
+    // masterForPerson is already active-only; still guard for safety
+    const masterActive =
+      m &&
+      !String(m?.end_date ?? "").trim() &&
+      Boolean(m?.active ?? m?.assignment_active ?? m?.assignment_record_active ?? true);
+
+    if (masterHasLeader && masterActive) return 1;
+
+    // Fallback to drilldown-derived view (history overlays)
+    if (!Array.isArray(drillForPerson)) return 0;
+
+    return (drillForPerson as any[]).filter((r) => {
+      const hasLeader =
+        !!r?.reports_to_assignment_id ||
+        !!r?.reports_to_person_id ||
+        !!String(r?.reports_to_full_name ?? "").trim() ||
+        !!r?.reports_to_reporting_id ||
+        !!r?.assignment_reporting_id ||
+        !!r?.reporting_id;
+
+      const end = String(
+        (r?.reports_to_end_date ?? r?.assignment_reporting_end_date ?? r?.reporting_end_date ?? "")
+      ).trim();
+
+      return hasLeader && !end;
     }).length;
-}, [master, personId]);
-
-const activeLeadershipCount = useMemo(() => {
-  if (!Array.isArray(drillForPerson)) return 0;
-  return (drillForPerson as any[]).filter((r) => {
-    const end = String((r?.reports_to_end_date ?? r?.end_date ?? "")).trim();
-    const rid =
-      r?.reports_to_reporting_id ??
-      r?.assignment_reporting_id ??
-      r?.reporting_id ??
-      r?.id ??
-      null;
-    return !!rid && !end;
-  }).length;
-}, [drillForPerson]);
-
-
+  }, [masterForPerson, drillForPerson]);
 
 
   const leadershipContext = useMemo(() => {
@@ -802,130 +828,134 @@ const activeLeadershipCount = useMemo(() => {
     };
   }, [drillForPerson, row, assignmentId, pcOrgId]);
 
-const toast = useToast();
+  const toast = useToast();
 
-const orgStartDate =
-  (row as any)?.pc_org_start_date ??
-  (row as any)?.org_start_date ??
-  (row as any)?.org_event_start_date ??
-  (row as any)?.start_date ??
-  null;
-
-function Pill({ label, ok }: { label: string; ok: boolean }) {
-  return (
-    <span
-      className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold"
-      style={{
-        borderColor: ok ? "var(--to-status-success)" : "var(--to-status-warning)",
-        color: ok ? "var(--to-status-success)" : "var(--to-status-warning)",
-        backgroundColor: ok ? "rgba(34, 197, 94, 0.14)" : "rgba(249, 115, 22, 0.16)",
-      }}
-    >
-      {label}: {ok ? "Set" : "Not set"}
-    </span>
-  );
-}
-
-
-const recordStatus = useMemo(() => {
-  const personOk = !!String((personDraft ?? person ?? {})?.full_name ?? "").trim();
-
-  // "Org" is set when there is a current pcOrgId AND the association is not ended.
-  // We use a local "ended" flag to immediately flip pills after the action, without waiting for parent refresh.
-  const ended =
-    orgAssociationEndedAt ??
-    (row as any)?.person_pc_org_end_date ??
-    (row as any)?.pc_org_end_date ??
+  const orgStartDate =
+    (row as any)?.pc_org_start_date ??
+    (row as any)?.org_start_date ??
+    (row as any)?.org_event_start_date ??
+    (row as any)?.start_date ??
     null;
 
-  const orgOk = !!String(pcOrgId ?? "").trim() && !String(ended ?? "").trim();
-
-  // "Assignments" and "Leadership" are active-only in this overlay context.
-  const assignmentOk = activeAssignmentCount > 0;
-  const leadershipOk = activeLeadershipCount > 0;
-
-  const missing: string[] = [];
-  if (!personOk) missing.push("Person");
-  if (!orgOk) missing.push("Org");
-  if (!assignmentOk) missing.push("Assignments");
-  if (!leadershipOk) missing.push("Leadership");
-
-  return { personOk, orgOk, assignmentOk, leadershipOk, missing, complete: missing.length === 0 };
-}, [personDraft, person, pcOrgId, row, orgAssociationEndedAt, activeAssignmentCount, activeLeadershipCount]);
-
-async function submitRosterRecord(mode: "complete" | "incomplete") {
-  const incomplete = !recordStatus.complete;
-
-  if (mode === "complete" && incomplete) {
-    toast.push({
-      title: "Incomplete roster record",
-      message: `Missing: ${recordStatus.missing.join(", ")}`,
-      variant: "warning",
-      durationMs: 3200,
-    });
+  function Pill({ label, ok, title }: { label: string; ok: boolean; title: string }) {
+    return (
+      <span
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold"
+        style={
+          ok
+            ? { background: "rgba(34, 197, 94, 0.14)", color: "var(--to-status-success)" }
+            : { background: "rgba(249, 115, 22, 0.16)", color: "var(--to-status-warning)" }
+        }
+        title={title}
+        aria-label={title}
+      >
+        {String(label ?? "").slice(0, 1).toUpperCase()}
+      </span>
+    );
   }
 
-  if (mode === "incomplete") {
-    toast.push({
-      title: "Submitted incomplete",
-      message: `Reminder: Missing: ${recordStatus.missing.join(", ") || "None"}`,
-      variant: incomplete ? "warning" : "success",
-      durationMs: 3200,
-    });
-  } else {
-    toast.push({
-      title: "Submitted",
-      message: incomplete ? "Submitted with missing fields." : "Roster record looks complete.",
-      variant: incomplete ? "warning" : "success",
-      durationMs: 2600,
-    });
-  }
 
-  onClose();
-}
 
-async function endPcOrgCascade() {
-  // NOTE: This does NOT end the PC Org itself (dimension table).
-  // It ends THIS PERSON'S association to the current PC Org (person_pc_org).
-  const ok = window.confirm(
-    "End Org association for this person? This will set an end date (today) on the person ↔ org association so they return to the unassigned pool. Continue?"
-  );
-  if (!ok) return;
+  const recordStatus = useMemo(() => {
+    const personOk = !!String((personDraft ?? person ?? {})?.full_name ?? "").trim();
 
-  const today = new Date().toISOString().slice(0, 10);
 
-  try {
-    if (!personId || !pcOrgId) throw new Error("Missing personId or pcOrgId");
 
-    await api.personPcOrgEndAssociation({
-      person_id: String(personId),
-      pc_org_id: String(pcOrgId),
-      end_date: today,
-    });
+    // "Org" is set when there is a current pcOrgId AND the association is not ended.
+    // We use a local "ended" flag to immediately flip pills after the action, without waiting for parent refresh.
+    const ended =
+      orgAssociationEndedAt ??
+      (row as any)?.person_pc_org_end_date ??
+      (row as any)?.pc_org_end_date ??
+      null;
 
-    toast.push({
-      title: "Org association ended",
-      message: "This person is now eligible for reassignment.",
-      variant: "success",
-      durationMs: 3200,
-    });
+    const orgOk = !!String(pcOrgId ?? "").trim() && !String(ended ?? "").trim();
+    const assignmentOk = activeAssignmentCount > 0;
+    const leadershipOk = activeLeadershipCount > 0;
 
-    // Flip Org pill immediately in this overlay session
-    setOrgAssociationEndedAt(today);
+    const missing: string[] = [];
+    if (!personOk) missing.push("Person");
+    if (!orgOk) missing.push("Org");
+    if (!assignmentOk) missing.push("Assignments");
+    if (!leadershipOk) missing.push("Leadership");
 
-    await refreshCurrent();
+    return { personOk, orgOk, assignmentOk, leadershipOk, missing, complete: missing.length === 0 };
+  }, [personDraft, person, pcOrgId, row, orgAssociationEndedAt, activeAssignmentCount, activeLeadershipCount]);
+  const endOrgBlocked = recordStatus.assignmentOk && recordStatus.leadershipOk;
 
-    // Close the overlay so the parent roster re-fetches and the person disappears from the list.
+  async function submitRosterRecord(mode: "complete" | "incomplete") {
+    const incomplete = !recordStatus.complete;
+
+    if (mode === "complete" && incomplete) {
+      toast.push({
+        title: "Incomplete roster record",
+        message: `Missing: ${recordStatus.missing.join(", ")}`,
+        variant: "warning",
+        durationMs: 3200,
+      });
+    }
+
+    if (mode === "incomplete") {
+      toast.push({
+        title: "Submitted incomplete",
+        message: `Reminder: Missing: ${recordStatus.missing.join(", ") || "None"}`,
+        variant: incomplete ? "warning" : "success",
+        durationMs: 3200,
+      });
+    } else {
+      toast.push({
+        title: "Submitted",
+        message: incomplete ? "Submitted with missing fields." : "Roster record looks complete.",
+        variant: incomplete ? "warning" : "success",
+        durationMs: 2600,
+      });
+    }
+
     onClose();
-  } catch (e: any) {
-    toast.push({
-      title: "End org association failed",
-      message: String(e?.message ?? e),
-      variant: "danger",
-      durationMs: 4200,
-    });
   }
-}
+
+  async function endPcOrgCascade() {
+    // NOTE: This does NOT end the PC Org itself (dimension table).
+    // It ends THIS PERSON'S association to the current PC Org (person_pc_org).
+    const ok = window.confirm(
+      "End Org association for this person? This will set an end date (today) on the person ↔ org association so they return to the unassigned pool. Continue?"
+    );
+    if (!ok) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    try {
+      if (!personId || !pcOrgId) throw new Error("Missing personId or pcOrgId");
+
+      await api.personPcOrgEndAssociation({
+        person_id: String(personId),
+        pc_org_id: String(pcOrgId),
+        end_date: today,
+      });
+
+      toast.push({
+        title: "Org association ended",
+        message: "This person is now eligible for reassignment.",
+        variant: "success",
+        durationMs: 3200,
+      });
+
+      // Flip Org pill immediately in this overlay session
+      setOrgAssociationEndedAt(today);
+
+      await refreshCurrent();
+
+      // Close the overlay so the parent roster re-fetches and the person disappears from the list.
+      onClose();
+    } catch (e: any) {
+      toast.push({
+        title: "End org association failed",
+        message: String(e?.message ?? e),
+        variant: "danger",
+        durationMs: 4200,
+      });
+    }
+  }
 
   useEffect(() => {
     // Keep baseline/draft in sync while not editing.
@@ -938,132 +968,132 @@ async function endPcOrgCascade() {
   }, [leadershipContext, editingLeadership]);
 
   const managerOptions = useMemo(() => {
-  const rows: any[] = (master ?? []) as any[];
-  const childAssignmentId = String(assignmentId ?? "");
-  const childTitle = String((masterForPerson as any)?.position_title ?? (row as any)?.position_title ?? "");
-  const childAff = String(
-    (row as any)?.affiliation ??
+    const rows: any[] = (master ?? []) as any[];
+    const childAssignmentId = String(assignmentId ?? "");
+    const childTitle = String((masterForPerson as any)?.position_title ?? (row as any)?.position_title ?? "");
+    const childAff = String(
+      (row as any)?.affiliation ??
       (row as any)?.co_name ??
       (row as any)?.company_name ??
       (row as any)?.contractor_name ??
       ""
-  );
+    );
 
-  const norm = (s: any) => String(s ?? "").toLowerCase().trim();
+    const norm = (s: any) => String(s ?? "").toLowerCase().trim();
 
-  const isITG = (r: any) => {
-    const aff = norm(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
-    return aff.includes("integrated tech") || aff === "itg" || aff.includes("itg ");
-  };
+    const isITG = (r: any) => {
+      const aff = norm(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
+      return aff.includes("integrated tech") || aff === "itg" || aff.includes("itg ");
+    };
 
-  const isBP = (r: any) => {
-    const aff = norm(r?.affiliation ?? r?.co_name ?? r?.company_name ?? "");
-    const title = norm(r?.position_title ?? r?.title ?? "");
-    return title.includes("bp") || aff.includes("bp");
-  };
+    const isBP = (r: any) => {
+      const aff = norm(r?.affiliation ?? r?.co_name ?? r?.company_name ?? "");
+      const title = norm(r?.position_title ?? r?.title ?? "");
+      return title.includes("bp") || aff.includes("bp");
+    };
 
-  const isContractorPerson = (affRaw: string) => {
-    const aff = norm(affRaw);
-    if (!aff) return false;
-    if (aff.includes("integrated tech") || aff.startsWith("itg")) return false;
-    if (aff.includes("bp")) return false;
-    return true;
-  };
+    const isContractorPerson = (affRaw: string) => {
+      const aff = norm(affRaw);
+      if (!aff) return false;
+      if (aff.includes("integrated tech") || aff.startsWith("itg")) return false;
+      if (aff.includes("bp")) return false;
+      return true;
+    };
 
-  const titleRankFallback = (titleRaw: string) => {
-    const t = norm(titleRaw);
-    if (t.includes("technician")) return 10;
-    if (t.includes("supervisor")) return 20;
-    if (t.includes("manager")) return 30;
-    if (t.includes("director")) return 40;
-    if (t.includes("vp") || t.includes("vice president")) return 50;
-    return 25;
-  };
+    const titleRankFallback = (titleRaw: string) => {
+      const t = norm(titleRaw);
+      if (t.includes("technician")) return 10;
+      if (t.includes("supervisor")) return 20;
+      if (t.includes("manager")) return 30;
+      if (t.includes("director")) return 40;
+      if (t.includes("vp") || t.includes("vice president")) return 50;
+      return 25;
+    };
 
-  const sortOrderByTitle = new Map<string, number>();
-  for (const pt of positionTitles ?? []) {
-    const key = String((pt as any)?.position_title ?? "").trim();
-    const so = Number((pt as any)?.sort_order ?? NaN);
-    if (key && Number.isFinite(so)) sortOrderByTitle.set(key, so);
-  }
+    const sortOrderByTitle = new Map<string, number>();
+    for (const pt of positionTitles ?? []) {
+      const key = String((pt as any)?.position_title ?? "").trim();
+      const so = Number((pt as any)?.sort_order ?? NaN);
+      if (key && Number.isFinite(so)) sortOrderByTitle.set(key, so);
+    }
 
-  // Determine whether sort_order increases with seniority (preferred) or decreases.
-  const techSo = sortOrderByTitle.get("Technician");
-  const supSo = sortOrderByTitle.get("Supervisor");
-  const sortIncreasesWithSeniority =
-    typeof techSo === "number" && typeof supSo === "number" ? techSo < supSo : true;
+    // Determine whether sort_order increases with seniority (preferred) or decreases.
+    const techSo = sortOrderByTitle.get("Technician");
+    const supSo = sortOrderByTitle.get("Supervisor");
+    const sortIncreasesWithSeniority =
+      typeof techSo === "number" && typeof supSo === "number" ? techSo < supSo : true;
 
-  const getRank = (titleRaw: string) => {
-    const t = String(titleRaw ?? "").trim();
-    const so = sortOrderByTitle.get(t);
-    if (typeof so === "number") return so;
-    return titleRankFallback(t);
-  };
+    const getRank = (titleRaw: string) => {
+      const t = String(titleRaw ?? "").trim();
+      const so = sortOrderByTitle.get(t);
+      if (typeof so === "number") return so;
+      return titleRankFallback(t);
+    };
 
-  const childRank = getRank(childTitle);
-  const isHigherRank = (candidateTitle: string) => {
-    const candRank = getRank(candidateTitle);
-    return sortIncreasesWithSeniority ? candRank > childRank : candRank < childRank;
-  };
+    const childRank = getRank(childTitle);
+    const isHigherRank = (candidateTitle: string) => {
+      const candRank = getRank(candidateTitle);
+      return sortIncreasesWithSeniority ? candRank > childRank : candRank < childRank;
+    };
 
-  const childIsITG = isITG({ affiliation: childAff });
-  const childIsBP = norm(childTitle).includes("bp") || norm(childAff).includes("bp");
-  const childIsContractor = isContractorPerson(childAff);
-  const childIsTech = norm(childTitle).includes("technician");
-  const childIsSupervisor = norm(childTitle).includes("supervisor");
+    const childIsITG = isITG({ affiliation: childAff });
+    const childIsBP = norm(childTitle).includes("bp") || norm(childAff).includes("bp");
+    const childIsContractor = isContractorPerson(childAff);
+    const childIsTech = norm(childTitle).includes("technician");
+    const childIsSupervisor = norm(childTitle).includes("supervisor");
 
-  const candidatePassesAffiliationRules = (r: any) => {
-    // Always allow ITG leadership as available (still rank gated)
-    if (isITG(r)) return true;
+    const candidatePassesAffiliationRules = (r: any) => {
+      // Always allow ITG leadership as available (still rank gated)
+      if (isITG(r)) return true;
 
-    // BP position titles should report to ITG (company POC)
-    if (childIsBP) return false;
+      // BP position titles should report to ITG (company POC)
+      if (childIsBP) return false;
 
-    // ITG/company reports to ITG/company
-    if (childIsITG) return false;
+      // ITG/company reports to ITG/company
+      if (childIsITG) return false;
 
-    // Contractor logic
-    if (childIsContractor) {
-      const candAff = String(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
-      const sameContractor = norm(candAff) === norm(childAff);
+      // Contractor logic
+      if (childIsContractor) {
+        const candAff = String(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
+        const sameContractor = norm(candAff) === norm(childAff);
 
-      // Contractor technicians can report to BP Supervisors when present + ITG fallback (handled above)
-      if (childIsTech) {
-        const candBP = isBP(r);
-        const candSupOrAbove = isHigherRank(String(r?.position_title ?? r?.title ?? "")) || norm(r?.position_title ?? "").includes("supervisor") || norm(r?.position_title ?? "").includes("manager") || norm(r?.position_title ?? "").includes("director");
-        if (candBP && candSupOrAbove) return true;
+        // Contractor technicians can report to BP Supervisors when present + ITG fallback (handled above)
+        if (childIsTech) {
+          const candBP = isBP(r);
+          const candSupOrAbove = isHigherRank(String(r?.position_title ?? r?.title ?? "")) || norm(r?.position_title ?? "").includes("supervisor") || norm(r?.position_title ?? "").includes("manager") || norm(r?.position_title ?? "").includes("director");
+          if (candBP && candSupOrAbove) return true;
+          return sameContractor;
+        }
+
+        // Contractor supervisors/managers: same contractor (and ITG fallback already allowed)
         return sameContractor;
       }
 
-      // Contractor supervisors/managers: same contractor (and ITG fallback already allowed)
-      return sameContractor;
-    }
+      // Default: keep same affiliation (company → company)
+      const candAff = String(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
+      return norm(candAff) === norm(childAff);
+    };
 
-    // Default: keep same affiliation (company → company)
-    const candAff = String(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
-    return norm(candAff) === norm(childAff);
-  };
+    const candidates = rows.filter((r) => {
+      const aid = String(r?.assignment_id ?? "");
+      if (!aid) return false;
+      if (childAssignmentId && aid === childAssignmentId) return false;
 
-  const candidates = rows.filter((r) => {
-    const aid = String(r?.assignment_id ?? "");
-    if (!aid) return false;
-    if (childAssignmentId && aid === childAssignmentId) return false;
+      const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
+      if (!active) return false;
 
-    const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
-    if (!active) return false;
+      const candTitle = String(r?.position_title ?? r?.title ?? "");
+      // Rank constraint: min next upward rank + all above
+      if (!isHigherRank(candTitle)) return false;
 
-    const candTitle = String(r?.position_title ?? r?.title ?? "");
-    // Rank constraint: min next upward rank + all above
-    if (!isHigherRank(candTitle)) return false;
+      // Affiliation constraint
+      return candidatePassesAffiliationRules(r);
+    });
 
-    // Affiliation constraint
-    return candidatePassesAffiliationRules(r);
-  });
-
-  // Safety net: if filtering is too tight, relax progressively so user isn't blocked.
-  const relaxed = candidates.length
-    ? candidates
-    : rows.filter((r) => {
+    // Safety net: if filtering is too tight, relax progressively so user isn't blocked.
+    const relaxed = candidates.length
+      ? candidates
+      : rows.filter((r) => {
         const aid = String(r?.assignment_id ?? "");
         if (!aid) return false;
         if (childAssignmentId && aid === childAssignmentId) return false;
@@ -1073,19 +1103,19 @@ async function endPcOrgCascade() {
         return isHigherRank(candTitle) && (isITG(r) || norm(String(r?.affiliation ?? r?.co_name ?? "")) === norm(childAff));
       });
 
-  const finalList = relaxed.length ? relaxed : rows.filter((r) => Boolean(String(r?.assignment_id ?? "")));
+    const finalList = relaxed.length ? relaxed : rows.filter((r) => Boolean(String(r?.assignment_id ?? "")));
 
-  return finalList
-    .map((r) => {
-      const aid = String(r?.assignment_id ?? "");
-      const name = (r?.full_name ?? r?.person_name ?? r?.name ?? r?.reports_to_full_name ?? "—") as string;
-      const title = (r?.position_title ?? r?.title ?? "") as string;
-      const aff = String(r?.affiliation ?? r?.co_name ?? "");
-      const label = title ? `${name} — ${title}${aff ? ` (${aff})` : ""}` : `${name}${aff ? ` (${aff})` : ""}`;
-      return { value: aid, label };
-    })
-    .sort((a, b) => a.label.localeCompare(b.label));
-}, [master, assignmentId, masterForPerson, row, positionTitles]);
+    return finalList
+      .map((r) => {
+        const aid = String(r?.assignment_id ?? "");
+        const name = (r?.full_name ?? r?.person_name ?? r?.name ?? r?.reports_to_full_name ?? "—") as string;
+        const title = (r?.position_title ?? r?.title ?? "") as string;
+        const aff = String(r?.affiliation ?? r?.co_name ?? "");
+        const label = title ? `${name} — ${title}${aff ? ` (${aff})` : ""}` : `${name}${aff ? ` (${aff})` : ""}`;
+        return { value: aid, label };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [master, assignmentId, masterForPerson, row, positionTitles]);
 
   function beginEditLeadership() {
     setLeadershipErr(null);
@@ -1105,69 +1135,69 @@ async function endPcOrgCascade() {
   }
 
   async function saveLeadership() {
-  const childId = String(assignmentId ?? "");
-  if (!childId) {
-    setLeadershipErr("No assignment_id for this roster row.");
-    setEditingLeadership(false);
-    return;
-  }
-
-  const selectedParent = String((leadershipDraft as any)?.reports_to_assignment_id ?? "").trim();
-  const baselineParent = String((leadershipContext as any)?.reports_to_assignment_id ?? "").trim();
-
-  if (selectedParent === childId) {
-    setLeadershipErr("An assignment cannot report to itself.");
-    return;
-  }
-
-  // No change
-  if (selectedParent === baselineParent) {
-    setEditingLeadership(false);
-    return;
-  }
-
-  setSavingLeadership(true);
-  setLeadershipErr(null);
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-
-    const currentReportingId = (leadershipContext as any)?.reports_to_reporting_id
-      ? String((leadershipContext as any).reports_to_reporting_id)
-      : null;
-
-    const currentStartDate = String((leadershipContext as any)?.reports_to_start_date ?? "").trim();
-
-    // 1) End current relationship if one exists
-    if (currentReportingId) {
-      await api.assignmentReportingUpsert({
-        assignment_reporting_id: currentReportingId,
-        child_assignment_id: childId,
-        parent_assignment_id: baselineParent || (leadershipContext as any)?.reports_to_assignment_id,
-        start_date: currentStartDate || today,
-        end_date: today,
-      });
+    const childId = String(assignmentId ?? "");
+    if (!childId) {
+      setLeadershipErr("No assignment_id for this roster row.");
+      setEditingLeadership(false);
+      return;
     }
 
-    // 2) If user picked a new manager, start a NEW relationship row with start_date=today
-    //    (Do NOT reuse old start_date; unique grain is (child, parent, start_date) and start_date must differ for history.)
-    if (selectedParent) {
-      await api.assignmentReportingUpsert({
-        assignment_reporting_id: null,
-        child_assignment_id: childId,
-        parent_assignment_id: selectedParent,
-        start_date: today,
-        end_date: null,
-      });
+    const selectedParent = String((leadershipDraft as any)?.reports_to_assignment_id ?? "").trim();
+    const baselineParent = String((leadershipContext as any)?.reports_to_assignment_id ?? "").trim();
+
+    if (selectedParent === childId) {
+      setLeadershipErr("An assignment cannot report to itself.");
+      return;
     }
 
-    setEditingLeadership(false);
-    await loadDrilldown();
-  } catch (e: any) {
-    setLeadershipErr(e?.message ?? "Failed to save reporting relationship");
-  } finally {
-    setSavingLeadership(false);
+    // No change
+    if (selectedParent === baselineParent) {
+      setEditingLeadership(false);
+      return;
+    }
+
+    setSavingLeadership(true);
+    setLeadershipErr(null);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+
+      const currentReportingId = (leadershipContext as any)?.reports_to_reporting_id
+        ? String((leadershipContext as any).reports_to_reporting_id)
+        : null;
+
+      const currentStartDate = String((leadershipContext as any)?.reports_to_start_date ?? "").trim();
+
+      // 1) End current relationship if one exists
+      if (currentReportingId) {
+        await api.assignmentReportingUpsert({
+          assignment_reporting_id: currentReportingId,
+          child_assignment_id: childId,
+          parent_assignment_id: baselineParent || (leadershipContext as any)?.reports_to_assignment_id,
+          start_date: currentStartDate || today,
+          end_date: today,
+        });
+      }
+
+      // 2) If user picked a new manager, start a NEW relationship row with start_date=today
+      //    (Do NOT reuse old start_date; unique grain is (child, parent, start_date) and start_date must differ for history.)
+      if (selectedParent) {
+        await api.assignmentReportingUpsert({
+          assignment_reporting_id: null,
+          child_assignment_id: childId,
+          parent_assignment_id: selectedParent,
+          start_date: today,
+          end_date: null,
+        });
+      }
+
+      setEditingLeadership(false);
+      await loadDrilldown();
+    } catch (e: any) {
+      setLeadershipErr(e?.message ?? "Failed to save reporting relationship");
+    } finally {
+      setSavingLeadership(false);
+    }
   }
-}
 
 
 
@@ -1198,11 +1228,12 @@ async function endPcOrgCascade() {
           </div>
 
           <div className="mt-2 flex flex-wrap gap-2">
-            <Pill label="Person" ok={recordStatus.personOk} />
-            <Pill label="Org" ok={recordStatus.orgOk} />
-            <Pill label="Assignments" ok={recordStatus.assignmentOk} />
-            <Pill label="Leadership" ok={recordStatus.leadershipOk} />
+            <Pill label="P" ok={recordStatus.personOk} title={recordStatus.personOk ? "Person: set" : "Person: not set"} />
+            <Pill label="O" ok={recordStatus.orgOk} title={recordStatus.orgOk ? "Org: set" : "Org: not set"} />
+            <Pill label="L" ok={recordStatus.leadershipOk} title={recordStatus.leadershipOk ? "Leadership: set" : "Leadership: not set"} />
+            <Pill label="A" ok={recordStatus.assignmentOk} title={recordStatus.assignmentOk ? "Assignments: set" : "Assignments: not set"} />
           </div>
+
         </div>
       }
       size="lg"
@@ -1364,72 +1395,72 @@ async function endPcOrgCascade() {
               </Card>
 
               {person ? (
-                
-<Card title="Company / Role">
-  {editingPerson ? (
-    <AffiliationSelector
-      value={(() => {
-        const src: any = (personDraft ?? person ?? {}) as any;
-        const co_ref_id = String(src?.co_ref_id ?? "").trim();
-        if (!co_ref_id) return null;
 
-        const roleRaw = String(src?.role ?? "").toLowerCase();
-        const kind: "company" | "contractor" =
-          (coResolved?.kind as any) ??
-          ((row as any)?.co_type === "contractor" || roleRaw.includes("contract") ? "contractor" : "company");
+                <Card title="Company / Role">
+                  {editingPerson ? (
+                    <AffiliationSelector
+                      value={(() => {
+                        const src: any = (personDraft ?? person ?? {}) as any;
+                        const co_ref_id = String(src?.co_ref_id ?? "").trim();
+                        if (!co_ref_id) return null;
 
-        return {
-          kind,
-          co_ref_id,
-          co_code: src?.co_code ? String(src.co_code) : null,
-          name: coResolved?.name ?? (src?.co_code ? String(src.co_code) : co_ref_id),
-        } as AffiliationOption;
-      })()}
-      onChange={(next) =>
-        setPersonDraft((p: any) => {
-          const n: any = ensurePersonIdentity(p, row as any);
+                        const roleRaw = String(src?.role ?? "").toLowerCase();
+                        const kind: "company" | "contractor" =
+                          (coResolved?.kind as any) ??
+                          ((row as any)?.co_type === "contractor" || roleRaw.includes("contract") ? "contractor" : "company");
 
-          if (!next) {
-            n.co_ref_id = null;
-            n.co_code = null;
-            n.role = null;
-          } else {
-            n.co_ref_id = String(next.co_ref_id);
-            n.co_code = next.co_code ? String(next.co_code) : null;
+                        return {
+                          kind,
+                          co_ref_id,
+                          co_code: src?.co_code ? String(src.co_code) : null,
+                          name: coResolved?.name ?? (src?.co_code ? String(src.co_code) : co_ref_id),
+                        } as AffiliationOption;
+                      })()}
+                      onChange={(next) =>
+                        setPersonDraft((p: any) => {
+                          const n: any = ensurePersonIdentity(p, row as any);
 
-            // IMPORTANT: role drives co_type derivation in roster views (contractor vs company).
-            n.role = next.kind === "contractor" ? "contractor" : null;
-          }
+                          if (!next) {
+                            n.co_ref_id = null;
+                            n.co_code = null;
+                            n.role = null;
+                          } else {
+                            n.co_ref_id = String(next.co_ref_id);
+                            n.co_code = next.co_code ? String(next.co_code) : null;
 
-          // Keep full_name safe for upsert writes
-          if (!n.full_name || String(n.full_name).trim() === "") {
-            const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
-            if (fb) n.full_name = fb;
-          }
+                            // IMPORTANT: role drives co_type derivation in roster views (contractor vs company).
+                            n.role = next.kind === "contractor" ? "contractor" : null;
+                          }
 
-          return n;
-        })
-      }
-      help="Set the person’s Organization. This writes co_ref_id/co_code and updates role so contractor/company type derives correctly."
-    />
-  ) : null}
+                          // Keep full_name safe for upsert writes
+                          if (!n.full_name || String(n.full_name).trim() === "") {
+                            const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
+                            if (fb) n.full_name = fb;
+                          }
 
-  <div className="space-y-1">
-    <KVRow
-      label="Organization"
-      value={coResolved?.name ?? (person as any)?.co_code ?? (person as any)?.co_ref_id ?? "—"}
-    />
-    <KVRow label="Type" value={coResolved?.kind ?? (row as any)?.co_type ?? "—"} />
-    <KVRow label="Role" value={(person as any)?.role ?? (row as any)?.role ?? "—"} />
-    <KVRow label="Code" value={(person as any)?.co_code ?? "—"} />
-  </div>
-</Card>
+                          return n;
+                        })
+                      }
+                      help="Set the person’s Organization. This writes co_ref_id/co_code and updates role so contractor/company type derives correctly."
+                    />
+                  ) : null}
+
+                  <div className="space-y-1">
+                    <KVRow
+                      label="Organization"
+                      value={coResolved?.name ?? (person as any)?.co_code ?? (person as any)?.co_ref_id ?? "—"}
+                    />
+                    <KVRow label="Type" value={coResolved?.kind ?? (row as any)?.co_type ?? "—"} />
+                    <KVRow label="Role" value={(person as any)?.role ?? (row as any)?.role ?? "—"} />
+                    <KVRow label="Code" value={(person as any)?.co_code ?? "—"} />
+                  </div>
+                </Card>
               ) : null}
 
-</div>
+            </div>
           ) : null}
 
-          
+
 
           {tab === "invite" ? (
             <div className="space-y-3">
@@ -1446,8 +1477,8 @@ async function endPcOrgCascade() {
                           invitePill.tone === "success"
                             ? "text-[var(--to-status-success)]"
                             : invitePill.tone === "danger"
-                            ? "text-[var(--to-status-danger)]"
-                            : "text-[var(--to-ink-muted)]"
+                              ? "text-[var(--to-status-danger)]"
+                              : "text-[var(--to-ink-muted)]"
                         }
                       >
                         {invitePill.label}
@@ -1469,7 +1500,7 @@ async function endPcOrgCascade() {
                   </div>
                 ) : null}
 
-                  <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
+                <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
                   <div className="col-span-4 text-[var(--to-ink-muted)]">PC</div>
                   <div className="col-span-8">{row?.pc_number ?? row?.pc_id ?? "—"}</div>
 
@@ -1502,51 +1533,61 @@ async function endPcOrgCascade() {
             </div>
           ) : null}
 
-{tab === "org" ? (
-  <div className="space-y-3">
-    <Card title="Org">
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
-          <div className="text-sm font-semibold">{pcOrgName ?? "Org"}</div>
-          {orgStartDate ? (
-            <div className="text-xs text-[var(--to-ink-muted)]">Start date: {String(orgStartDate).slice(0, 10)}</div>
+          {tab === "org" ? (
+            <div className="space-y-3">
+              <Card title="Org">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold">{pcOrgName ?? "Org"}</div>
+                    {orgStartDate ? (
+                      <div className="text-xs text-[var(--to-ink-muted)]">Start date: {String(orgStartDate).slice(0, 10)}</div>
+                    ) : null}
+                    <div className="text-xs text-[var(--to-ink-muted)]">
+                      Actions here affect this person’s org association (soft close; no deletes).
+                    </div>
+                  </div>
+
+                  <Button
+                    variant="secondary"
+                    onClick={endPcOrgCascade}
+                    disabled={endOrgBlocked}
+                    title={
+                      endOrgBlocked
+                        ? "Cannot end org association while an active Assignment AND Leadership relationship exist. End/close those first."
+                        : "End Org association"
+                    }
+                  >
+                    End Org association
+                  </Button>
+
+                </div>
+
+                <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">PC</div>
+                  <div className="col-span-8">
+                    {(row as any)?.pc_name ??
+                      (row as any)?.pc_number ??
+                      ((row as any)?.pc_id ? String((row as any)?.pc_id) : "—")}
+                  </div>
+
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">MSO</div>
+                  <div className="col-span-8">{(row as any)?.mso_name ?? "—"}</div>
+
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">Division</div>
+                  <div className="col-span-8">{(row as any)?.division_name ?? "—"}</div>
+
+                  <div className="col-span-4 text-[var(--to-ink-muted)]">Region</div>
+                  <div className="col-span-8">{(row as any)?.region_name ?? "—"}</div>
+                </div>
+
+                <div className="mt-3 text-xs text-[var(--to-ink-muted)]">
+                  “End Org association” sets <code className="px-1">end_date</code> to today on the <code className="px-1">person_pc_org</code> row for this person. No rows are deleted.
+                </div>
+              </Card>
+            </div>
           ) : null}
-          <div className="text-xs text-[var(--to-ink-muted)]">
-            Actions here affect this person’s org association (soft close; no deletes).
-          </div>
-        </div>
 
-        <Button variant="secondary" onClick={endPcOrgCascade}>
-          End Org association
-        </Button>
-      </div>
-
-      <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
-          <div className="col-span-4 text-[var(--to-ink-muted)]">PC</div>
-          <div className="col-span-8">
-            {(row as any)?.pc_name ??
-              (row as any)?.pc_number ??
-              ((row as any)?.pc_id ? String((row as any)?.pc_id) : "—")}
-          </div>
-
-          <div className="col-span-4 text-[var(--to-ink-muted)]">MSO</div>
-          <div className="col-span-8">{(row as any)?.mso_name ?? "—"}</div>
-
-          <div className="col-span-4 text-[var(--to-ink-muted)]">Division</div>
-          <div className="col-span-8">{(row as any)?.division_name ?? "—"}</div>
-
-          <div className="col-span-4 text-[var(--to-ink-muted)]">Region</div>
-          <div className="col-span-8">{(row as any)?.region_name ?? "—"}</div>
-      </div>
-
-      <div className="mt-3 text-xs text-[var(--to-ink-muted)]">
-        “End Org association” sets <code className="px-1">end_date</code> to today on the <code className="px-1">person_pc_org</code> row for this person. No rows are deleted.
-      </div>
-    </Card>
-  </div>
-) : null}
-
-{tab === "assignment" ? (
+          {tab === "assignment" ? (
             <div className="space-y-3">
               {masterErr ? (
                 <Notice variant="danger" title="Could not load roster master">

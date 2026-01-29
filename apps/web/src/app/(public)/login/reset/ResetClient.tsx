@@ -65,14 +65,21 @@ export default function ResetClient() {
       }
 
 
-      const link = json?.action_link ?? "";
-      if (!link) {
-        setOut(`OK but no action_link returned:\n${JSON.stringify(json, null, 2)}`);
-        return;
+            const link = json?.action_link ?? "";
+
+      // Success UX should not depend on action_link (prod won't return it).
+      // Always show a generic "check your email" message; show dev link only if provided.
+      if (link) {
+        setActionLink(link);
+        setOut(
+          "If an account exists for that email, a password reset email was triggered. (Dev link is shown below for convenience.)"
+        );
+      } else {
+        setOut(
+          "If an account exists for that email, you'll receive a password reset link shortly. Please check your inbox and spam/junk folder."
+        );
       }
 
-      setActionLink(link);
-      setOut("Recovery link generated. Open it in the SAME browser to set a new password.");
     } finally {
       setSending(false);
     }

@@ -1,11 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeNext } from "@/lib/navigation/next";
 
-function getHashParams() {
+function hardNavigate(to: string) {
+  // Forces a full navigation so middleware + SSR cookies take effect immediately.
+  window.location.assign(to);
+}
+
+function getHashParams(): URLSearchParams {
   if (typeof window === "undefined") return new URLSearchParams();
   const h = window.location.hash || "";
   const raw = h.startsWith("#") ? h.slice(1) : h;
@@ -33,7 +39,6 @@ async function callBootstrap(): Promise<BootstrapResponse | null> {
 
     const json = (await res.json()) as BootstrapResponse;
 
-    // If API returns non-200 but still JSON, preserve it.
     if (!res.ok) {
       return { ...json, ok: false, error: json.error ?? `bootstrap failed (${res.status})` };
     }
@@ -44,29 +49,32 @@ async function callBootstrap(): Promise<BootstrapResponse | null> {
   }
 }
 
-export default function SetPasswordPage() {
+export default function SetPasswordClient() {
   const router = useRouter();
   const sp = useSearchParams();
 
   const next = normalizeNext(sp.get("next"));
-
   const supabase = useMemo(() => createClient(), []);
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [out, setOut] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(true);
 
-  async function ensureSessionFromHashIfNeeded() {
-    // If a session already exists, great.
-    const { data: sess } = await supabase.auth.getSession();
+  async function ensureSession(): Promise<boolean> {
+    // 0) If a session already exists, we're good.
+    const { data: sess, error: sessErr } = await supabase.auth.getSession();
+    if (sessErr) {
+      setOut(`Session error: ${sessErr.message}`);
+      return false;
+    }
     if (sess?.session) return true;
 
-    // Otherwise try to create session from fragment tokens.
+    // 1) Try implicit-grant fragment tokens (#access_token, #refresh_token)
     const hp = getHashParams();
     const access_token = hp.get("access_token");
     const refresh_token = hp.get("refresh_token");
-
     if (access_token && refresh_token) {
       const { error } = await supabase.auth.setSession({ access_token, refresh_token });
       if (error) {
@@ -76,9 +84,74 @@ export default function SetPasswordPage() {
       return true;
     }
 
-    setOut("No active session found. Please open the recovery/invite link again.");
+    // 2) Try PKCE `?code=` (in case user landed here directly, skipping /auth/callback)
+    const code = sp.get("code");
+    if (code) {
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) {
+        setOut(`Auth code exchange failed: ${error.message}`);
+        return false;
+      }
+      return true;
+    }
+
+    // 3) Try OTP verify with `?token_hash=` + `?type=`
+    const type = (sp.get("type") || "").toLowerCase() as
+      | "recovery"
+      | "invite"
+      | "magiclink"
+      | "email_change"
+      | "";
+    const token_hash = sp.get("token_hash") || sp.get("token"); // some flows use token=
+    if (token_hash && type) {
+      const { error } = await supabase.auth.verifyOtp({ type, token_hash });
+      if (error) {
+        setOut(`OTP verification failed: ${error.message}`);
+        return false;
+      }
+      return true;
+    }
+
+    setOut("No active session found. Please open the invite/recovery link again, or ask an admin to resend it.");
     return false;
   }
+
+  function cleanupUrl() {
+    // Remove hash and auth query params so refreshes don't re-trigger auth flows.
+    if (typeof window === "undefined") return;
+
+    const u = new URL(window.location.href);
+    u.hash = "";
+
+    const toDelete = ["code", "token_hash", "token", "type", "error", "reason"];
+    toDelete.forEach((k) => u.searchParams.delete(k));
+
+    history.replaceState(null, "", u.pathname + (u.search ? u.search : ""));
+  }
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setChecking(true);
+      try {
+        const ok = await ensureSession();
+        if (!alive) return;
+        if (ok) {
+          // If we successfully established a session, clean the URL right away.
+          cleanupUrl();
+          setOut("");
+        }
+      } finally {
+        if (alive) setChecking(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+    // NOTE: sp changes when querystring changes; we want this to re-run if someone pastes a new link.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, sp]);
 
   async function onSubmit() {
     setOut("");
@@ -94,7 +167,7 @@ export default function SetPasswordPage() {
 
     setSaving(true);
     try {
-      const ok = await ensureSessionFromHashIfNeeded();
+      const ok = await ensureSession();
       if (!ok) return;
 
       const { error } = await supabase.auth.updateUser({
@@ -107,7 +180,6 @@ export default function SetPasswordPage() {
         return;
       }
 
-      // Bootstrap profile row + hydrate metadata linkages (best-effort)
       const boot = await callBootstrap();
       if (boot?.ok) {
         setOut(`Password set. bootstrap ok (status=${boot.status ?? "?"}). Redirecting…`);
@@ -117,12 +189,10 @@ export default function SetPasswordPage() {
         setOut("Password set. Redirecting…");
       }
 
-      // Optional: clear hash from URL for cleanliness
-      if (typeof window !== "undefined" && window.location.hash) {
-        history.replaceState(null, "", window.location.pathname + window.location.search);
-      }
+      cleanupUrl();
 
-      router.replace(next);
+      // Hard navigation ensures middleware + cookies are applied immediately.
+      hardNavigate(next);
     } finally {
       setSaving(false);
     }
@@ -149,6 +219,7 @@ export default function SetPasswordPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="new-password"
+            disabled={checking || saving}
           />
         </label>
 
@@ -161,17 +232,24 @@ export default function SetPasswordPage() {
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             autoComplete="new-password"
+            disabled={checking || saving}
           />
         </label>
 
         <button
           type="submit"
-          disabled={saving}
+          disabled={checking || saving}
           className="mt-2 rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
           style={{ borderColor: "var(--to-border)" }}
         >
-          {saving ? "Saving..." : "Save password"}
+          {checking ? "Verifying link..." : saving ? "Saving..." : "Save password"}
         </button>
+
+        <div className="mt-2 flex items-center justify-between">
+          <Link href={`/login?next=${encodeURIComponent(next)}`} className="text-sm underline underline-offset-4">
+            Back to login
+          </Link>
+        </div>
 
         {out && (
           <pre

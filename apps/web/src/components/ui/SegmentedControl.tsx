@@ -22,15 +22,20 @@ export function SegmentedControl<T extends string>({
   onChange,
   options,
   className,
+  size = "md",
 }: {
   value: T;
   onChange: (next: T) => void;
   options: Array<Option<T>>;
   className?: string;
+  size?: "sm" | "md";
 }) {
+  const wrap = size === "sm" ? "p-0.5" : "p-1";
+  const btn = size === "sm" ? "px-2 py-0.5 text-[11px]" : "px-3 py-1.5 text-sm";
+
   return (
     <div
-      className={cls("inline-flex rounded-full border p-1", className)}
+      className={cls("inline-flex rounded-full border", wrap, className)}
       style={{
         borderColor: "var(--to-border)",
         background: "var(--to-surface)",
@@ -48,14 +53,23 @@ export function SegmentedControl<T extends string>({
             aria-selected={active}
             onClick={() => onChange(opt.value)}
             className={cls(
-              "rounded-full px-3 py-1.5 text-sm font-medium transition-colors",
+              "rounded-full font-medium transition-colors",
+              btn,
               active ? "text-[var(--to-ink)]" : "text-[var(--to-ink-muted)] hover:text-[var(--to-ink)]"
             )}
             style={{
-              // Use token so themes can decide the highlight color.
-              // Glass theme will set this to a soft green tint.
-              background: active ? "var(--to-seg-active-bg, var(--to-row-hover))" : "transparent",
+              background: active
+                ? "var(--to-toggle-active-bg, var(--to-seg-active-bg, var(--to-row-hover)))"
+                : "transparent",
+              color: active
+                ? "var(--to-toggle-active-ink, var(--to-seg-active-ink, var(--to-ink)))"
+                : undefined,
+              boxShadow: active
+                ? "inset 0 0 0 1px var(--to-toggle-active-border, var(--to-seg-active-border, transparent))"
+                : undefined,
             }}
+
+
           >
             {opt.label}
           </button>

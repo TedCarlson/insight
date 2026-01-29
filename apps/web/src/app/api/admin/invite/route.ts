@@ -1,13 +1,15 @@
-//apps/web/src/app/api/admin/invite/route.ts
+// apps/web/src/app/api/admin/invite/route.ts
 
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
+import { normalizeNext } from "@/lib/navigation/next";
 
 type InviteBody = {
   email: string;
   assignment_id: string;
+  next?: string; // optional post-password target, default "/home"
 };
 
 /**
@@ -20,13 +22,12 @@ type InviteBody = {
  *   - NEXT_PUBLIC_SUPABASE_URL
  *   - NEXT_PUBLIC_SUPABASE_ANON_KEY
  *   - SUPABASE_SERVICE_ROLE_KEY
- *   - NEXT_PUBLIC_SITE_URL (optional; defaults to http://localhost:3000)
+ *   - NEXT_PUBLIC_SITE_URL (optional; falls back to request origin)
  */
 export async function GET() {
   // Avoid “success” responses for an admin endpoint via browser GET.
   return NextResponse.json({ ok: false, error: "Method Not Allowed" }, { status: 405 });
 }
-
 
 export async function POST(req: Request) {
   try {
@@ -36,8 +37,9 @@ export async function POST(req: Request) {
     const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/+$/, "");
-    const redirectTo = `${siteUrl}/auth/callback?next=/auth/set-password`;
+    // Prefer explicit site URL; otherwise use request origin (works in previews)
+    const origin = new URL(req.url).origin;
+    const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || origin).replace(/\/+$/, "");
 
     if (!url || !anon) {
       return NextResponse.json(
@@ -85,6 +87,13 @@ export async function POST(req: Request) {
 
     const email = (body.email ?? "").trim().toLowerCase();
     const assignment_id = (body.assignment_id ?? "").trim();
+
+    // IMPORTANT: next is where user should land AFTER they set password
+    const postPasswordNext = normalizeNext(body.next ?? "/home");
+
+    // IMPORTANT: redirectTo points to /auth/callback only.
+    // /auth/callback already forces invite/recovery to /auth/set-password.
+    const redirectTo = `${siteUrl}/auth/callback?next=${encodeURIComponent(postPasswordNext)}`;
 
     if (!email || !assignment_id) {
       return NextResponse.json({ error: "email and assignment_id are required" }, { status: 400 });
@@ -156,7 +165,6 @@ export async function POST(req: Request) {
       );
     }
 
-
     const upd = await admin.auth.admin.updateUserById(invitedUserId, {
       user_metadata: meta,
       app_metadata: { assignment_id },
@@ -195,6 +203,7 @@ export async function POST(req: Request) {
       emailed: true,
       invited: { email, auth_user_id: invitedUserId, ...meta },
       redirect_to: redirectTo,
+      post_password_next: postPasswordNext,
     });
   } catch (e: any) {
     console.error("INVITE_ROUTE_UNCAUGHT_ERROR", e);

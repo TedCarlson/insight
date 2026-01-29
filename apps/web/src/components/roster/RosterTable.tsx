@@ -32,76 +32,76 @@ function MiniStatusPill({
 }) {
   return (
     <span
-      className="inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] leading-none"
+      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold"
       style={
         ok
-          ? {
-              background: "rgba(34, 197, 94, 0.14)",
-              borderColor: "var(--to-status-success)",
-              color: "var(--to-status-success)",
-            }
-          : {
-              background: "rgba(249, 115, 22, 0.16)",
-              borderColor: "var(--to-status-warning)",
-              color: "var(--to-status-warning)",
-            }
+          ? { background: "rgba(34, 197, 94, 0.14)", color: "var(--to-status-success)" }
+          : { background: "rgba(249, 115, 22, 0.16)", color: "var(--to-status-warning)" }
       }
       title={title}
       aria-label={title}
     >
-      {label}
+      {String(label ?? "").slice(0, 1).toUpperCase()}
     </span>
   );
 }
 
-function getStatusFlags(r: any) {
+
+function getReadinessFlags(r: any) {
+  const personOk = !!String(r?.full_name ?? "").trim();
+
+  const orgEnded = String(r?.person_pc_org_end_date ?? r?.pc_org_end_date ?? "").trim();
+  const orgOk = !!String(r?.pc_org_id ?? "").trim() && !orgEnded;
+
   const assignmentEnd = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
   const assignmentActive = Boolean(r?.assignment_active ?? r?.active ?? true);
-  const hasAssignment = !!String(r?.assignment_id ?? "").trim() && assignmentActive && !assignmentEnd;
+  const assignmentOk = !!String(r?.assignment_id ?? "").trim() && assignmentActive && !assignmentEnd;
 
   const leadershipEnd = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
-  const leadershipId =
-    r?.reports_to_reporting_id ?? r?.assignment_reporting_id ?? r?.reporting_id ?? r?.id ?? null;
-  const hasLeadership = !!leadershipId && !leadershipEnd;
+  const leadershipOk =
+    !leadershipEnd &&
+    (!!r?.reports_to_assignment_id ||
+      !!r?.reports_to_person_id ||
+      !!String(r?.reports_to_full_name ?? "").trim());
 
-  // Placeholder workflow: schedule is "Ready" if assignment + leadership are set; otherwise "Locked"
-  const scheduleReady = hasAssignment && hasLeadership;
-
-  return { hasAssignment, hasLeadership, scheduleReady };
+  return { personOk, orgOk, leadershipOk, assignmentOk };
 }
 
 function StatusPills({ row }: { row: any }) {
-  const s = getStatusFlags(row);
+  const s = getReadinessFlags(row);
   return (
     <div className="flex items-center justify-end gap-1">
-      <MiniStatusPill
-        label="A"
-        ok={s.hasAssignment}
-        title={s.hasAssignment ? "Assignment: set" : "Assignment: not set"}
-      />
+      <MiniStatusPill label="P" ok={s.personOk} title={s.personOk ? "Person: set" : "Person: not set"} />
+      <MiniStatusPill label="O" ok={s.orgOk} title={s.orgOk ? "Org: set" : "Org: not set"} />
       <MiniStatusPill
         label="L"
-        ok={s.hasLeadership}
-        title={s.hasLeadership ? "Leadership: set" : "Leadership: not set"}
+        ok={s.leadershipOk}
+        title={s.leadershipOk ? "Leadership: set" : "Leadership: not set"}
       />
       <MiniStatusPill
-        label="S"
-        ok={s.scheduleReady}
-        title={s.scheduleReady ? "Schedule: ready" : "Schedule: locked"}
+        label="A"
+        ok={s.assignmentOk}
+        title={s.assignmentOk ? "Assignments: set" : "Assignments: not set"}
       />
     </div>
   );
 }
 
+
 export function RosterTable({
   roster,
   onRowOpen,
+  onRowQuickView,
+  modifyMode = "open",
   pickName,
 }: {
   roster: RosterRow[];
+  modifyMode?: "open" | "locked";
   onRowOpen: (row: RosterRow) => void;
+  onRowQuickView?: (row: RosterRow, anchorEl: HTMLElement) => void;
   pickName: (row: RosterRow) => string;
 }) {
+
   const totalTechs = roster.length;
   const companyTechs = roster.filter((r) => isITGCompanyAffiliation((r as any)?.co_name)).length;
   const contractorTechs = totalTechs - companyTechs;
@@ -143,7 +143,7 @@ export function RosterTable({
             className="whitespace-nowrap text-right"
             title="Status: A=Assignment, L=Leadership, S=Schedule (ready/locked)"
           >
-            Status <span className="text-[10px] text-[var(--to-ink-muted)]">A/L/S</span>
+            Status <span className="text-[10px] text-[var(--to-ink-muted)]">P/O/L/A</span>
           </div>
         </DataTableHeader>
 
@@ -155,10 +155,19 @@ export function RosterTable({
               role="button"
               tabIndex={0}
               aria-label={`Open roster details for ${((r as any)?.full_name ?? pickName(r)) || "tech"}`}
-              onClick={() => onRowOpen(r)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") onRowOpen(r);
+              onClick={(e) => {
+                const el = e.currentTarget as HTMLElement;
+                if (modifyMode === "locked") onRowQuickView?.(r, el);
+                else onRowOpen(r);
               }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  const el = e.currentTarget as HTMLElement;
+                  if (modifyMode === "locked") onRowQuickView?.(r, el);
+                  else onRowOpen(r);
+                }
+              }}
+
             >
               <div className="whitespace-nowrap font-mono text-xs">{(r as any)?.tech_id ?? "—"}</div>
 

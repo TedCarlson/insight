@@ -603,7 +603,7 @@ private async rpcWrite<T>(
     );
   }
 
-  async personUpsert(input: {
+    async personUpsert(input: {
     person_id: string;
     full_name?: string | null;
     emails?: string | null;
@@ -614,8 +614,12 @@ private async rpcWrite<T>(
     person_csg_id?: string | null;
     active?: boolean | null;
     co_ref_id?: string | null;
+
+    // Newer DB signature (used to disambiguate overloaded person_upsert)
+    co_code?: string | null;
+    role?: string | null;
   }): Promise<PersonRow | null> {
-    const args = this.compactRecord({
+    const baseArgs = this.compactRecord({
       p_person_id: input.person_id,
       p_full_name: input.full_name ?? undefined,
       p_emails: input.emails ?? undefined,
@@ -626,11 +630,34 @@ private async rpcWrite<T>(
       p_person_csg_id: input.person_csg_id ?? undefined,
       p_active: input.active ?? undefined,
       p_co_ref_id: input.co_ref_id ?? undefined,
+
+      // Only include these when provided (so we don't accidentally null-out fields on update)
+      ...(input.co_code !== undefined ? { p_co_code: input.co_code } : {}),
+      ...(input.role !== undefined ? { p_role: input.role } : {}),
     });
 
-    const data = await this.rpcWrite<any>("public", "person_upsert", args as any);
-    return (data as any) ?? null;
+    try {
+      const data = await this.rpcWrite<any>("public", "person_upsert", baseArgs as any);
+      return (data as any) ?? null;
+    } catch (e: any) {
+      const code = String(e?.code ?? "");
+      const msg = String(e?.message ?? "");
+      const ambiguous =
+        code === "PGRST203" && /Could not choose the best candidate function/i.test(msg);
+
+      if (!ambiguous) throw e;
+
+      const retryArgs = this.compactRecord({
+        ...(baseArgs as any),
+        p_co_code: (baseArgs as any).p_co_code ?? null,
+        p_role: (baseArgs as any).p_role ?? null,
+      });
+
+      const data = await this.rpcWrite<any>("public", "person_upsert", retryArgs as any);
+      return (data as any) ?? null;
+    }
   }
+
 
 
   /**

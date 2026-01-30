@@ -193,6 +193,20 @@ export default function OnboardPage() {
   const createName = String(createDraft.full_name ?? "").trim();
   const createAff = String(createDraft.co_ref_id ?? "").trim();
   const createValid = Boolean(createName) && Boolean(createAff);
+  const createCoCode = useMemo(() => {
+    if (!createAff) return "";
+    return String(coRefById.get(createAff)?.code ?? "");
+  }, [createAff, coRefById]);
+
+  const createRole = useMemo(() => {
+    if (!createAff) return "";
+    const opt = coRefById.get(createAff);
+    if (!opt) return "";
+    if (opt.kind === "contractor") return "Contractors";
+    if (opt.kind === "company") return "Hires";
+    return "";
+  }, [createAff, coRefById]);
+
   const [draftByPersonId, setDraftByPersonId] = useState<Map<string, PersonEditDraft>>(new Map());
   const [savingByPersonId, setSavingByPersonId] = useState<Map<string, boolean>>(new Map());
 
@@ -250,74 +264,103 @@ export default function OnboardPage() {
     });
   }
 
-  async function savePersonPatch(pid: string, patch: PersonEditDraft, opts?: { silent?: boolean; clearAll?: boolean }) {
-    const person_id = String(pid).trim();
-    if (!person_id) return { ok: true };
+  async function savePersonPatch(
+  pid: string,
+  patch: PersonEditDraft,
+  opts?: { silent?: boolean; clearAll?: boolean }
+) {
+  const person_id = String(pid ?? "").trim();
+  if (!person_id) return { ok: true };
 
-    const providedKeys = Object.keys(patch ?? {}) as (keyof PersonEditDraft)[];
+  const safePatch = (patch ?? {}) as PersonEditDraft;
+  const providedKeys = Object.keys(safePatch) as (keyof PersonEditDraft)[];
 
-    // Always send full_name so person_upsert can't trip NOT NULL on insert paths
-    const currentRow = rows.find((r) => String((r as any).person_id) === person_id) as any;
-    const currentFullName = String(currentRow?.full_name ?? "").trim();
-    const patchedFullName = typeof patch.full_name === "string" ? patch.full_name.trim() : "";
-    const full_name_to_send = patchedFullName || currentFullName;
+  // Look up the current row once
+  const currentRow = rows.find((r) => String((r as any).person_id) === person_id) as any;
 
-    if (!full_name_to_send) {
-      if (!opts?.silent) setNotice("Full name is required.");
-      return { ok: false, error: { message: "Full name is required." } };
+  // Always send full_name so person_upsert can't trip NOT NULL on insert paths
+  const currentFullName = String(currentRow?.full_name ?? "").trim();
+  const patchedFullName =
+    typeof safePatch.full_name === "string" ? String(safePatch.full_name).trim() : "";
+  const full_name_to_send = patchedFullName || currentFullName;
+
+  if (!full_name_to_send) {
+    if (!opts?.silent) setNotice("Full name is required.");
+    return { ok: false, error: { message: "Full name is required." } };
+  }
+
+  // Derive co_ref_id + co_code + role (to disambiguate overloaded RPC)
+  const effective_co_ref_id = String(safePatch.co_ref_id ?? currentRow?.co_ref_id ?? "").trim();
+  const coOpt = effective_co_ref_id ? coRefById.get(String(effective_co_ref_id)) ?? null : null;
+
+  const derived_co_code = coOpt?.code ?? null;
+  const derived_role =
+    coOpt?.kind === "contractor" ? "Contractors" : coOpt?.kind === "company" ? "Hires" : null;
+
+  // Mark saving
+  setSavingByPersonId((prev) => {
+    const n = new Map(prev);
+    n.set(person_id, true);
+    return n;
+  });
+
+  try {
+    if (!opts?.silent) {
+      setNotice(null);
+      setRpcLog(null);
     }
 
-    setSavingByPersonId((prev) => {
-      const n = new Map(prev);
-      n.set(person_id, true);
-      return n;
+    const updated = await api.personUpsert({
+      person_id,
+      full_name: full_name_to_send,
+
+      // Patch fields (undefined means "not provided" on the client side)
+      emails: safePatch.emails,
+      mobile: safePatch.mobile,
+      fuse_emp_id: safePatch.fuse_emp_id,
+      person_notes: safePatch.person_notes,
+      person_nt_login: safePatch.person_nt_login,
+      person_csg_id: safePatch.person_csg_id,
+      active: safePatch.active,
+
+      // Company/contractor selection
+      co_ref_id: effective_co_ref_id || undefined,
+
+      // These two are critical to avoid PostgREST "best candidate" ambiguity
+      co_code: derived_co_code,
+      role: derived_role,
     });
 
-    try {
-      if (!opts?.silent) {
-        setNotice(null);
-        setRpcLog(null);
-      }
-
-      const updated = await api.personUpsert({
-        person_id,
-        full_name: full_name_to_send,
-        emails: patch.emails,
-        mobile: patch.mobile,
-        fuse_emp_id: patch.fuse_emp_id,
-        person_notes: patch.person_notes,
-        person_nt_login: patch.person_nt_login,
-        person_csg_id: patch.person_csg_id,
-        active: patch.active,
-        co_ref_id: patch.co_ref_id ?? undefined,
-      });
-
-      if (updated) {
-        setRows((prev) =>
-          prev.map((r) =>
-            String((r as any).person_id) === person_id ? ({ ...(r as any), ...(updated as any) } as any) : r
-          )
-        );
-      }
-
-      if (opts?.clearAll) clearDraftKeys(person_id);
-      else clearDraftKeys(person_id, providedKeys);
-
-      return { ok: true };
-    } catch (e: any) {
-      if (!opts?.silent) {
-        setNotice(e?.message ?? "Failed to save person");
-        logRpc("person_upsert", e);
-      }
-      return { ok: false, error: e };
-    } finally {
-      setSavingByPersonId((prev) => {
-        const n = new Map(prev);
-        n.delete(person_id);
-        return n;
-      });
+    if (updated) {
+      setRows((prev) =>
+        prev.map((r) =>
+          String((r as any).person_id) === person_id
+            ? ({ ...(r as any), ...(updated as any) } as any)
+            : r
+        )
+      );
     }
+
+    // Clear drafts
+    if (opts?.clearAll) clearDraftKeys(person_id);
+    else clearDraftKeys(person_id, providedKeys);
+
+    return { ok: true };
+  } catch (e: any) {
+    if (!opts?.silent) {
+      setNotice(e?.message ?? "Failed to save person");
+      logRpc("person_upsert", e);
+    }
+    return { ok: false, error: e };
+  } finally {
+    setSavingByPersonId((prev) => {
+      const n = new Map(prev);
+      n.delete(person_id);
+      return n;
+    });
   }
+}
+
 
   const hydratePeople = useCallback(
     async (nextRows: PersonRow[]) => {
@@ -364,16 +407,30 @@ export default function OnboardPage() {
     [supabase]
   );
 
-  const loadPeople = useCallback(
-    async (_nextQuery: string) => {
+    const loadPeople = useCallback(
+    async (nextQuery: string, nextStatus?: "active" | "inactive") => {
+      const effectiveStatus = nextStatus ?? statusFilter;
       setLoading(true);
       setNotice(null);
 
       try {
-        const r = (await api.peopleGlobalUnassignedSearch("", 100)) ?? [];
+        const p_query = (nextQuery ?? "").trim();
+        const p_limit = 100;
+
+        // NEW: pull from status-aware RPC so inactive can be loaded from the server
+        const { data, error } = await supabase.rpc("people_global_unassigned_search_any", {
+          p_query,
+          p_limit,
+          p_active_filter: effectiveStatus, // 'active' | 'inactive' | uses current filter if omitted
+        });
+
+        if (error) throw error;
+
+        const r = (data as any[]) ?? [];
         const base = r.slice(0, 50);
-        setRows(base);
-        void hydratePeople(base);
+
+        setRows(base as any);
+        void hydratePeople(base as any);
       } catch (e: any) {
         setRows([]);
         setNotice(e?.message ?? "Failed to load people");
@@ -381,14 +438,13 @@ export default function OnboardPage() {
         setLoading(false);
       }
     },
-    [hydratePeople]
+    [supabase, hydratePeople, statusFilter]
   );
 
   useEffect(() => {
-    const t = setTimeout(() => loadPeople(query), 250);
+    const t = setTimeout(() => loadPeople(query, statusFilter), 250);
     return () => clearTimeout(t);
-  }, [query, validatedOrgId, loadPeople]);
-
+  }, [query, validatedOrgId, statusFilter, loadPeople]);
 
   function handleAddPerson() {
     if (editMode || exitSave.state === "saving") return;
@@ -418,6 +474,10 @@ export default function OnboardPage() {
       return;
     }
 
+    const coOpt = coRefById.get(co_ref_id) ?? null;
+    const derived_co_code = coOpt?.code ?? null;
+    const derived_role = coOpt?.kind === "contractor" ? "Contractors" : coOpt?.kind === "company" ? "Hires" : null;
+
     setCreateSaving(true);
     try {
       setNotice(null);
@@ -438,6 +498,8 @@ export default function OnboardPage() {
         person_csg_id: createDraft.person_csg_id,
         active: createDraft.active !== false,
         co_ref_id,
+        co_code: derived_co_code,
+        role: derived_role,
       });
 
       if (opts.onboard) {
@@ -452,9 +514,11 @@ export default function OnboardPage() {
       setCreateOpen(false);
       setCreateDraft({ active: true, co_ref_id: null });
 
-      // Make it easy to see the result
+      // Make it easy to see the result (and show inactive immediately if created inactive)
+      const createdStatus: "active" | "inactive" = createDraft.active !== false ? "active" : "inactive";
+      setStatusFilter(createdStatus);
       setQuery(full_name);
-      await loadPeople(full_name);
+      await loadPeople(full_name, createdStatus);
 
       setNotice(opts.onboard ? `Created + onboarded: ${full_name}` : `Created: ${full_name}`);
     } catch (e: any) {
@@ -833,6 +897,16 @@ const filteredRows = useMemo(() => {
                     </div>
                   ) : null}
                 </div>
+                <div>
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">Affiliation code (derived)</div>
+                  <TextInput value={createCoCode} disabled placeholder="—" />
+                </div>
+
+                <div>
+                  <div className="text-xs text-[var(--to-ink-muted)] mb-1">Role (derived)</div>
+                  <TextInput value={createRole} disabled placeholder="—" />
+                </div>
+
 
 
                                 <div className="sm:col-span-2">

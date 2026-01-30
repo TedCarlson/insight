@@ -6,15 +6,10 @@ import { createServerClient } from "@supabase/ssr";
 
 import { PageHeader, PageShell } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
+import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
-}
-
-function isManagerPlus(positionTitle: unknown) {
-  if (typeof positionTitle !== "string") return false;
-  const t = positionTitle.trim().toLowerCase();
-  return t === "manager" || t === "director" || t === "vp" || t === "ceo" || t === "cfo" || t === "coo";
 }
 
 export default async function AdminPage() {
@@ -45,7 +40,7 @@ export default async function AdminPage() {
 
   if (!user || error) redirect("/login");
 
-  // Match SessionProvider: isOwner OR Manager+
+  // Owner check (global)
   let isOwner = false;
   try {
     const { data } = await supabase.rpc("is_owner");
@@ -54,7 +49,22 @@ export default async function AdminPage() {
     isOwner = false;
   }
 
-  const canSeeAdmin = isOwner || isManagerPlus((user.user_metadata as any)?.position_title);
+  // Require selected org scope (for org-scoped admin access)
+  const scope = await requireSelectedPcOrgServer();
+  if (!scope.ok) redirect("/home");
+
+  // Org-scoped admin access check (DB truth)
+  let canManageConsole = false;
+  try {
+    const { data, error: rpcErr } = await supabase.rpc("can_manage_pc_org_console", {
+      p_pc_org_id: scope.selected_pc_org_id,
+    });
+    if (!rpcErr) canManageConsole = !!data;
+  } catch {
+    canManageConsole = false;
+  }
+
+  const canSeeAdmin = isOwner || canManageConsole;
   if (!canSeeAdmin) redirect("/home");
 
   return (

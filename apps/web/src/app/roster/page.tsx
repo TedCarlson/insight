@@ -9,6 +9,8 @@ import { fetchActiveRosterPersonIdSet } from "@/lib/activeRoster";
 import { useOrg } from "@/state/org";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useToast } from "@/components/ui/Toast";
+import { useSession } from "@/state/session";
+import { useRosterManageAccess } from "@/hooks/useRosterManageAccess";
 
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
@@ -57,6 +59,18 @@ export default function RosterPage() {
   const toast = useToast();
 
   const [modifyMode, setModifyMode] = useState<"open" | "locked">("locked");
+
+  // ✅ Permission gate: owner OR roster_manage
+  const { isOwner } = useSession();
+  const { allowed: canManageRoster, loading: rosterPermLoading } = useRosterManageAccess();
+  const canEditRoster = isOwner || canManageRoster;
+
+  // If user can't edit, ensure we never remain in "open" (e.g. org switch / permission change)
+  useEffect(() => {
+    if (!canEditRoster && modifyMode !== "locked") {
+      setModifyMode("locked");
+    }
+  }, [canEditRoster, modifyMode]);
 
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickRow, setQuickRow] = useState<RosterRow | null>(null);
@@ -116,136 +130,127 @@ export default function RosterPage() {
     ${pad("Affiliation")}${affiliation}
     ${pad("Reports To")}${reportsTo}`.trim();
 
-
       await navigator.clipboard.writeText(text);
-      toast.push({ variant: "success", title: "Copied", message: "Popup contents copied to clipboard." });
+
+      toast.push({
+        title: "Copied",
+        message: "Quick view copied to clipboard.",
+        variant: "success",
+      });
     } catch {
-      toast.push({ variant: "danger", title: "Copy failed", message: "Clipboard unavailable in this browser context." });
+      toast.push({
+        title: "Copy failed",
+        message: "Could not copy to clipboard.",
+        variant: "warning",
+      });
     }
   };
 
-
-  const [roster, setRoster] = useState<RosterRow[]>([]);
+  const supabase = useMemo(() => createClient(), []);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
+  const [roster, setRoster] = useState<RosterRow[]>([]);
   const [selectedRow, setSelectedRow] = useState<RosterRow | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  const [orgMeta, setOrgMeta] = useState<{
-    mso_name: string | null;
-    division_name: string | null;
-    region_name: string | null;
-  } | null>(null);
-  const [orgMetaLoading, setOrgMetaLoading] = useState(false);
-
-  // Client-side roster controls (no backend assumptions)
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("technician");
   const [query, setQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState<RoleFilter>("technician"); // default view
-  // combined company+contractor dropdown:
-  // "all" | "company::<name>" | "contractor::<name>"
-  const [affKey, setAffKey] = useState<string>("all");
-  const [supervisorKey, setSupervisorKey] = useState<string>("all");
+  const [affKey, setAffKey] = useState("all");
+  const [supervisorKey, setSupervisorKey] = useState("all");
+
+  const [orgMetaLoading, setOrgMetaLoading] = useState(false);
+  const [orgMeta, setOrgMeta] = useState<{ mso_name?: string; division_name?: string; region_name?: string } | null>(
+    null
+  );
 
   const validatedOrgId = useMemo(() => {
-    if (orgsLoading) return null;
-    if (!selectedOrgId) return null;
-    return orgs.some((o: any) => String(o.pc_org_id) === String(selectedOrgId)) ? selectedOrgId : null;
-  }, [selectedOrgId, orgs, orgsLoading]);
+    const v = String(selectedOrgId ?? "").trim();
+    return v || null;
+  }, [selectedOrgId]);
 
   const selectedOrgName = useMemo(() => {
     if (!validatedOrgId) return null;
-    const hit = orgs.find((o: any) => String(o.pc_org_id) === String(validatedOrgId));
-    return (hit?.pc_org_name ?? hit?.org_name ?? hit?.name ?? null) as string | null;
-  }, [orgs, validatedOrgId]);
+    const o = (orgs ?? []).find((x: any) => String(x?.pc_org_id ?? "").trim() === String(validatedOrgId));
+    return (o as any)?.pc_org_name ?? (o as any)?.name ?? null;
+  }, [validatedOrgId, orgs]);
 
   const canLoad = Boolean(validatedOrgId);
 
-  async function loadAll() {
-    if (!validatedOrgId) {
-      setErr(null);
-      setRoster([]);
-      setLoading(false);
-      return;
+  const loadOrgMeta = async () => {
+    if (!validatedOrgId) return;
+    try {
+      setOrgMetaLoading(true);
+      const { data, error } = await supabase.rpc("pc_org_meta", { p_pc_org_id: validatedOrgId });
+      if (error) throw error;
+      setOrgMeta(data ?? null);
+    } catch {
+      setOrgMeta(null);
+    } finally {
+      setOrgMetaLoading(false);
     }
+  };
+
+  const loadAll = async () => {
+    if (!validatedOrgId) return;
 
     setLoading(true);
     setErr(null);
 
     try {
-      const r = await api.rosterCurrentFull(validatedOrgId, null);
+      const activeSet = await fetchActiveRosterPersonIdSet(supabase, validatedOrgId);
+      const data = await api.rosterCurrentFull(validatedOrgId);
 
-      // Enforce: roster shows ONLY persons with ACTIVE person↔org membership for this scoped pc_org.
-      // Source of truth: public.v_roster_current (filters to current membership by date + active).
-      const supabase = createClient();
-      const activePersonIds = await fetchActiveRosterPersonIdSet(supabase as any, validatedOrgId);
-
-      const filtered = (r ?? []).filter((row: any) => {
-        const pid = String(row?.person_id ?? "").trim();
-        return Boolean(pid) && activePersonIds.has(pid);
+      const rows = (data ?? []).filter((r: any) => {
+        const pid = String(r?.person_id ?? "").trim();
+        return pid && activeSet.has(pid);
       });
 
+      setRoster(rows as any);
 
-
-      setRoster(filtered);
+      // keep module in sync
+      if (selectedRow) {
+        const selPid = String((selectedRow as any)?.person_id ?? "").trim();
+        const next = rows.find((r: any) => String(r?.person_id ?? "").trim() === selPid) as any;
+        if (next) setSelectedRow(next);
+      }
     } catch (e: any) {
+      setErr(e?.message ?? String(e ?? "Failed to load roster"));
       setRoster([]);
-      setErr(e?.message ?? "Failed to load roster");
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    if (modifyMode === "open") closeQuick();
-  }, [modifyMode]);
-
-  useEffect(() => {
-    loadAll();
+    void loadOrgMeta();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validatedOrgId]);
 
   useEffect(() => {
-    let alive = true;
-
-    async function loadOrgMeta() {
-      if (!validatedOrgId) {
-        setOrgMeta(null);
-        return;
-      }
-
-      setOrgMetaLoading(true);
-      try {
-        const meta = await api.pcOrgAdminMeta(validatedOrgId);
-        if (alive)
-          setOrgMeta({
-            mso_name: meta?.mso_name ?? null,
-            division_name: meta?.division_name ?? null,
-            region_name: meta?.region_name ?? null,
-          });
-      } catch {
-        if (alive) setOrgMeta({ mso_name: null, division_name: null, region_name: null });
-      } finally {
-        if (alive) setOrgMetaLoading(false);
-      }
+    if (!validatedOrgId) {
+      setRoster([]);
+      setErr(null);
+      setSelectedRow(null);
+      setDetailsOpen(false);
+      closeQuick();
+      return;
     }
-
-    loadOrgMeta();
-    return () => {
-      alive = false;
-    };
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validatedOrgId]);
 
   const rosterRoleFiltered = useMemo(() => {
-    const rows = roster ?? [];
+    const rows = (roster ?? []).slice();
+
     if (roleFilter === "all") return rows;
-    if (roleFilter === "supervisor") return rows.filter((r: any) => isSupervisorRow(r));
-    return rows.filter((r: any) => isTechnicianRow(r));
+    if (roleFilter === "technician") return rows.filter(isTechnicianRow);
+    if (roleFilter === "supervisor") return rows.filter(isSupervisorRow);
+    return rows;
   }, [roster, roleFilter]);
 
   const affiliationOptions = useMemo(() => {
     const rows = rosterRoleFiltered ?? [];
-    const map = new Map<string, string>(); // key -> label
+    const map = new Map<string, { type: string; name: string; label: string }>();
 
     for (const r of rows as any[]) {
       const type = String(r?.co_type ?? "").trim();
@@ -253,21 +258,22 @@ export default function RosterPage() {
       if (!type || !name) continue;
 
       const key = `${type}::${name}`;
-      const typeLabel = type === "contractor" ? "Contractor" : type === "company" ? "Company" : type;
-      const label = `${typeLabel}: ${name}`;
+      if (map.has(key)) continue;
 
-      if (!map.has(key)) map.set(key, label);
+      const label = type === "company" ? `ITG • ${name}` : `BP • ${name}`;
+      map.set(key, { type, name, label });
     }
 
-    return Array.from(map.entries())
-      .map(([key, label]) => ({ key, label }))
+    const out = Array.from(map.entries())
+      .map(([key, v]) => ({ key, ...v }))
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+
+    return out;
   }, [rosterRoleFiltered]);
 
   const supervisorOptions = useMemo(() => {
-    // list supervisors by unique reports_to_person_id from roster rows (tech view)
     const rows = rosterRoleFiltered ?? [];
-    const map = new Map<string, string>(); // id -> name
+    const map = new Map<string, string>();
 
     for (const r of rows as any[]) {
       const sid = String(r?.reports_to_person_id ?? "").trim();
@@ -281,8 +287,6 @@ export default function RosterPage() {
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   }, [rosterRoleFiltered]);
 
-
-
   useEffect(() => {
     if (affKey === "all") return;
     if (!affiliationOptions.some((o) => o.key === affKey)) setAffKey("all");
@@ -293,8 +297,6 @@ export default function RosterPage() {
     if (supervisorKey === "all") return;
     if (!supervisorOptions.some((o) => o.id === supervisorKey)) setSupervisorKey("all");
   }, [supervisorKey, supervisorOptions]);
-
-
 
   const filteredRoster = useMemo(() => {
     const rows = (rosterRoleFiltered ?? []).slice();
@@ -323,25 +325,19 @@ export default function RosterPage() {
       return String(r?.co_type ?? "") === type && String(r?.co_name ?? "") === name;
     };
 
-
-
     const matchesSupervisor = (r: any) => {
       if (supervisorKey === "all") return true;
       return String(r?.reports_to_person_id ?? "").trim() === String(supervisorKey).trim();
     };
 
     const isInScopedOrg = (r: any) => {
-      // Roster membership is already filtered by v_roster_active; this check only ensures
-      // the row is aligned to the currently scoped org (when pc_org_id is present).
       if (!validatedOrgId) return false;
       const orgId = String(r?.pc_org_id ?? "").trim();
       return !orgId || orgId === String(validatedOrgId);
     };
 
-
     const out = rows.filter((r: any) => matchesAff(r) && matchesSearch(r) && matchesSupervisor(r) && isInScopedOrg(r));
 
-    // Default sort: tech_id then full_name
     out.sort((a: any, b: any) => {
       const aTech = String(a?.tech_id ?? "");
       const bTech = String(b?.tech_id ?? "");
@@ -356,9 +352,7 @@ export default function RosterPage() {
     return out;
   }, [rosterRoleFiltered, query, affKey, supervisorKey, validatedOrgId]);
 
-
   const rosterStats = useMemo(() => {
-    // Tech stats are based on the CURRENT view (filteredRoster), since managers will filter by supervisor/search/etc.
     const techRows = filteredRoster ?? [];
 
     const totalTechs = techRows.length;
@@ -367,7 +361,6 @@ export default function RosterPage() {
 
     const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
 
-    // We still compute these for housekeeping (but we won't render the numbers)
     const assignmentSet = techRows.filter((r: any) => {
       const end = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
       const active = Boolean(r?.assignment_active ?? r?.active ?? true);
@@ -376,35 +369,24 @@ export default function RosterPage() {
 
     const leadershipSet = techRows.filter((r: any) => {
       const end = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
-      const rid =
-        r?.reports_to_reporting_id ??
-        r?.assignment_reporting_id ??
-        r?.reporting_id ??
-        r?.id ??
-        null;
+      const rid = r?.reports_to_reporting_id ?? r?.assignment_reporting_id ?? r?.reporting_id ?? r?.id ?? null;
       return !!rid && !end;
     }).length;
+
     const scheduleReady = techRows.filter((r: any) => {
       const assignmentEnd = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
       const assignmentActive = Boolean(r?.assignment_active ?? r?.active ?? true);
       const hasAssignment = !!String(r?.assignment_id ?? "").trim() && assignmentActive && !assignmentEnd;
 
       const leadershipEnd = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
-      const leadershipId =
-        r?.reports_to_reporting_id ??
-        r?.assignment_reporting_id ??
-        r?.reporting_id ??
-        r?.id ??
-        null;
+      const leadershipId = r?.reports_to_reporting_id ?? r?.assignment_reporting_id ?? r?.reporting_id ?? r?.id ?? null;
       const hasLeadership = !!leadershipId && !leadershipEnd;
 
       return hasAssignment && hasLeadership;
     }).length;
 
-
     const clean = totalTechs > 0 && totalTechs === assignmentSet && totalTechs === leadershipSet;
 
-    // Supervisor stats: supervisors referenced by the tech rows in this view
     const supIds = Array.from(
       new Set(
         techRows
@@ -413,17 +395,12 @@ export default function RosterPage() {
       )
     );
 
-    // Best-effort supervisor classification:
-    // if a supervisor appears as a roster row, use their co_type to classify ITG vs BP.
     const allRows = roster ?? [];
     const isInScopedOrg = (r: any) => {
-      // Roster membership is already filtered by v_roster_active; this check only ensures
-      // the row is aligned to the currently scoped org (when pc_org_id is present).
       if (!validatedOrgId) return false;
       const orgId = String(r?.pc_org_id ?? "").trim();
       return !orgId || orgId === String(validatedOrgId);
     };
-
 
     const activeRowsAll = allRows.filter((r: any) => isInScopedOrg(r));
     const supervisorById = new Map<string, any>();
@@ -469,18 +446,15 @@ export default function RosterPage() {
     };
   }, [filteredRoster, roster, validatedOrgId]);
 
-
-
-
   const anyFiltersActive = Boolean(query.trim()) || roleFilter !== "technician" || affKey !== "all";
   const headerRefreshDisabled = orgsLoading || !canLoad || loading;
   const modifyToggleVars =
     modifyMode === "open"
       ? ({
-        "--to-toggle-active-bg": "rgba(249, 115, 22, 0.16)", // orange tint
-        "--to-toggle-active-border": "var(--to-status-warning)",
-        "--to-toggle-active-ink": "var(--to-status-warning)",
-      } as React.CSSProperties)
+          "--to-toggle-active-bg": "rgba(249, 115, 22, 0.16)", // orange tint
+          "--to-toggle-active-border": "var(--to-status-warning)",
+          "--to-toggle-active-ink": "var(--to-status-warning)",
+        } as React.CSSProperties)
       : undefined;
 
   return (
@@ -490,7 +464,13 @@ export default function RosterPage() {
         subtitle="Current roster (scoped by PC access gate)."
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="secondary" type="button" onClick={() => router.push("/onboard")} disabled={orgsLoading}>
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => router.push("/onboard")}
+              disabled={orgsLoading || rosterPermLoading || !canEditRoster}
+              title={!canEditRoster ? "Requires roster_manage permission" : "Onboard a person into the roster"}
+            >
               Onboard
             </Button>
             <Button variant="secondary" type="button" onClick={loadAll} disabled={headerRefreshDisabled}>
@@ -535,7 +515,8 @@ export default function RosterPage() {
                   </span>
                   <span className="px-2"> • </span>
                   <span>
-                    Region: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
+                    Region:{" "}
+                    <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
                   </span>
                 </div>
               ) : null}
@@ -556,12 +537,23 @@ export default function RosterPage() {
                   <span style={modifyToggleVars}>
                     <SegmentedControl
                       value={modifyMode}
-                      onChange={(v) => setModifyMode(v as "open" | "locked")}
+                      onChange={(v) => {
+                        if (!canEditRoster) {
+                          toast.push({
+                            title: "Permission required",
+                            message: "You need roster_manage to unlock modify mode.",
+                            variant: "warning",
+                          });
+                          return;
+                        }
+                        setModifyMode(v as "open" | "locked");
+                      }}
                       options={[
                         { value: "locked", label: "Locked" },
                         { value: "open", label: "Open" },
                       ]}
                       size="sm"
+                      className={!canEditRoster ? "opacity-60" : undefined}
                     />
                   </span>
                 </div>
@@ -573,15 +565,15 @@ export default function RosterPage() {
                     style={
                       rosterStats.clean
                         ? {
-                          background: "rgba(34, 197, 94, 0.14)",
-                          borderColor: "var(--to-status-success)",
-                          color: "var(--to-status-success)",
-                        }
+                            background: "rgba(34, 197, 94, 0.14)",
+                            borderColor: "var(--to-status-success)",
+                            color: "var(--to-status-success)",
+                          }
                         : {
-                          background: "rgba(249, 115, 22, 0.16)",
-                          borderColor: "var(--to-status-warning)",
-                          color: "var(--to-status-warning)",
-                        }
+                            background: "rgba(249, 115, 22, 0.16)",
+                            borderColor: "var(--to-status-warning)",
+                            color: "var(--to-status-warning)",
+                          }
                     }
                   >
                     {rosterStats.clean ? "Ready" : "Incomplete Profiles"}
@@ -795,7 +787,6 @@ export default function RosterPage() {
           open={detailsOpen}
           onClose={() => {
             setDetailsOpen(false);
-            // Ensure roster reflects any edits after closing the overlay
             void loadAll();
           }}
           pcOrgId={validatedOrgId}

@@ -86,6 +86,24 @@ type ExitSaveState =
   | { state: "success"; at: string; result: any }
   | { state: "failed"; at: string; result: any };
 
+type ContractorAssignmentAdminRow = {
+  contractor_assignment_id?: string;
+  contractor_id?: string;
+  pc_org_id?: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  active?: boolean | null;
+
+  contractor_name?: string | null;
+  contractor_code?: string | null;
+
+  owner_name?: string | null;
+  owner_email?: string | null;
+  owner_mobile?: string | null;
+
+  [k: string]: any;
+};
+
 export default function OnboardPage() {
   const router = useRouter();
   const { selectedOrgId, orgs, orgsLoading } = useOrg();
@@ -176,6 +194,11 @@ export default function OnboardPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const [rows, setRows] = useState<PersonRow[]>([]);
+
+  // BP roster: contractors with active assignments in the scoped org
+  const [bpRows, setBpRows] = useState<ContractorAssignmentAdminRow[]>([]);
+  const [bpLoading, setBpLoading] = useState(false);
+
 
   // Hydration: replace partial search rows with full rows from public.person_admin_v
   const [hydrating, setHydrating] = useState(false);
@@ -446,6 +469,57 @@ export default function OnboardPage() {
     return () => clearTimeout(t);
   }, [query, validatedOrgId, statusFilter, loadPeople]);
 
+
+  useEffect(() => {
+      if (!validatedOrgId) {
+        setBpRows([]);
+        return;
+      }
+  
+      let cancelled = false;
+  
+      function localTodayYYYYMMDD() {
+        const d = new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      }
+  
+      async function loadBp() {
+        setBpLoading(true);
+        try {
+          const today = localTodayYYYYMMDD();
+          const { data, error } = await supabase
+            .from("contractor_assignment_admin_v")
+            .select(
+              "contractor_assignment_id, contractor_id, pc_org_id, start_date, end_date, active, contractor_name, contractor_code, owner_name, owner_email, owner_mobile"
+            )
+            .eq("pc_org_id", validatedOrgId)
+            .lte("start_date", today)
+            .or(`end_date.is.null,end_date.gte.${today}`)
+            .order("contractor_name", { ascending: true });
+  
+          if (error) throw error;
+          if (!cancelled) setBpRows(((data as any[]) ?? []) as ContractorAssignmentAdminRow[]);
+        } catch (e: any) {
+          if (!cancelled) {
+            setBpRows([]);
+            // Keep this quiet; this panel is additive and shouldn't break the main flow.
+            console.warn("Failed to load BP roster", e?.message ?? e);
+          }
+        } finally {
+          if (!cancelled) setBpLoading(false);
+        }
+      }
+  
+      void loadBp();
+  
+      return () => {
+        cancelled = true;
+      };
+    }, [validatedOrgId, supabase]);
+  
   function handleAddPerson() {
     if (editMode || exitSave.state === "saving") return;
     setNotice(null);
@@ -1265,6 +1339,52 @@ const filteredRows = useMemo(() => {
               </DataTableBody>
             </DataTable>
           )}
+
+          <Card className="mt-4 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold">
+                BP supervisors/owners active in this org
+              </div>
+              <Badge>{bpLoading ? "Loading…" : String(bpRows.length)}</Badge>
+            </div>
+
+            {bpLoading ? (
+              <div className="mt-3 text-sm text-muted-foreground">Loading BP assignments…</div>
+            ) : bpRows.length === 0 ? (
+              <div className="mt-3 text-sm text-muted-foreground">No active BP assignments for this org.</div>
+            ) : (
+              <div className="mt-3">
+                <DataTable>
+                  <DataTableHeader>
+                    <div>Contractor</div>
+                    <div>Code</div>
+                    <div>Owner</div>
+                    <div>Start</div>
+                    <div>End</div>
+                  </DataTableHeader>
+                  <DataTableBody>
+                    {bpRows.map((r) => {
+                      const name = String(r.contractor_name ?? "—");
+                      const code = String(r.contractor_code ?? "—");
+                      const owner = String(r.owner_name ?? "—");
+                      const start = String(r.start_date ?? "—");
+                      const end = r.end_date ? String(r.end_date) : "—";
+                      return (
+                        <DataTableRow key={String(r.contractor_assignment_id ?? `${name}-${start}`)}>
+                          <div className="text-sm">{name}</div>
+                          <div className="text-sm">{code}</div>
+                          <div className="text-sm">{owner}</div>
+                          <div className="text-sm">{start}</div>
+                          <div className="text-sm">{end}</div>
+                        </DataTableRow>
+                      );
+                    })}
+                  </DataTableBody>
+                </DataTable>
+              </div>
+            )}
+          </Card>
+
         </>
       )}
     </PageShell>

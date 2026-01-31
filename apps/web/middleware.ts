@@ -33,7 +33,18 @@ function isApiPath(pathname: string) {
  * Allowlist for "next" redirects after login.
  * Keep this tight to avoid redirecting to nonsense/404s.
  */
-const ALLOWED_NEXT_PREFIXES = ["/", "/home", "/admin", "/org", "/access", "/roster", "/onboard"] as const;
+const ALLOWED_NEXT_PREFIXES = [
+  "/",
+  "/home",
+  "/admin",
+  "/org",
+  "/access",
+  "/roster",
+  "/onboard",
+  "/route-lock",
+  "/metrics",
+] as const;
+
 
 function isAllowedNextPath(pathname: string) {
   return ALLOWED_NEXT_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));

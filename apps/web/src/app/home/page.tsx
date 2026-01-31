@@ -48,14 +48,12 @@ export default async function HomePage() {
           <Link href="/roster" className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}>
             Roster
           </Link>
-
-          <button type="button" className={cls("to-btn", "to-btn--secondary", "px-4 py-3")} disabled>
+          <Link href="/route-lock" className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}>
             Route Lock
-          </button>
-
-          <button type="button" className={cls("to-btn", "to-btn--secondary", "px-4 py-3")} disabled>
+          </Link>
+          <Link href="/metrics" className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}>
             Metrics
-          </button>
+          </Link>
         </div>
       </Card>
 

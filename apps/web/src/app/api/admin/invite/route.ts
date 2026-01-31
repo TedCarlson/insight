@@ -158,11 +158,50 @@ export async function POST(req: Request) {
     });
 
     if (inviteRes.error) {
+    const code = (inviteRes.error as any)?.code;
+
+    // If the user already exists, require magic link instead of invite.
+    if (code === "email_exists") {
+      const { error: otpErr } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: false,
+          emailRedirectTo: redirectTo, // send them right to /auth/set-password?next=...
+        },
+      });
+
+      if (otpErr) {
+        return NextResponse.json(
+          {
+            error: "email_exists fallback failed (signInWithOtp)",
+            details: otpErr,
+            redirect_to: redirectTo,
+          },
+          { status: 400 }
+        );
+      }
+
       return NextResponse.json(
-        { error: "inviteUserByEmail failed", details: inviteRes.error, redirect_to: redirectTo },
-        { status: 400 }
+        {
+          ok: true,
+          emailed: true,
+          mode: "magic_link_existing_user",
+          existing_user: true,
+          email,
+          redirect_to: redirectTo,
+          post_password_next: postPasswordNext,
+        },
+        { status: 200 }
       );
     }
+
+    // Anything else: surface the real invite error
+    return NextResponse.json(
+      { error: "inviteUserByEmail failed", details: inviteRes.error, redirect_to: redirectTo },
+      { status: 400 }
+    );
+  }
+
 
     const invitedUserId = (inviteRes.data as any)?.user?.id ?? null;
 

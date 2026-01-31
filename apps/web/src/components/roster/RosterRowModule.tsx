@@ -299,10 +299,13 @@ export function RosterRowModule({
 
   // Invite workflow (email is sent by server route; server enforces owner-only for launch)
   const [inviteEmail, setInviteEmail] = useState<string>("");
-  const [inviteStatus, setInviteStatus] = useState<
-    "idle" | "sending" | "sent" | "error"
-  >("idle");
+  const [inviteStatus, setInviteStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [inviteErr, setInviteErr] = useState<string | null>(null);
+
+  // Keep modal open + show wiring on success
+  const [inviteOk, setInviteOk] = useState<string | null>(null);
+
+
 
   const inferredEmail = useMemo(() => {
     const s =
@@ -321,50 +324,68 @@ export function RosterRowModule({
     setInviteEmail((prev) => prev || inferredEmail);
     setInviteStatus("idle");
     setInviteErr(null);
+    setInviteOk(null);
   }, [open, inferredEmail]);
 
   async function sendInvite() {
-    if (!assignmentId) {
-      setInviteErr("No assignment_id on this roster row — cannot invite.");
-      setInviteStatus("error");
-      return;
-    }
-    const email = String(inviteEmail ?? "").trim();
-    if (!email) {
-      setInviteErr("Email is required.");
-      setInviteStatus("error");
-      return;
-    }
-
-    setInviteStatus("sending");
-    setInviteErr(null);
-
-    try {
-      const res = await fetch("/api/admin/invite", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, assignment_id: String(assignmentId) }),
-      });
-
-      const json = await res.json().catch(() => ({} as any));
-
-      if (!res.ok) {
-        const msg =
-          (json && (json.error || json.message)) ||
-          (res.status === 403 ? "Not authorized to invite." : "Invite failed.");
-        setInviteErr(String(msg));
-        setInviteStatus("error");
-        return;
-      }
-
-      setInviteStatus("sent");
-      // Close modal to return to roster scanning workflow
-      onClose();
-    } catch (e: any) {
-      setInviteErr(e?.message ?? "Invite failed.");
-      setInviteStatus("error");
-    }
+  if (!assignmentId) {
+    setInviteErr("No assignment_id on this roster row — cannot invite.");
+    setInviteStatus("error");
+    return;
   }
+
+  const email = String(inviteEmail ?? "").trim();
+  if (!email) {
+    setInviteErr("Email is required.");
+    setInviteStatus("error");
+    return;
+  }
+
+  setInviteStatus("sending");
+  setInviteErr(null);
+  setInviteOk(null);
+
+  try {
+    const res = await fetch("/api/admin/invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, assignment_id: String(assignmentId) }),
+    });
+
+    const json = await res.json().catch(() => ({} as any));
+
+    if (!res.ok) {
+      const top =
+        (json && (json.error || json.message)) ||
+        (res.status === 403 ? "Not authorized to invite." : "Invite failed.");
+
+      // Supabase admin errors often arrive as an object in `details`
+      const d = (json as any)?.details;
+      const detailMsg =
+        (d && (d.message || d.error_description || d.error)) ||
+        (typeof d === "string" ? d : d ? JSON.stringify(d) : "");
+
+      const redirectTo = (json as any)?.redirect_to
+        ? `redirect_to=${String((json as any).redirect_to)}`
+        : "";
+
+      setInviteErr(`${String(top)}${detailMsg ? ` — ${detailMsg}` : ""}${redirectTo ? ` — ${redirectTo}` : ""}`);
+      setInviteStatus("error");
+      return;
+    }
+
+    setInviteStatus("sent");
+
+    // Keep modal open so ops can confirm wiring (no auto-close)
+    const rt = (json as any)?.redirect_to ? String((json as any).redirect_to) : "";
+    const nxt = (json as any)?.post_password_next ? String((json as any).post_password_next) : "";
+    setInviteOk(`Invite sent. redirect_to=${rt || "?"}${nxt ? ` • post_password_next=${nxt}` : ""}`);
+  } catch (e: any) {
+    setInviteErr(e?.message ?? "Invite failed.");
+    setInviteStatus("error");
+  }
+}
+
 
   const invitePill = useMemo(() => {
     if (inviteStatus === "sending") return { label: "Sending…", tone: "neutral" as const };

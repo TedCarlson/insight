@@ -11,7 +11,7 @@ type Result = {
 };
 
 export function useOrgPermission(permissionKey: string): Result {
-  const { selectedOrgId } = useOrg();
+  const { selectedOrgId } = useOrg(); // This is your selected_pc_org_id (pc_org_id)
   const supabase = useMemo(() => createClient(), []);
   const cacheRef = useRef<Map<string, boolean>>(new Map());
 
@@ -40,16 +40,20 @@ export function useOrgPermission(permissionKey: string): Result {
       }
 
       setLoading(true);
+
       try {
-        const { data, error: rpcErr } = await supabase.rpc("has_pc_org_permission", {
-          p_pc_org_id: selectedOrgId,
-          p_permission_key: permissionKey,
-        });
+        // Avoid RPC/schema exposure issues by reading the grants table directly.
+        const { data, error: qErr } = await supabase
+          .from("pc_org_permission_grant")
+          .select("pc_org_permission_grant_id")
+          .eq("pc_org_id", selectedOrgId)
+          .eq("permission_key", permissionKey)
+          .maybeSingle();
 
         if (!alive) return;
 
-        if (rpcErr) {
-          setError(rpcErr.message ?? "RPC error");
+        if (qErr) {
+          setError(qErr.message ?? "Query error");
           cacheRef.current.set(cacheKey, false);
           setAllowed(false);
         } else {

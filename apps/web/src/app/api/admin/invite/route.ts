@@ -88,16 +88,24 @@ export async function POST(req: Request) {
     const email = (body.email ?? "").trim().toLowerCase();
     const assignment_id = (body.assignment_id ?? "").trim();
 
-    // IMPORTANT: next is where user should land AFTER they set password
-    const postPasswordNext = normalizeNext(body.next ?? "/home");
-
-    // IMPORTANT: redirectTo points to /auth/callback only.
-    // /auth/callback already forces invite/recovery to /auth/set-password.
-    const redirectTo = `${siteUrl}/auth/callback?next=${encodeURIComponent(postPasswordNext)}`;
-
     if (!email || !assignment_id) {
       return NextResponse.json({ error: "email and assignment_id are required" }, { status: 400 });
     }
+
+    // IMPORTANT: next is where user should land AFTER they set password
+    const postPasswordNext = normalizeNext(body.next ?? "/home");
+
+    /**
+     * IMPORTANT:
+     * For Supabase invites, send users DIRECTLY to /auth/set-password.
+     * That page can consume the token fragment (#access_token/#refresh_token)
+     * and complete the password set + session bootstrap.
+     *
+     * Also: use URL() to be origin-safe even if NEXT_PUBLIC_SITE_URL includes a path.
+     */
+    const setPasswordUrl = new URL("/auth/set-password", siteUrl);
+    setPasswordUrl.searchParams.set("next", postPasswordNext);
+    const redirectTo = setPasswordUrl.toString();
 
     // Validate prerequisites via assignment_admin_v (already present in Phase 2 work)
     const prereq = await supabase

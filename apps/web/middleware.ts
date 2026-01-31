@@ -12,7 +12,6 @@ function isPublicUiPath(pathname: string) {
   return (
     pathname === "/" ||
     pathname.startsWith("/login") ||
-    pathname.startsWith("/access") ||
     pathname.startsWith("/auth") ||
     pathname === "/favicon.ico"
   );
@@ -153,7 +152,7 @@ export async function middleware(req: NextRequest) {
     const { data: profile, error: profileErr } = await supabase
       .from("user_profile")
       .select("status")
-      .eq("user_id", user.id)
+      .eq("auth_user_id", user.id)
       .maybeSingle();
 
     // If profile missing or error, force /access

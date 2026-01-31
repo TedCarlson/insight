@@ -1550,6 +1550,14 @@ export function RosterRowModule({
                     </Notice>
                   </div>
                 ) : null}
+                {inviteOk ? (
+                  <div className="mt-3">
+                    <Notice variant="success" title="Invite sent">
+                      <pre className="whitespace-pre-wrap break-words text-xs">{inviteOk}</pre>
+                    </Notice>
+                  </div>
+                ) : null}
+
               </Card>
             </div>
           ) : null}

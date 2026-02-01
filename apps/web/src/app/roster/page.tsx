@@ -559,26 +559,13 @@ export default function RosterPage() {
 
               <div>
                 <span>
-                  PC Lead:{" "}
-                  <span className="text-[var(--to-ink)]">
-                    {orgMetaLoading ? "…" : orgMeta?.pc_lead_label ?? orgMeta?.manager_label ?? "—"}
-                  </span>
-                  {!orgMetaLoading && orgMeta?.pc_lead_role_key ? (
-                    <span className="ml-1 text-[10px] text-[var(--to-ink-muted)]">({orgMeta.pc_lead_role_key})</span>
-                  ) : null}
+                  Manager: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.manager_label ?? "—"}</span>
                 </span>
-
                 <span className="px-2"> • </span>
-
                 <span>
                   Director: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.director_label ?? "—"}</span>
-                  {!orgMetaLoading && orgMeta?.director_role_key ? (
-                    <span className="ml-1 text-[10px] text-[var(--to-ink-muted)]">({orgMeta.director_role_key})</span>
-                  ) : null}
                 </span>
-
                 <span className="px-2"> • </span>
-
                 <span>
                   VP: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.vp_label ?? "—"}</span>
                 </span>

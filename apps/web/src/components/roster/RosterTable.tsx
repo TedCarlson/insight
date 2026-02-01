@@ -1,3 +1,4 @@
+//apps/web/src/components/roster/RosterTable.tsx
 "use client";
 
 import type { CSSProperties } from "react";
@@ -48,6 +49,7 @@ function MiniStatusPill({
   );
 }
 
+
 function getReadinessFlags(r: any) {
   const personOk = !!String(r?.full_name ?? "").trim();
 
@@ -88,6 +90,7 @@ function StatusPills({ row }: { row: any }) {
   );
 }
 
+
 export function RosterTable({
   roster,
   onRowOpen,
@@ -101,12 +104,10 @@ export function RosterTable({
   onRowQuickView?: (row: RosterRow, anchorEl: HTMLElement) => void;
   pickName: (row: RosterRow) => string;
 }) {
-  // ✅ Permission check (owner OR roster_manage)
   const { isOwner } = useSession();
   const { allowed: canManageRoster } = useRosterManageAccess();
   const canEditRoster = isOwner || canManageRoster;
 
-  // ✅ Effective mode: force locked if user can't manage roster
   const effectiveModifyMode: "open" | "locked" = canEditRoster ? modifyMode : "locked";
 
   const totalTechs = roster.length;
@@ -132,7 +133,9 @@ export function RosterTable({
       <DataTable
         zebra
         hover
+        // Template-driven, distributed columns that still respect content and truncate long text.
         layout="content"
+        // IMPORTANT: no min-w-max here; it prevents fr columns from distributing and disables truncation.
         gridClassName="w-full min-w-[64rem] lg:min-w-0"
         gridStyle={rosterGridStyle}
       >
@@ -164,14 +167,16 @@ export function RosterTable({
                 const el = e.currentTarget as HTMLElement;
                 if (effectiveModifyMode === "locked") onRowQuickView?.(r, el);
                 else onRowOpen(r);
+
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   const el = e.currentTarget as HTMLElement;
-                  if (effectiveModifyMode === "locked") onRowQuickView?.(r, el);
+                  if (modifyMode === "locked") onRowQuickView?.(r, el);
                   else onRowOpen(r);
                 }
               }}
+
             >
               <div className="whitespace-nowrap font-mono text-xs">{(r as any)?.tech_id ?? "—"}</div>
 

@@ -513,7 +513,7 @@ ${pad("Reports To")}${reportsTo}`.trim();
           {/* ONE ROW: Modify + Readiness inline with filters/search */}
           <div className="flex flex-wrap items-center gap-2">
             {/* Modify + Readiness group (LEFT) */}
-            <div className="flex items-center gap-3 rounded-full border border-[var(--to-border)] px-2 h-9">
+            <div className="flex items-center gap-3 rounded-full border border-[var(--to-border)] px-2 h-10">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[var(--to-ink-muted)]">Modify</span>
                 <span style={modifyToggleVars}>
@@ -545,7 +545,7 @@ ${pad("Reports To")}${reportsTo}`.trim();
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[var(--to-ink-muted)]">Readiness</span>
                 <span
-                  className="inline-flex items-center rounded-full border px-2 text-xs h-7"
+                  className="inline-flex items-center rounded-full border px-2 text-xs h-8"
                   style={
                     rosterStats.clean
                       ? {
@@ -562,15 +562,16 @@ ${pad("Reports To")}${reportsTo}`.trim();
                 >
                   {rosterStats.clean ? "Ready" : "Incomplete"}
                 </span>
+                
               </div>
             </div>
-
+            <span className="text-[var(--to-ink-muted)]">•</span>
             {/* Role pills */}
-            <div className="flex items-center gap-1 rounded-full border border-[var(--to-border)] p-1 h-9">
+            <div className="flex items-center gap-1 rounded-full border border-[var(--to-border)] p-1 h-10">
               <Button
                 type="button"
                 variant={roleFilter === "technician" ? "secondary" : "ghost"}
-                className="rounded-full px-3 py-1 text-xs"
+                className="rounded-full px-3 h-8 text-xs"
                 style={
                   roleFilter === "technician"
                     ? { background: "var(--to-toggle-active-bg)", borderColor: "var(--to-toggle-active-border)" }
@@ -612,13 +613,13 @@ ${pad("Reports To")}${reportsTo}`.trim();
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search (tech id, name, mobile, nt login, csg, affiliation)…"
-              className="w-full sm:w-80 h-9"
+              className="w-full sm:w-80 h-10"
             />
 
             <Select
               value={affKey}
               onChange={(e) => setAffKey(e.target.value)}
-              className="w-full sm:w-80 h-9"
+              className="w-full sm:w-80 h-10"
               disabled={affiliationOptions.length === 0}
             >
               <option value="all">All affiliations</option>
@@ -632,7 +633,7 @@ ${pad("Reports To")}${reportsTo}`.trim();
             <Select
               value={supervisorKey}
               onChange={(e) => setSupervisorKey(e.target.value)}
-              className="w-full sm:w-80 h-9"
+              className="w-full sm:w-80 h-10"
               disabled={supervisorOptions.length === 0}
             >
               <option value="all">All supervisors</option>
@@ -647,7 +648,7 @@ ${pad("Reports To")}${reportsTo}`.trim();
               <Button
                 type="button"
                 variant="secondary"
-                className="h-9 px-3 text-xs"
+                className="h-10 px-3 text-xs"
                 onClick={() => {
                   setQuery("");
                   setRoleFilter("technician");
@@ -658,13 +659,6 @@ ${pad("Reports To")}${reportsTo}`.trim();
                 Clear
               </Button>
             )}
-          </div>
-
-          {/* Stats line */}
-          <div className="text-sm">
-            Tech Count: {rosterStats.totalTechs} <span className="px-2">•</span>
-            ITG: {rosterStats.itgTechs} ({rosterStats.techPctITG}%) <span className="px-2">•</span>
-            BP: {rosterStats.bpTechs} ({rosterStats.techPctBP}%)
           </div>
         </div>
 

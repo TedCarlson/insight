@@ -541,38 +541,32 @@ export default function RosterPage() {
           }
           right={
             <div className="space-y-1">
-              <div>
-                <span>
-                  MSO: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.mso_name ?? "—"}</span>
-                </span>
-                <span className="px-2"> • </span>
-                <span>
-                  Division:{" "}
-                  <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
-                </span>
-                <span className="px-2"> • </span>
-                <span>
-                  Region:{" "}
-                  <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
-                </span>
-              </div>
+              <div className="text-[12px] leading-5 text-[var(--to-ink-muted)] text-right">
+                {validatedOrgId ? (
+                  <div className="space-y-0.5">
+                    <div className="whitespace-nowrap">
+                      <span className="text-[var(--to-ink-muted)]">MSO:</span>{" "}
+                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.mso_name ?? "—"}</span>
+                      <span className="px-2">•</span>
+                      <span className="text-[var(--to-ink-muted)]">Division:</span>{" "}
+                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
+                      <span className="px-2">•</span>
+                      <span className="text-[var(--to-ink-muted)]">Region:</span>{" "}
+                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
+                    </div>
 
-              <div>
-                <span>
-                  PC Lead: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.pc_lead_label ?? "—"}</span>
-                </span>
-
-                <span className="px-2"> • </span>
-
-                <span>
-                  Director: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.director_label ?? "—"}</span>
-                </span>
-
-                <span className="px-2"> • </span>
-
-                <span>
-                  VP: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.vp_label ?? "—"}</span>
-                </span>
+                    <div className="whitespace-nowrap">
+                      <span className="text-[var(--to-ink-muted)]">PC Lead:</span>{" "}
+                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.pc_lead_label ?? "—"}</span>
+                      <span className="px-2">•</span>
+                      <span className="text-[var(--to-ink-muted)]">Director:</span>{" "}
+                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.director_label ?? "—"}</span>
+                      <span className="px-2">•</span>
+                      <span className="text-[var(--to-ink-muted)]">VP:</span>{" "}
+                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.vp_label ?? "—"}</span>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           }

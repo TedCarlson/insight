@@ -499,7 +499,7 @@ export default function RosterPage() {
     <PageShell>
       <PageHeader
         title="Roster"
-        subtitle="Current roster (scoped by PC access gate)."
+        
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -556,7 +556,7 @@ export default function RosterPage() {
                     </div>
 
                     <div className="whitespace-nowrap">
-                      <span className="text-[var(--to-ink-muted)]">PC Lead:</span>{" "}
+                      <span className="text-[var(--to-ink-muted)]">Manager:</span>{" "}
                       <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.pc_lead_label ?? "—"}</span>
                       <span className="px-2">•</span>
                       <span className="text-[var(--to-ink-muted)]">Director:</span>{" "}

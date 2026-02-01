@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { api, type RosterRow } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
@@ -12,7 +13,7 @@ import { useToast } from "@/components/ui/Toast";
 import { useSession } from "@/state/session";
 import { useRosterManageAccess } from "@/hooks/useRosterManageAccess";
 
-import { PageShell, PageHeader } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
 import { Toolbar } from "@/components/ui/Toolbar";
 import { Button } from "@/components/ui/Button";
@@ -47,7 +48,6 @@ function isSupervisorRow(r: any): boolean {
 }
 
 function isTechnicianRow(r: any): boolean {
-  // Prefer explicit title match; otherwise treat “has tech_id and not supervisor” as technician.
   const t = roleText(r);
   if (/technician/i.test(t)) return true;
   return Boolean(String(r?.tech_id ?? "").trim()) && !isSupervisorRow(r);
@@ -65,7 +65,6 @@ export default function RosterPage() {
   const { allowed: canManageRoster, loading: rosterPermLoading } = useRosterManageAccess();
   const canEditRoster = isOwner || canManageRoster;
 
-  // If user can't edit, ensure we never remain in "open" (e.g. org switch / permission change)
   useEffect(() => {
     if (!canEditRoster && modifyMode !== "locked") {
       setModifyMode("locked");
@@ -122,13 +121,13 @@ export default function RosterPage() {
 
       const text =
         `${name}
-    Tech ID: ${techId} • Person: ${personId}
+Tech ID: ${techId} • Person: ${personId}
 
-    ${pad("Mobile")}${mobile}
-    ${pad("NT Login")}${ntLogin}
-    ${pad("CSG")}${csg}
-    ${pad("Affiliation")}${affiliation}
-    ${pad("Reports To")}${reportsTo}`.trim();
+${pad("Mobile")}${mobile}
+${pad("NT Login")}${ntLogin}
+${pad("CSG")}${csg}
+${pad("Affiliation")}${affiliation}
+${pad("Reports To")}${reportsTo}`.trim();
 
       await navigator.clipboard.writeText(text);
 
@@ -160,22 +159,22 @@ export default function RosterPage() {
 
   const [orgMetaLoading, setOrgMetaLoading] = useState(false);
   const [orgMeta, setOrgMeta] = useState<{
-  mso_name?: string | null;
-  division_name?: string | null;
-  region_name?: string | null;
+    mso_name?: string | null;
+    division_name?: string | null;
+    region_name?: string | null;
 
-  pc_lead_label?: string | null;
-  pc_lead_role_key?: string | null;
+    pc_lead_label?: string | null;
+    pc_lead_role_key?: string | null;
 
-  director_label?: string | null;
-  director_role_key?: string | null;
+    director_label?: string | null;
+    director_role_key?: string | null;
 
-  vp_label?: string | null;
-  vp_role_key?: string | null;
+    vp_label?: string | null;
+    vp_role_key?: string | null;
 
-  // legacy fallback (still returned by API)
-  manager_label?: string | null;
-} | null>(null);
+    // legacy fallback (still returned by API)
+    manager_label?: string | null;
+  } | null>(null);
 
   const validatedOrgId = useMemo(() => {
     const v = String(selectedOrgId ?? "").trim();
@@ -191,26 +190,26 @@ export default function RosterPage() {
   const canLoad = Boolean(validatedOrgId);
 
   const loadOrgMeta = async () => {
-  if (!validatedOrgId) return;
-  try {
-    setOrgMetaLoading(true);
+    if (!validatedOrgId) return;
+    try {
+      setOrgMetaLoading(true);
 
-    const res = await fetch("/api/org/roster-header", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ pc_org_id: validatedOrgId }),
-    });
+      const res = await fetch("/api/org/roster-header", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pc_org_id: validatedOrgId }),
+      });
 
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json?.error ?? "Failed to load org meta");
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error ?? "Failed to load org meta");
 
-    setOrgMeta(json?.data ?? null);
-  } catch {
-    setOrgMeta(null);
-  } finally {
-    setOrgMetaLoading(false);
-  }
-};
+      setOrgMeta(json?.data ?? null);
+    } catch {
+      setOrgMeta(null);
+    } finally {
+      setOrgMetaLoading(false);
+    }
+  };
 
   const loadAll = async () => {
     if (!validatedOrgId) return;
@@ -229,7 +228,6 @@ export default function RosterPage() {
 
       setRoster(rows as any);
 
-      // keep module in sync
       if (selectedRow) {
         const selPid = String((selectedRow as any)?.person_id ?? "").trim();
         const next = rows.find((r: any) => String(r?.person_id ?? "").trim() === selPid) as any;
@@ -286,11 +284,9 @@ export default function RosterPage() {
       map.set(key, { type, name, label });
     }
 
-    const out = Array.from(map.entries())
+    return Array.from(map.entries())
       .map(([key, v]) => ({ key, ...v }))
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
-
-    return out;
   }, [rosterRoleFiltered]);
 
   const supervisorOptions = useMemo(() => {
@@ -321,20 +317,17 @@ export default function RosterPage() {
   }, [supervisorKey, supervisorOptions]);
 
   useEffect(() => {
-  if (!validatedOrgId) return;
+    if (!validatedOrgId) return;
 
-  // Immediately clear old org meta so we don't show stale values
-  setOrgMeta(null);
-  setOrgMetaLoading(true);
+    setOrgMeta(null);
+    setOrgMetaLoading(true);
 
-  // Immediately lock refresh + prevent stale UI during org switch
-  setErr(null);
-  setModifyMode("locked");
+    setErr(null);
+    setModifyMode("locked");
 
-  // Kick a reload (loadAll should eventually set loading + clear orgMetaLoading)
-  void loadAll();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [validatedOrgId]);
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validatedOrgId]);
 
   const filteredRoster = useMemo(() => {
     const rows = (rosterRoleFiltered ?? []).slice();
@@ -411,56 +404,7 @@ export default function RosterPage() {
       return !!rid && !end;
     }).length;
 
-    const scheduleReady = techRows.filter((r: any) => {
-      const assignmentEnd = String(r?.assignment_end_date ?? r?.end_date ?? "").trim();
-      const assignmentActive = Boolean(r?.assignment_active ?? r?.active ?? true);
-      const hasAssignment = !!String(r?.assignment_id ?? "").trim() && assignmentActive && !assignmentEnd;
-
-      const leadershipEnd = String(r?.reports_to_end_date ?? r?.leadership_end_date ?? "").trim();
-      const leadershipId = r?.reports_to_reporting_id ?? r?.assignment_reporting_id ?? r?.reporting_id ?? r?.id ?? null;
-      const hasLeadership = !!leadershipId && !leadershipEnd;
-
-      return hasAssignment && hasLeadership;
-    }).length;
-
     const clean = totalTechs > 0 && totalTechs === assignmentSet && totalTechs === leadershipSet;
-
-    const supIds = Array.from(
-      new Set(
-        techRows
-          .map((r: any) => String(r?.reports_to_person_id ?? "").trim())
-          .filter(Boolean)
-      )
-    );
-
-    const allRows = roster ?? [];
-    const isInScopedOrg = (r: any) => {
-      if (!validatedOrgId) return false;
-      const orgId = String(r?.pc_org_id ?? "").trim();
-      return !orgId || orgId === String(validatedOrgId);
-    };
-
-    const activeRowsAll = allRows.filter((r: any) => isInScopedOrg(r));
-    const supervisorById = new Map<string, any>();
-    for (const r of activeRowsAll as any[]) {
-      const pid = String(r?.person_id ?? "").trim();
-      if (!pid) continue;
-      if (!supervisorById.has(pid)) supervisorById.set(pid, r);
-    }
-
-    let itgSups = 0;
-    let bpSups = 0;
-    let unknownSups = 0;
-
-    for (const sid of supIds) {
-      const sr = supervisorById.get(String(sid));
-      const t = String(sr?.co_type ?? "").trim();
-      if (t === "company") itgSups++;
-      else if (t === "contractor") bpSups++;
-      else unknownSups++;
-    }
-
-    const totalSups = supIds.length;
 
     return {
       totalTechs,
@@ -468,55 +412,91 @@ export default function RosterPage() {
       bpTechs,
       techPctITG: pct(itgTechs, totalTechs),
       techPctBP: pct(bpTechs, totalTechs),
-
-      totalSups,
-      itgSups,
-      bpSups,
-      supPctITG: pct(itgSups, totalSups),
-      supPctBP: pct(bpSups, totalSups),
-      unknownSups,
-
       readinessA: assignmentSet,
       readinessL: leadershipSet,
-      readinessS: scheduleReady,
-
       clean,
     };
-  }, [filteredRoster, roster, validatedOrgId]);
+  }, [filteredRoster]);
 
   const anyFiltersActive = Boolean(query.trim()) || roleFilter !== "technician" || affKey !== "all";
   const headerRefreshDisabled = orgsLoading || !canLoad || loading || orgMetaLoading;
+
   const modifyToggleVars =
-    modifyMode === "open"
-      ? ({
-          "--to-toggle-active-bg": "rgba(249, 115, 22, 0.16)", // orange tint
-          "--to-toggle-active-border": "var(--to-status-warning)",
-          "--to-toggle-active-ink": "var(--to-status-warning)",
-        } as React.CSSProperties)
-      : undefined;
+  modifyMode === "open"
+    ? ({
+        ["--to-toggle-active-bg" as any]: "rgba(249, 115, 22, 0.16)",
+        ["--to-toggle-active-border" as any]: "var(--to-status-warning)",
+        ["--to-toggle-active-ink" as any]: "var(--to-status-warning)",
+      } as CSSProperties)
+    : undefined;
 
   return (
     <PageShell>
-      <PageHeader
-        title="Roster"
-        
-        actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              type="button"
-              onClick={() => router.push("/onboard")}
-              disabled={orgsLoading || rosterPermLoading || !canEditRoster}
-              title={!canEditRoster ? "Requires roster_manage permission" : "Onboard a person into the roster"}
-            >
-              Onboard
-            </Button>
-            <Button variant="secondary" type="button" onClick={loadAll} disabled={headerRefreshDisabled}>
-              {loading ? "Refreshing…" : "Refresh"}
-            </Button>
-          </div>
-        }
-      />
+      <Card variant="subtle">
+        <Toolbar
+          left={
+            validatedOrgId ? (
+              <div className="min-w-0 flex items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={() => router.push("/onboard")}
+                    disabled={orgsLoading || rosterPermLoading || !canEditRoster}
+                    title={!canEditRoster ? "Requires roster_manage permission" : "Onboard a person into the roster"}
+                    className="h-8 px-3 text-xs"
+                  >
+                    Onboard
+                  </Button>
+
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={loadAll}
+                    disabled={headerRefreshDisabled}
+                    className="h-8 px-3 text-xs"
+                  >
+                    {loading ? "Refreshing…" : "Refresh"}
+                  </Button>
+                </div>
+
+                <span className="px-2 text-[var(--to-ink-muted)]">•</span>
+
+                <div className="min-w-0 text-sm">
+                  <span className="font-semibold">Roster</span>
+                  <span className="px-2 text-[var(--to-ink-muted)]">•</span>
+                  <span className="text-[var(--to-ink-muted)]">PC #</span>{" "}
+                  <span className="font-semibold">{selectedOrgName ?? "—"}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-[var(--to-ink-muted)]">Select a PC org in the header to load the roster.</div>
+            )
+          }
+          right={
+            validatedOrgId ? (
+              <div className="min-w-0 text-[12px] leading-4 text-[var(--to-ink-muted)] text-right whitespace-nowrap">
+                <span>MSO:</span>{" "}
+                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.mso_name ?? "—"}</span>
+                <span className="px-2">•</span>
+                <span>Division:</span>{" "}
+                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
+                <span className="px-2">•</span>
+                <span>Region:</span>{" "}
+                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
+                <span className="px-2">•</span>
+                <span>Manager:</span>{" "}
+                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.pc_lead_label ?? "—"}</span>
+                <span className="px-2">•</span>
+                <span>Director:</span>{" "}
+                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.director_label ?? "—"}</span>
+                <span className="px-2">•</span>
+                <span>VP:</span> <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.vp_label ?? "—"}</span>
+              </div>
+            ) : null
+          }
+        />
+      </Card>
 
       {canLoad && err ? (
         <Notice variant="danger" title="Could not load roster">
@@ -528,112 +508,65 @@ export default function RosterPage() {
         </Notice>
       ) : null}
 
-      <Card variant="subtle">
-        <Toolbar
-          left={
-            validatedOrgId ? (
-              <div className="text-sm">
-                PC #: <span className="font-semibold">{selectedOrgName ?? "—"}</span>
-              </div>
-            ) : (
-              <div className="text-sm text-[var(--to-ink-muted)]">Select a PC org in the header to load the roster.</div>
-            )
-          }
-          right={
-            <div className="space-y-1">
-              <div className="text-[12px] leading-5 text-[var(--to-ink-muted)] text-right">
-                {validatedOrgId ? (
-                  <div className="space-y-0.5">
-                    <div className="whitespace-nowrap">
-                      <span className="text-[var(--to-ink-muted)]">MSO:</span>{" "}
-                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.mso_name ?? "—"}</span>
-                      <span className="px-2">•</span>
-                      <span className="text-[var(--to-ink-muted)]">Division:</span>{" "}
-                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
-                      <span className="px-2">•</span>
-                      <span className="text-[var(--to-ink-muted)]">Region:</span>{" "}
-                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
-                    </div>
-
-                    <div className="whitespace-nowrap">
-                      <span className="text-[var(--to-ink-muted)]">Manager:</span>{" "}
-                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.pc_lead_label ?? "—"}</span>
-                      <span className="px-2">•</span>
-                      <span className="text-[var(--to-ink-muted)]">Director:</span>{" "}
-                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.director_label ?? "—"}</span>
-                      <span className="px-2">•</span>
-                      <span className="text-[var(--to-ink-muted)]">VP:</span>{" "}
-                      <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.vp_label ?? "—"}</span>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          }
-        />
-      </Card>
-
       <Card>
         <div className="mb-3 flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-sm font-semibold">Current roster</div>
+          {/* ONE ROW: Modify + Readiness inline with filters/search */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Modify + Readiness group (LEFT) */}
+            <div className="flex items-center gap-3 rounded-full border border-[var(--to-border)] px-2 h-9">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[var(--to-ink-muted)]">Modify</span>
+                <span style={modifyToggleVars}>
+                  <SegmentedControl
+                    value={modifyMode}
+                    onChange={(v) => {
+                      if (!canEditRoster) {
+                        toast.push({
+                          title: "Permission required",
+                          message: "You need roster_manage to unlock modify mode.",
+                          variant: "warning",
+                        });
+                        return;
+                      }
+                      setModifyMode(v as "open" | "locked");
+                    }}
+                    options={[
+                      { value: "locked", label: "Locked" },
+                      { value: "open", label: "Open" },
+                    ]}
+                    size="sm"
+                    className={!canEditRoster ? "opacity-60" : undefined}
+                  />
+                </span>
+              </div>
 
-            <div className="text-xs text-[var(--to-ink-muted)] text-right">
-              <div className="flex flex-wrap items-center justify-end gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] leading-[22px] text-[var(--to-ink-muted)]">Modify</span>
-                  <span style={modifyToggleVars}>
-                    <SegmentedControl
-                      value={modifyMode}
-                      onChange={(v) => {
-                        if (!canEditRoster) {
-                          toast.push({
-                            title: "Permission required",
-                            message: "You need roster_manage to unlock modify mode.",
-                            variant: "warning",
-                          });
-                          return;
+              <span className="text-[var(--to-ink-muted)]">•</span>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[var(--to-ink-muted)]">Readiness</span>
+                <span
+                  className="inline-flex items-center rounded-full border px-2 text-xs h-7"
+                  style={
+                    rosterStats.clean
+                      ? {
+                          background: "rgba(34, 197, 94, 0.14)",
+                          borderColor: "var(--to-status-success)",
+                          color: "var(--to-status-success)",
                         }
-                        setModifyMode(v as "open" | "locked");
-                      }}
-                      options={[
-                        { value: "locked", label: "Locked" },
-                        { value: "open", label: "Open" },
-                      ]}
-                      size="sm"
-                      className={!canEditRoster ? "opacity-60" : undefined}
-                    />
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span>Readiness:</span>
-
-                  <span
-                    className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]"
-                    style={
-                      rosterStats.clean
-                        ? {
-                            background: "rgba(34, 197, 94, 0.14)",
-                            borderColor: "var(--to-status-success)",
-                            color: "var(--to-status-success)",
-                          }
-                        : {
-                            background: "rgba(249, 115, 22, 0.16)",
-                            borderColor: "var(--to-status-warning)",
-                            color: "var(--to-status-warning)",
-                          }
-                    }
-                  >
-                    {rosterStats.clean ? "Ready" : "Incomplete Profiles"}
-                  </span>
-                </div>
+                      : {
+                          background: "rgba(249, 115, 22, 0.16)",
+                          borderColor: "var(--to-status-warning)",
+                          color: "var(--to-status-warning)",
+                        }
+                  }
+                >
+                  {rosterStats.clean ? "Ready" : "Incomplete"}
+                </span>
               </div>
             </div>
-          </div>
 
-          <div className="flex flex-wrap items-center gap-2">
             {/* Role pills */}
-            <div className="flex items-center gap-1 rounded-full border border-[var(--to-border)] p-1">
+            <div className="flex items-center gap-1 rounded-full border border-[var(--to-border)] p-1 h-9">
               <Button
                 type="button"
                 variant={roleFilter === "technician" ? "secondary" : "ghost"}
@@ -679,14 +612,13 @@ export default function RosterPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search (tech id, name, mobile, nt login, csg, affiliation)…"
-              className="w-full sm:w-80"
+              className="w-full sm:w-80 h-9"
             />
 
-            {/* Combined Company + Contractor dropdown */}
             <Select
               value={affKey}
               onChange={(e) => setAffKey(e.target.value)}
-              className="w-full sm:w-80"
+              className="w-full sm:w-80 h-9"
               disabled={affiliationOptions.length === 0}
             >
               <option value="all">All affiliations</option>
@@ -697,11 +629,10 @@ export default function RosterPage() {
               ))}
             </Select>
 
-            {/* Supervisor filter */}
             <Select
               value={supervisorKey}
               onChange={(e) => setSupervisorKey(e.target.value)}
-              className="w-full sm:w-80"
+              className="w-full sm:w-80 h-9"
               disabled={supervisorOptions.length === 0}
             >
               <option value="all">All supervisors</option>
@@ -716,6 +647,7 @@ export default function RosterPage() {
               <Button
                 type="button"
                 variant="secondary"
+                className="h-9 px-3 text-xs"
                 onClick={() => {
                   setQuery("");
                   setRoleFilter("technician");
@@ -726,6 +658,13 @@ export default function RosterPage() {
                 Clear
               </Button>
             )}
+          </div>
+
+          {/* Stats line */}
+          <div className="text-sm">
+            Tech Count: {rosterStats.totalTechs} <span className="px-2">•</span>
+            ITG: {rosterStats.itgTechs} ({rosterStats.techPctITG}%) <span className="px-2">•</span>
+            BP: {rosterStats.bpTechs} ({rosterStats.techPctBP}%)
           </div>
         </div>
 
@@ -764,7 +703,7 @@ export default function RosterPage() {
               setDetailsOpen(true);
             }}
             onRowQuickView={(row, el) => {
-              setSelectedRow(row); // optional: keeps selection consistent
+              setSelectedRow(row);
               setDetailsOpen(false);
               openQuick(row, el);
             }}

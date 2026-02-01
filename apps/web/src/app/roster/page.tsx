@@ -559,15 +559,15 @@ export default function RosterPage() {
 
               <div>
                 <span>
-                  Manager: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.manager_label ?? "—"}</span>
+                  Manager: <span className="text-[var(--to-ink)]">orgMetaLoading ? "…"</span>
                 </span>
                 <span className="px-2"> • </span>
                 <span>
-                  Director: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.director_label ?? "—"}</span>
+                  Director: <span className="text-[var(--to-ink)]">orgMetaLoading ? "…"</span>
                 </span>
                 <span className="px-2"> • </span>
                 <span>
-                  VP: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.vp_label ?? "—"}</span>
+                  VP: <span className="text-[var(--to-ink)]">orgMetaLoading ? "…"</span>
                 </span>
               </div>
             </div>

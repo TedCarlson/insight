@@ -24,6 +24,33 @@ const WRITE_RPC_ALLOWLIST = new Set<string>([
   "wizard_process_to_roster",
 ]);
 
+async function getSelectedPcOrgId(supabase: any, auth_user_id: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("user_profile")
+    .select("selected_pc_org_id")
+    .eq("auth_user_id", auth_user_id)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return (data?.selected_pc_org_id as string | null) ?? null;
+}
+
+async function isOwner(supabase: any): Promise<boolean> {
+  const { data, error } = await supabase.rpc("is_owner");
+  if (error) return false;
+  return Boolean(data);
+}
+
+async function requirePermission(supabase: any, pc_org_id: string, permission_key: string): Promise<boolean> {
+  const apiClient: any = (supabase as any).schema ? (supabase as any).schema("api") : supabase;
+  const { data, error } = await apiClient.rpc("has_pc_org_permission", {
+    p_pc_org_id: pc_org_id,
+    p_permission_key: permission_key,
+  });
+  if (error) return false;
+  return Boolean(data);
+}
+
 type RpcSchema = "api" | "public";
 
 type RpcRequest = {
@@ -32,192 +59,57 @@ type RpcRequest = {
   args?: Record<string, any> | null;
 };
 
-function requestId() {
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function reqId() {
+  return Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2);
 }
 
-function json(status: number, body: any) {
-  return NextResponse.json(body, { status });
+function json(status: number, payload: any) {
+  return NextResponse.json(payload, { status });
 }
 
-function parseCookies(cookieHeader: string): Record<string, string> {
+// Normalize schema input
+function normalizeSchema(v: any): RpcSchema | null {
+  if (v === "public" || v === "api") return v;
+  return null;
+}
+
+// Normalize fn
+function normalizeFn(v: any): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (!s) return null;
+  return s;
+}
+
+function parseCookies(cookieHeader: string) {
   const out: Record<string, string> = {};
-  cookieHeader.split(";").forEach((part) => {
-    const [k, ...rest] = part.trim().split("=");
-    if (!k) return;
-    out[k] = rest.join("=") ?? "";
-  });
+  const parts = cookieHeader.split(";").map((p) => p.trim()).filter(Boolean);
+  for (const part of parts) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const k = decodeURIComponent(part.slice(0, eq).trim());
+    const v = decodeURIComponent(part.slice(eq + 1).trim());
+    out[k] = v;
+  }
   return out;
 }
 
-function tryDecodeAuthCookie(value: string): string | null {
-  const v = decodeURIComponent(value);
-
-  // raw jwt?
-  if (/^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$/.test(v)) return v;
-
-  // JSON directly?
-  if (v.startsWith("{") || v.startsWith("[")) {
-    try {
-      const jsonVal: any = JSON.parse(v);
-      if (typeof jsonVal?.access_token === "string") return jsonVal.access_token;
-      if (Array.isArray(jsonVal) && typeof jsonVal?.[0] === "string") return jsonVal[0];
-    } catch {
-      // ignore
-    }
-  }
-
-  // base64 json?
-  try {
-    const decoded = Buffer.from(v, "base64").toString("utf8");
-    const jsonVal: any = JSON.parse(decoded);
-    if (typeof jsonVal?.access_token === "string") return jsonVal.access_token;
-    if (Array.isArray(jsonVal) && typeof jsonVal?.[0] === "string") return jsonVal[0];
-  } catch {
-    // ignore
-  }
-
-  return null;
-}
-
-function joinChunkedCookie(cookies: Record<string, string>, keyContains: string): string | null {
-  // Supabase / Next may chunk cookies like:
-  //   sb-<ref>-auth-token.0, sb-<ref>-auth-token.1 ...
-  const chunkEntries = Object.entries(cookies)
-    .map(([k, v]) => {
-      const m = k.match(/^(.*)\.(\d+)$/);
-      if (!m) return null;
-      const base = m[1];
-      const idx = Number(m[2]);
-      if (!Number.isFinite(idx)) return null;
-      if (!base.includes(keyContains)) return null;
-      return { base, idx, v };
-    })
-    .filter(Boolean) as Array<{ base: string; idx: number; v: string }>;
-
-  if (chunkEntries.length === 0) return null;
-
-  const groups = new Map<string, Array<{ idx: number; v: string }>>();
-  for (const c of chunkEntries) {
-    const arr = groups.get(c.base) ?? [];
-    arr.push({ idx: c.idx, v: c.v });
-    groups.set(c.base, arr);
-  }
-
-  let bestBase: string | null = null;
-  let bestCount = 0;
-  for (const [base, arr] of groups.entries()) {
-    if (arr.length > bestCount) {
-      bestBase = base;
-      bestCount = arr.length;
-    }
-  }
-
-  if (!bestBase) return null;
-
-  const parts = (groups.get(bestBase) ?? []).sort((a, b) => a.idx - b.idx);
-  return parts.map((p) => p.v).join("");
-}
-
-function extractAccessTokenFromCookies(cookieHeader: string | null): string | null {
-  if (!cookieHeader) return null;
-  const cookies = parseCookies(cookieHeader);
-
-  // 0) Try chunked access-token cookies first
-  const chunkedAccess = joinChunkedCookie(cookies, "access-token");
-  if (chunkedAccess) {
-    const raw = decodeURIComponent(chunkedAccess);
-    if (/^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$/.test(raw)) return raw;
-    const token = tryDecodeAuthCookie(chunkedAccess);
-    if (token) return token;
-  }
-
-  // 1) Any cookie key that contains "access-token"
-  const accessTokenCandidates = Object.entries(cookies).filter(([k]) => k.includes("access-token"));
-  for (const [, v] of accessTokenCandidates) {
-    const raw = decodeURIComponent(v);
-    if (/^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$/.test(raw)) return raw;
-    const token = tryDecodeAuthCookie(v);
-    if (token) return token;
-  }
-
-  // 2) Try chunked auth-token cookies (common)
-  const chunkedAuth = joinChunkedCookie(cookies, "auth-token");
-  if (chunkedAuth) {
-    const token = tryDecodeAuthCookie(chunkedAuth);
-    if (token) return token;
-
-    const raw = decodeURIComponent(chunkedAuth);
-    if (/^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$/.test(raw)) return raw;
-  }
-
-  // 3) Non-chunked auth-token cookies
-  const authTokenCandidates = Object.entries(cookies).filter(([k]) => k.includes("auth-token"));
-  for (const [, v] of authTokenCandidates) {
-    const token = tryDecodeAuthCookie(v);
-    if (token) return token;
-  }
-
-  // 4) Last resort: any cookie value that looks like a JWT
-  for (const [, v] of Object.entries(cookies)) {
-    const raw = decodeURIComponent(v);
-    if (/^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$/.test(raw)) return raw;
-  }
-
-  return null;
-}
-
-function normalizeSchema(x: any): RpcSchema | null {
-  if (x === "api" || x === "public") return x;
-  return null;
-}
-
-function normalizeFn(x: any): string {
-  return String(x ?? "").trim();
-}
-
-
-function httpStatusForRpcError(err: any): number {
-  const code = String(err?.code ?? "");
-  const msg = String(err?.message ?? "");
-
-  // Common Postgres RAISE EXCEPTION used as app-layer Unauthorized/Forbidden
-  if (code === "P0001" && /unauthorized/i.test(msg)) return 401;
-  if (code === "P0001" && /forbidden|permission/i.test(msg)) return 403;
-
-  return 400;
-}
-
-export async function GET() {
-  return json(405, { ok: false, error: "Method Not Allowed", allowed: ["POST"] });
-}
-
 export async function POST(req: NextRequest) {
-  const rid = requestId();
-
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
-    return json(500, {
-      ok: false,
-      request_id: rid,
-      error: "Server misconfigured",
-      code: "config_missing",
-      missing: {
-        NEXT_PUBLIC_SUPABASE_URL: !SUPABASE_URL,
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: !SUPABASE_ANON_KEY,
-        SUPABASE_SERVICE_ROLE_KEY: !SUPABASE_SERVICE_ROLE_KEY,
-      },
-    });
-  }
+  const rid = reqId();
 
   try {
-    // Authorization header OR extracted from cookies
-    let authHeader = req.headers.get("authorization") ?? "";
-    if (!authHeader) {
-      const token = extractAccessTokenFromCookies(req.headers.get("cookie"));
-      if (token) authHeader = `Bearer ${token}`;
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      return json(500, {
+        ok: false,
+        request_id: rid,
+        error: "Missing Supabase env",
+        code: "missing_env",
+      });
     }
 
-    // Authenticate as the real user (so auth.uid() works inside DB functions)
+    const authHeader = req.headers.get("authorization") || "";
+
+    // Use auth header if provided, otherwise rely on cookies (so auth.uid() works inside DB functions)
     const gatewayHeaders: Record<string, string> = { "x-rpc-gateway": "1" };
     if (authHeader) gatewayHeaders["Authorization"] = authHeader;
 
@@ -259,10 +151,38 @@ export async function POST(req: NextRequest) {
       return json(403, { ok: false, request_id: rid, error: "RPC not allowed", code: "rpc_not_allowed", fn });
     }
 
+    const selectedPcOrgId = await getSelectedPcOrgId(supabaseUser, user.id);
+    const owner = await isOwner(supabaseUser);
+
+    function ensureOrgScope(targetPcOrgId: string, requiredSelected: boolean = true) {
+      if (!targetPcOrgId) {
+        return {
+          ok: false as const,
+          status: 400,
+          body: { ok: false, request_id: rid, error: "Missing pc_org_id", code: "missing_pc_org_id" },
+        };
+      }
+      if (requiredSelected && !selectedPcOrgId && !owner) {
+        return {
+          ok: false as const,
+          status: 409,
+          body: { ok: false, request_id: rid, error: "No selected org", code: "no_selected_pc_org" },
+        };
+      }
+      if (selectedPcOrgId && targetPcOrgId !== selectedPcOrgId && !owner) {
+        return {
+          ok: false as const,
+          status: 403,
+          body: { ok: false, request_id: rid, error: "Forbidden (org mismatch)", code: "org_mismatch" },
+        };
+      }
+      return { ok: true as const };
+    }
+
     /**
      * IMPORTANT: direct table write: person_pc_org_end_association
      * This write intentionally uses service role to bypass RLS,
-     * but is gated by Edge grants above.
+     * but MUST be permission-gated.
      */
     if (schema === "public" && fn === "person_pc_org_end_association") {
       const person_id = String(args?.person_id ?? "").trim();
@@ -274,48 +194,103 @@ export async function POST(req: NextRequest) {
         return json(400, { ok: false, request_id: rid, error: "Missing person_id or pc_org_id", code: "missing_keys" });
       }
 
+      const scope = ensureOrgScope(pc_org_id);
+      if (!scope.ok) return json(scope.status, scope.body);
+
+      const allowed = await requirePermission(supabaseUser, pc_org_id, "roster_manage");
+      if (!allowed) {
+        return json(403, {
+          ok: false,
+          request_id: rid,
+          error: "Forbidden",
+          code: "forbidden",
+          required_permission: "roster_manage",
+          pc_org_id,
+        });
+      }
+
       const today = new Date().toISOString().slice(0, 10);
 
+      if (!SUPABASE_SERVICE_ROLE_KEY) {
+        return json(500, { ok: false, request_id: rid, error: "Missing service role key", code: "missing_service_key" });
+      }
+
       const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-        global: { headers: { "x-rpc-gateway": "1" } },
         auth: { persistSession: false, autoRefreshToken: false },
       });
 
-      const { data: updatedRows, error: updErr } = await supabaseAdmin
+      const { data: updatedRows, error: updateErr } = await supabaseAdmin
         .from("person_pc_org")
-        .update({
-          end_date: end_date ?? today,
-          active: false,
-          status: "inactive",
-          updated_at: new Date().toISOString(),
-        } as any)
+        .update({ end_date, status: "inactive", updated_at: new Date().toISOString() })
         .eq("person_id", person_id)
         .eq("pc_org_id", pc_org_id)
-        .eq("active", true)
-        .select("person_id,pc_org_id,active,end_date")
-        .limit(5);
+        .select();
 
-      if (updErr) {
-        return json(400, {
-          ok: false,
-          request_id: rid,
-          error: updErr.message,
-          code: updErr.code ?? "update_failed",
-          details: (updErr as any).details ?? null,
-        });
+      if (updateErr) {
+        return json(500, { ok: false, request_id: rid, error: updateErr.message, code: "update_failed" });
       }
 
       if (!updatedRows || updatedRows.length === 0) {
-        return json(404, {
-          ok: false,
-          request_id: rid,
-          error:
-            "No active person↔org association row found to end (already ended, missing membership row, or membership key mismatch).",
-          code: "no_active_membership",
-        });
+        return json(404, { ok: false, request_id: rid, error: "Association not found", code: "not_found" });
       }
 
-      return json(200, { ok: true, request_id: rid, data: { ok: true, updated: updatedRows[0] } });
+      // keep v_roster_current coherent (if you have a materialized view refresh, do it here later)
+      const end = end_date || today;
+      return json(200, { ok: true, request_id: rid, data: { ok: true, end_date: end, updated: updatedRows[0] } });
+    }
+
+    // Fine-grained permission gates for sensitive RPCs
+    const pcOrgFromArgs = String((args?.pc_org_id ?? args?.p_pc_org_id ?? args?.pcOrgId ?? args?.pc_org) ?? "").trim();
+
+    if (fn === "permission_grant" || fn === "permission_revoke") {
+      const scope = ensureOrgScope(pcOrgFromArgs);
+      if (!scope.ok) return json(scope.status, scope.body);
+
+      const allowed = await requirePermission(supabaseUser, pcOrgFromArgs, "permissions_manage");
+      if (!allowed) {
+        return json(403, {
+          ok: false,
+          request_id: rid,
+          error: "Forbidden",
+          code: "forbidden",
+          required_permission: "permissions_manage",
+          pc_org_id: pcOrgFromArgs,
+        });
+      }
+    }
+
+    if (fn === "pc_org_eligibility_grant" || fn === "pc_org_eligibility_revoke") {
+      const scope = ensureOrgScope(pcOrgFromArgs);
+      if (!scope.ok) return json(scope.status, scope.body);
+
+      const allowed = await requirePermission(supabaseUser, pcOrgFromArgs, "permissions_manage");
+      if (!allowed) {
+        return json(403, {
+          ok: false,
+          request_id: rid,
+          error: "Forbidden",
+          code: "forbidden",
+          required_permission: "permissions_manage",
+          pc_org_id: pcOrgFromArgs,
+        });
+      }
+    }
+
+    if (fn === "wizard_process_to_roster") {
+      const scope = ensureOrgScope(pcOrgFromArgs);
+      if (!scope.ok) return json(scope.status, scope.body);
+
+      const allowed = await requirePermission(supabaseUser, pcOrgFromArgs, "onboard_manage");
+      if (!allowed) {
+        return json(403, {
+          ok: false,
+          request_id: rid,
+          error: "Forbidden",
+          code: "forbidden",
+          required_permission: "onboard_manage",
+          pc_org_id: pcOrgFromArgs,
+        });
+      }
     }
 
     // For RPC calls, run as the real user so auth.uid() is present in the DB.
@@ -323,20 +298,11 @@ export async function POST(req: NextRequest) {
     const { data, error } = args ? await rpcClient.rpc(fn, args) : await rpcClient.rpc(fn);
 
     if (error) {
-      const status = httpStatusForRpcError(error);
-      return json(status, {
-        ok: false,
-        request_id: rid,
-        error: error.message,
-        code: error.code ?? null,
-        details: (error as any).details ?? null,
-        fn,
-        schema,
-      });
+      return json(500, { ok: false, request_id: rid, error: error.message, code: "rpc_failed", fn, schema });
     }
 
     return json(200, { ok: true, request_id: rid, data });
   } catch (e: any) {
-    return json(500, { ok: false, request_id: rid, error: String(e?.message ?? e), code: "unhandled_exception" });
+    return json(500, { ok: false, request_id: rid, error: e?.message ?? "Unknown error", code: "exception" });
   }
 }

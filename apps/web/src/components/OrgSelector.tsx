@@ -1,11 +1,11 @@
 // apps/web/src/components/OrgSelector.tsx
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useOrg } from "@/state/org";
 
 function orgLabel(o: any): string {
-  // Be resilient to naming differences coming back from SQL
   const name =
     o?.org_name ??
     o?.name ??
@@ -29,20 +29,21 @@ function orgId(o: any): string | null {
 }
 
 export function OrgSelector({ label = "PC" }: { label?: string }) {
+  const router = useRouter();
   const { orgs, orgsLoading, orgsError, selectedOrgId, setSelectedOrgId } = useOrg();
 
-  // Normalize orgs once for safe rendering
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+
   const normalized = useMemo(() => {
     return (orgs ?? []).map((o: any, idx: number) => {
       const id = orgId(o);
       const text = orgLabel(o);
-      // Guaranteed unique key even if id missing/duplicated
       const key = id ? `org-${id}` : `org-fallback-${idx}-${text}`;
       return { raw: o, id, key, text };
     });
   }, [orgs]);
 
-  // Loading / error states
   if (orgsLoading) {
     return <div className="text-sm text-[var(--to-ink-muted)]">Loading {label} details…</div>;
   }
@@ -50,7 +51,6 @@ export function OrgSelector({ label = "PC" }: { label?: string }) {
     return <div className="text-sm text-[var(--to-danger)]">{label} load error: {orgsError}</div>;
   }
 
-  // No orgs: render a disabled select so layout doesn't jump and UI is explicit
   if (normalized.length === 0) {
     return (
       <label className="flex items-center gap-2">
@@ -68,7 +68,6 @@ export function OrgSelector({ label = "PC" }: { label?: string }) {
     );
   }
 
-  // Single org: show a pill/label instead of a dropdown
   if (normalized.length === 1) {
     const one = normalized[0];
     return (
@@ -85,38 +84,74 @@ export function OrgSelector({ label = "PC" }: { label?: string }) {
     );
   }
 
-  // Multi-org: dropdown with a safe placeholder if nothing selected yet
   const currentValue = selectedOrgId ?? "";
   const hasValidSelection = normalized.some((o) => o.id === currentValue);
+
+  async function persistSelection(id: string | null) {
+    setSaving(true);
+    setSaveErr(null);
+    try {
+      const res = await fetch("/api/profile/select-org", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ selected_pc_org_id: id }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error ?? "Failed to save org selection");
+
+      // Force server components (Leadership, Admin, etc.) to re-read server truth
+      router.refresh();
+    } catch (e: any) {
+      setSaveErr(e?.message ?? "Failed to save selection");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <label className="flex items-center gap-2">
       <span className="text-sm text-[var(--to-ink-muted)]">{label}</span>
-      <select
-        className="border rounded px-2 py-1 bg-[var(--to-surface)]"
-        style={{ borderColor: "var(--to-border)" }}
-        value={hasValidSelection ? currentValue : ""}
-        onChange={(e) => setSelectedOrgId(e.target.value || null)}
-        aria-label={label}
-      >
-        {!hasValidSelection ? (
-          <option value="" disabled>
-            Select an organization…
-          </option>
-        ) : null}
 
-        {normalized.map(({ key, id, text }, idx) => {
-          // If id is missing (shouldn't happen often), we still render but make it unselectable.
-          const value = id ?? "";
-          const disabled = !id;
+      <div className="flex flex-col">
+        <select
+          className="border rounded px-2 py-1 bg-[var(--to-surface)]"
+          style={{ borderColor: "var(--to-border)" }}
+          value={hasValidSelection ? currentValue : ""}
+          onChange={async (e) => {
+            const next = e.target.value || null;
 
-          return (
-            <option key={key} value={value} disabled={disabled}>
-              {text || `(Unnamed org ${idx + 1})`}
+            // Update client immediately (UI feels responsive)
+            setSelectedOrgId(next);
+
+            // Persist server truth + refresh
+            await persistSelection(next);
+          }}
+          aria-label={label}
+          disabled={saving}
+        >
+          {!hasValidSelection ? (
+            <option value="" disabled>
+              Select an organization…
             </option>
-          );
-        })}
-      </select>
+          ) : null}
+
+          {normalized.map(({ key, id, text }, idx) => {
+            const value = id ?? "";
+            const disabled = !id;
+            return (
+              <option key={key} value={value} disabled={disabled}>
+                {text || `(Unnamed org ${idx + 1})`}
+              </option>
+            );
+          })}
+        </select>
+
+        {saving ? (
+          <div className="mt-1 text-[10px] text-[var(--to-ink-muted)]">Switching…</div>
+        ) : saveErr ? (
+          <div className="mt-1 text-[10px] text-[var(--to-danger)]">{saveErr}</div>
+        ) : null}
+      </div>
     </label>
   );
 }

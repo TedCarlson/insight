@@ -81,9 +81,9 @@ export default async function AdminPage() {
             Org Users
           </Link>
 
-          <button type="button" className={cls("to-btn", "to-btn--secondary", "px-4 py-3")} disabled>
-            Coming soon
-          </button>
+          <Link href="/admin/leadership" className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}>
+            Leadership
+          </Link>
         </div>
       </Card>
 

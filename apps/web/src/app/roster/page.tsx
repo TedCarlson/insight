@@ -159,9 +159,23 @@ export default function RosterPage() {
   const [supervisorKey, setSupervisorKey] = useState("all");
 
   const [orgMetaLoading, setOrgMetaLoading] = useState(false);
-  const [orgMeta, setOrgMeta] = useState<{ mso_name?: string; division_name?: string; region_name?: string } | null>(
-    null
-  );
+  const [orgMeta, setOrgMeta] = useState<{
+  mso_name?: string | null;
+  division_name?: string | null;
+  region_name?: string | null;
+
+  pc_lead_label?: string | null;
+  pc_lead_role_key?: string | null;
+
+  director_label?: string | null;
+  director_role_key?: string | null;
+
+  vp_label?: string | null;
+  vp_role_key?: string | null;
+
+  // legacy fallback (still returned by API)
+  manager_label?: string | null;
+} | null>(null);
 
   const validatedOrgId = useMemo(() => {
     const v = String(selectedOrgId ?? "").trim();
@@ -177,18 +191,26 @@ export default function RosterPage() {
   const canLoad = Boolean(validatedOrgId);
 
   const loadOrgMeta = async () => {
-    if (!validatedOrgId) return;
-    try {
-      setOrgMetaLoading(true);
-      const { data, error } = await supabase.rpc("pc_org_meta", { p_pc_org_id: validatedOrgId });
-      if (error) throw error;
-      setOrgMeta(data ?? null);
-    } catch {
-      setOrgMeta(null);
-    } finally {
-      setOrgMetaLoading(false);
-    }
-  };
+  if (!validatedOrgId) return;
+  try {
+    setOrgMetaLoading(true);
+
+    const res = await fetch("/api/org/roster-header", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pc_org_id: validatedOrgId }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error ?? "Failed to load org meta");
+
+    setOrgMeta(json?.data ?? null);
+  } catch {
+    setOrgMeta(null);
+  } finally {
+    setOrgMetaLoading(false);
+  }
+};
 
   const loadAll = async () => {
     if (!validatedOrgId) return;
@@ -297,6 +319,22 @@ export default function RosterPage() {
     if (supervisorKey === "all") return;
     if (!supervisorOptions.some((o) => o.id === supervisorKey)) setSupervisorKey("all");
   }, [supervisorKey, supervisorOptions]);
+
+  useEffect(() => {
+  if (!validatedOrgId) return;
+
+  // Immediately clear old org meta so we don't show stale values
+  setOrgMeta(null);
+  setOrgMetaLoading(true);
+
+  // Immediately lock refresh + prevent stale UI during org switch
+  setErr(null);
+  setModifyMode("locked");
+
+  // Kick a reload (loadAll should eventually set loading + clear orgMetaLoading)
+  void loadAll();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [validatedOrgId]);
 
   const filteredRoster = useMemo(() => {
     const rows = (rosterRoleFiltered ?? []).slice();
@@ -447,7 +485,7 @@ export default function RosterPage() {
   }, [filteredRoster, roster, validatedOrgId]);
 
   const anyFiltersActive = Boolean(query.trim()) || roleFilter !== "technician" || affKey !== "all";
-  const headerRefreshDisabled = orgsLoading || !canLoad || loading;
+  const headerRefreshDisabled = orgsLoading || !canLoad || loading || orgMetaLoading;
   const modifyToggleVars =
     modifyMode === "open"
       ? ({
@@ -495,31 +533,56 @@ export default function RosterPage() {
           left={
             validatedOrgId ? (
               <div className="text-sm">
-                Org scope: <span className="font-semibold">{selectedOrgName ?? "—"}</span>
+                PC #: <span className="font-semibold">{selectedOrgName ?? "—"}</span>
               </div>
             ) : (
               <div className="text-sm text-[var(--to-ink-muted)]">Select a PC org in the header to load the roster.</div>
             )
           }
           right={
-            <div className="text-xs text-[var(--to-ink-muted)] text-right">
-              {validatedOrgId ? (
-                <div>
-                  <span>
-                    MSO: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.mso_name ?? "—"}</span>
+            <div className="space-y-1">
+              <div>
+                <span>
+                  MSO: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.mso_name ?? "—"}</span>
+                </span>
+                <span className="px-2"> • </span>
+                <span>
+                  Division:{" "}
+                  <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
+                </span>
+                <span className="px-2"> • </span>
+                <span>
+                  Region:{" "}
+                  <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
+                </span>
+              </div>
+
+              <div>
+                <span>
+                  PC Lead:{" "}
+                  <span className="text-[var(--to-ink)]">
+                    {orgMetaLoading ? "…" : orgMeta?.pc_lead_label ?? orgMeta?.manager_label ?? "—"}
                   </span>
-                  <span className="px-2"> • </span>
-                  <span>
-                    Division:{" "}
-                    <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
-                  </span>
-                  <span className="px-2"> • </span>
-                  <span>
-                    Region:{" "}
-                    <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
-                  </span>
-                </div>
-              ) : null}
+                  {!orgMetaLoading && orgMeta?.pc_lead_role_key ? (
+                    <span className="ml-1 text-[10px] text-[var(--to-ink-muted)]">({orgMeta.pc_lead_role_key})</span>
+                  ) : null}
+                </span>
+
+                <span className="px-2"> • </span>
+
+                <span>
+                  Director: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.director_label ?? "—"}</span>
+                  {!orgMetaLoading && orgMeta?.director_role_key ? (
+                    <span className="ml-1 text-[10px] text-[var(--to-ink-muted)]">({orgMeta.director_role_key})</span>
+                  ) : null}
+                </span>
+
+                <span className="px-2"> • </span>
+
+                <span>
+                  VP: <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.vp_label ?? "—"}</span>
+                </span>
+              </div>
             </div>
           }
         />

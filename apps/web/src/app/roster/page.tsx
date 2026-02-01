@@ -556,20 +556,24 @@ export default function RosterPage() {
                   <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
                 </span>
               </div>
-
-              <div>
-                <span>
-                  Manager: <span className="text-[var(--to-ink)]">orgMetaLoading ? "…"</span>
-                </span>
-                <span className="px-2"> • </span>
-                <span>
-                  Director: <span className="text-[var(--to-ink)]">orgMetaLoading ? "…"</span>
-                </span>
-                <span className="px-2"> • </span>
-                <span>
-                  VP: <span className="text-[var(--to-ink)]">orgMetaLoading ? "…"</span>
-                </span>
-              </div>
+                <div>
+                  <span>
+                    Manager:{" "}
+                    <span className="text-[var(--to-ink)]">
+                      {orgMetaLoading ? "…" : orgMeta?.pc_lead_label ?? orgMeta?.manager_label ?? "—"}
+                    </span>
+                  </span>
+                  <span className="px-2"> • </span>
+                  <span>
+                    Director:{" "}
+                    <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.director_label ?? "—"}</span>
+                  </span>
+                  <span className="px-2"> • </span>
+                  <span>
+                    VP:{" "}
+                    <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.vp_label ?? "—"}</span>
+                  </span>
+                </div>
             </div>
           }
         />

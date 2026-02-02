@@ -107,6 +107,13 @@ export async function POST(req: Request) {
     setPasswordUrl.searchParams.set("next", postPasswordNext);
     const redirectTo = setPasswordUrl.toString();
 
+    // For magic links, always go through /auth/callback so cookies/session get set.
+    // Then callback will forward to /auth/set-password and preserve tokens if needed.
+    const magicCb = new URL("/auth/callback", siteUrl);
+    magicCb.searchParams.set("type", "magiclink");
+    magicCb.searchParams.set("next", postPasswordNext);
+    const magicLinkRedirectTo = magicCb.toString();
+
     // Validate prerequisites via assignment_admin_v (already present in Phase 2 work)
     const prereq = await supabase
       .from("assignment_admin_v")
@@ -158,49 +165,83 @@ export async function POST(req: Request) {
     });
 
     if (inviteRes.error) {
-    const code = (inviteRes.error as any)?.code;
+      const code = (inviteRes.error as any)?.code;
 
-    // If the user already exists, require magic link instead of invite.
-    if (code === "email_exists") {
-      const { error: otpErr } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          shouldCreateUser: false,
-          emailRedirectTo: redirectTo, // send them right to /auth/set-password?next=...
-        },
-      });
+      // If the user already exists, require magic link instead of invite.
+      if (code === "email_exists") {
+        const { error: otpErr } = await supabase.auth.signInWithOtp({
+          email,
+          options: {
+            shouldCreateUser: false,
+            emailRedirectTo: redirectTo, // send them right to /auth/set-password?next=...
+          },
+        });
 
-      if (otpErr) {
+        if (otpErr) {
+          return NextResponse.json(
+            {
+              error: "email_exists fallback failed (signInWithOtp)",
+              details: otpErr,
+              redirect_to: redirectTo,
+            },
+            { status: 400 }
+          );
+        }
+
         return NextResponse.json(
           {
-            error: "email_exists fallback failed (signInWithOtp)",
-            details: otpErr,
+            ok: true,
+            emailed: true,
+            mode: "magic_link_existing_user",
+            existing_user: true,
+            email,
             redirect_to: redirectTo,
+            post_password_next: postPasswordNext,
           },
-          { status: 400 }
+          { status: 200 }
         );
       }
 
-      return NextResponse.json(
-        {
-          ok: true,
-          emailed: true,
-          mode: "magic_link_existing_user",
-          existing_user: true,
-          email,
-          redirect_to: redirectTo,
-          post_password_next: postPasswordNext,
-        },
-        { status: 200 }
-      );
-    }
+      if (inviteRes.error) {
+        const code = (inviteRes.error as any)?.code;
 
-    // Anything else: surface the real invite error
-    return NextResponse.json(
-      { error: "inviteUserByEmail failed", details: inviteRes.error, redirect_to: redirectTo },
-      { status: 400 }
-    );
-  }
+        // Existing user: invite won't email. Require magic link instead.
+        if (code === "email_exists") {
+          const { error: otpErr } = await supabase.auth.signInWithOtp({
+            email,
+            options: {
+              shouldCreateUser: false,
+              emailRedirectTo: magicLinkRedirectTo,
+            },
+          });
+
+          if (otpErr) {
+            return NextResponse.json(
+              {
+                error: "email_exists fallback failed (signInWithOtp)",
+                details: otpErr,
+                redirect_to: magicLinkRedirectTo,
+              },
+              { status: 400 }
+            );
+          }
+
+          return NextResponse.json({
+            ok: true,
+            emailed: true,
+            mode: "magic_link_existing_user",
+            email,
+            redirect_to: magicLinkRedirectTo,
+            post_password_next: postPasswordNext,
+          });
+        }
+
+        return NextResponse.json(
+          { error: "inviteUserByEmail failed", details: inviteRes.error, redirect_to: redirectTo },
+          { status: 400 }
+        );
+      }
+    }
 
 
     const invitedUserId = (inviteRes.data as any)?.user?.id ?? null;

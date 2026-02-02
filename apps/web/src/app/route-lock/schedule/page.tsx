@@ -5,10 +5,14 @@ import { redirect } from "next/navigation";
 import { PageShell } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
 import { Toolbar } from "@/components/ui/Toolbar";
+import { unstable_noStore as noStore } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 
 import { ScheduleGridClient } from "./ScheduleGridClient";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type RosterRow = {
   assignment_id: string | null;
@@ -142,6 +146,15 @@ function ErrorShell({ message }: { message: string }) {
   );
 }
 
+function todayInNY(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 export default async function RouteLockSchedulePage() {
   const scope = await requireSelectedPcOrgServer();
   if (!scope.ok) redirect("/home");
@@ -248,7 +261,7 @@ export default async function RouteLockSchedulePage() {
   // Pick the schedule row that is in-effect "today":
   // start_date <= today AND (end_date IS NULL OR end_date >= today).
   // If none exists for an assignment, we intentionally leave it missing so the client can fallback to default-ON.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayInNY();
   const scheduleByAssignment = new Map<string, ScheduleRow>();
 
   for (const s of schedules) {
@@ -318,6 +331,7 @@ export default async function RouteLockSchedulePage() {
       </Card>
 
       <ScheduleGridClient
+        key={`${pc_org_id}-${today}`}
         technicians={technicians}
         routes={routes}
         scheduleByAssignment={Object.fromEntries(scheduleByAssignment.entries())}

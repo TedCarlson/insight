@@ -97,7 +97,12 @@ function DayToggle({
 }
 
 function isoToday(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 function normalizeFromScheduleRow(s?: ScheduleRow) {
@@ -114,6 +119,31 @@ function normalizeFromScheduleRow(s?: ScheduleRow) {
       sat: s?.sat ?? true,
     } as Record<DayKey, boolean>,
   };
+}
+
+function buildRows(technicians: Technician[], scheduleByAssignment: Record<string, ScheduleRow>): RowState[] {
+  const sorted = [...technicians].sort((a, b) => {
+    const ak = techSortKey(String(a.tech_id ?? ""));
+    const bk = techSortKey(String(b.tech_id ?? ""));
+    // @ts-ignore
+    if (ak < bk) return -1;
+    // @ts-ignore
+    if (ak > bk) return 1;
+    return String(a.full_name ?? "").localeCompare(String(b.full_name ?? ""));
+  });
+
+  return sorted.map((t) => {
+    const s = scheduleByAssignment[t.assignment_id];
+    const norm = normalizeFromScheduleRow(s);
+    return {
+      assignmentId: t.assignment_id,
+      techId: t.tech_id,
+      name: t.full_name,
+      coName: t.co_name ?? null,
+      routeId: norm.routeId,
+      days: norm.days,
+    };
+  });
 }
 
 function rowsEqual(a: RowState, b: { routeId: string; days: Record<DayKey, boolean> }) {
@@ -143,34 +173,15 @@ export function ScheduleGridClient({
   // Instant search (client-side)
   const [search, setSearch] = useState<string>("");
 
-  const [rows, setRows] = useState<RowState[]>(() => {
-    const sorted = [...technicians].sort((a, b) => {
-      const ak = techSortKey(String(a.tech_id ?? ""));
-      const bk = techSortKey(String(b.tech_id ?? ""));
-      // @ts-ignore: ak/bk can be number|string; JS compares fine for our use
-      if (ak < bk) return -1;
-      // @ts-ignore
-      if (ak > bk) return 1;
-      return String(a.full_name ?? "").localeCompare(String(b.full_name ?? ""));
-    });
+  const [rows, setRows] = useState<RowState[]>(() => buildRows(technicians, scheduleByAssignment));
 
-    return sorted.map((t) => {
-      const s = scheduleByAssignment[t.assignment_id];
-      const norm = normalizeFromScheduleRow(s);
-      return {
-        assignmentId: t.assignment_id,
-        techId: t.tech_id,
-        name: t.full_name,
-        coName: t.co_name ?? null,
-        routeId: norm.routeId,
-        days: norm.days,
-      };
-    });
-  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string>("");
 
-  // Baseline snapshot used for dirty detection (initialized once)
+  // Baseline snapshot used for dirty detection
   const baselineRef = useRef<Record<string, { routeId: string; days: Record<DayKey, boolean> }> | null>(null);
 
+  // Initialize baseline once for first render (so dirtyRows doesn't flash wrong)
   if (baselineRef.current === null) {
     const snap: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
     for (const t of technicians) {
@@ -179,6 +190,23 @@ export function ScheduleGridClient({
     }
     baselineRef.current = snap;
   }
+
+  // ✅ HYDRATION: when server-provided props change, reset rows + baseline to DB truth
+  useEffect(() => {
+    const nextRows = buildRows(technicians, scheduleByAssignment);
+    setRows(nextRows);
+
+    const snap: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
+    for (const t of technicians) {
+      const s = scheduleByAssignment[t.assignment_id];
+      snap[t.assignment_id] = normalizeFromScheduleRow(s);
+    }
+    baselineRef.current = snap;
+
+    // Keep surface clean when it rehydrates
+    setSaveMsg("");
+    setIsSaving(false);
+  }, [technicians, scheduleByAssignment]);
 
   const totals = useMemo<ScheduleTotals>(() => {
     const perDay: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
@@ -218,8 +246,6 @@ export function ScheduleGridClient({
     });
   }, [rows]);
 
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState<string>("");
   const toast = useToast();
 
   async function commitChanges() {
@@ -291,16 +317,12 @@ export function ScheduleGridClient({
   );
 
   function setRoute(assignmentId: string, nextRouteId: string) {
-    setRows((prev) =>
-      prev.map((r) => (r.assignmentId === assignmentId ? { ...r, routeId: nextRouteId } : r))
-    );
+    setRows((prev) => prev.map((r) => (r.assignmentId === assignmentId ? { ...r, routeId: nextRouteId } : r)));
   }
 
   function toggleDay(assignmentId: string, day: DayKey) {
     setRows((prev) =>
-      prev.map((r) =>
-        r.assignmentId === assignmentId ? { ...r, days: { ...r.days, [day]: !r.days[day] } } : r
-      )
+      prev.map((r) => (r.assignmentId === assignmentId ? { ...r, days: { ...r.days, [day]: !r.days[day] } } : r))
     );
   }
 
@@ -347,7 +369,12 @@ export function ScheduleGridClient({
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
             <div className="text-xs text-[var(--to-ink-muted)]">Effective start date</div>
-            <input className="to-input h-8 text-xs" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <input
+              className="to-input h-8 text-xs"
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
           </div>
 
           <div className="flex flex-col gap-1">
@@ -426,17 +453,11 @@ export function ScheduleGridClient({
 
                 <div className="min-w-0">
                   <div className="truncate">{r.name}</div>
-                  {r.coName ? (
-                    <div className="truncate text-xs text-[var(--to-ink-muted)]">{r.coName}</div>
-                  ) : null}
+                  {r.coName ? <div className="truncate text-xs text-[var(--to-ink-muted)]">{r.coName}</div> : null}
                 </div>
 
                 <div className="flex items-center">
-                  <select
-                    className="to-select h-8 text-xs"
-                    value={r.routeId}
-                    onChange={(e) => setRoute(r.assignmentId, e.target.value)}
-                  >
+                  <select className="to-select h-8 text-xs" value={r.routeId} onChange={(e) => setRoute(r.assignmentId, e.target.value)}>
                     <option value="">—</option>
                     {routes.map((rt) => (
                       <option key={rt.route_id} value={rt.route_id}>

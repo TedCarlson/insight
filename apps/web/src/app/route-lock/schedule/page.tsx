@@ -1,13 +1,14 @@
 // apps/web/src/app/route-lock/schedule/page.tsx
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
+import { Toolbar } from "@/components/ui/Toolbar";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 
 import { ScheduleGridClient } from "./ScheduleGridClient";
-
 
 type RosterRow = {
   assignment_id: string | null;
@@ -105,6 +106,40 @@ function isPOLAReady(r: RosterRow, membershipSet: Set<string>): boolean {
   return personOk && orgOk && leadershipOk && assignmentOk;
 }
 
+function RouteLockBackHeader() {
+  return (
+    <Card variant="subtle">
+      <Toolbar
+        left={
+          <div className="min-w-0 flex items-center gap-2">
+            <Link
+              href="/route-lock"
+              className="to-btn to-btn--secondary h-8 px-3 text-xs inline-flex items-center"
+            >
+              Back
+            </Link>
+            <div className="min-w-0">
+              <div className="text-sm font-medium truncate">Schedule</div>
+              <div className="text-xs text-[var(--to-ink-muted)] truncate">Route Lock • Schedule setup</div>
+            </div>
+          </div>
+        }
+      />
+    </Card>
+  );
+}
+
+function ErrorShell({ message }: { message: string }) {
+  return (
+    <PageShell>
+      <RouteLockBackHeader />
+      <Card>
+        <div className="text-sm text-[var(--to-warning)]">{message}</div>
+      </Card>
+    </PageShell>
+  );
+}
+
 export default async function RouteLockSchedulePage() {
   const scope = await requireSelectedPcOrgServer();
   if (!scope.ok) redirect("/home");
@@ -119,16 +154,7 @@ export default async function RouteLockSchedulePage() {
     .eq("pc_org_id", pc_org_id);
 
   if (memErr) {
-    return (
-      <PageShell>
-        <PageHeader title="Schedule" subtitle="Route Lock • Schedule setup" />
-        <Card>
-          <div className="text-sm text-[var(--to-warning)]">
-            Could not load roster membership (v_roster_current): {memErr.message}
-          </div>
-        </Card>
-      </PageShell>
-    );
+    return <ErrorShell message={`Could not load roster membership (v_roster_current): ${memErr.message}`} />;
   }
 
   const membershipSet = new Set<string>(
@@ -158,16 +184,7 @@ export default async function RouteLockSchedulePage() {
     .order("full_name", { ascending: true });
 
   if (rosterErr) {
-    return (
-      <PageShell>
-        <PageHeader title="Schedule" subtitle="Route Lock • Schedule setup" />
-        <Card>
-          <div className="text-sm text-[var(--to-warning)]">
-            Could not load roster (master_roster_v): {rosterErr.message}
-          </div>
-        </Card>
-      </PageShell>
-    );
+    return <ErrorShell message={`Could not load roster (master_roster_v): ${rosterErr.message}`} />;
   }
 
   const roster = (rosterRows ?? []) as unknown as RosterRow[];
@@ -189,16 +206,7 @@ export default async function RouteLockSchedulePage() {
     .order("route_name", { ascending: true });
 
   if (routeErr) {
-    return (
-      <PageShell>
-        <PageHeader title="Schedule" subtitle="Route Lock • Schedule setup" />
-        <Card>
-          <div className="text-sm text-[var(--to-warning)]">
-            Could not load routes (route_admin_v): {routeErr.message}
-          </div>
-        </Card>
-      </PageShell>
-    );
+    return <ErrorShell message={`Could not load routes (route_admin_v): ${routeErr.message}`} />;
   }
 
   const routes = (routeRows ?? []) as unknown as RouteRow[];
@@ -226,16 +234,7 @@ export default async function RouteLockSchedulePage() {
     .order("start_date", { ascending: false });
 
   if (scheduleErr) {
-    return (
-      <PageShell>
-        <PageHeader title="Schedule" subtitle="Route Lock • Schedule setup" />
-        <Card>
-          <div className="text-sm text-[var(--to-warning)]">
-            Could not load schedules (schedule_admin_v): {scheduleErr.message}
-          </div>
-        </Card>
-      </PageShell>
-    );
+    return <ErrorShell message={`Could not load schedules (schedule_admin_v): ${scheduleErr.message}`} />;
   }
 
   const schedules = (scheduleRows ?? []) as unknown as ScheduleRow[];
@@ -284,16 +283,7 @@ export default async function RouteLockSchedulePage() {
     .gte("fiscal_month_end_date", today);
 
   if (quotaErr) {
-    return (
-      <PageShell>
-        <PageHeader title="Schedule" subtitle="Route Lock • Schedule setup" />
-        <Card>
-          <div className="text-sm text-[var(--to-warning)]">
-            Could not load quota rollup (quota_admin_v): {quotaErr.message}
-          </div>
-        </Card>
-      </PageShell>
-    );
+    return <ErrorShell message={`Could not load quota rollup (quota_admin_v): ${quotaErr.message}`} />;
   }
 
   const quota = (quotaRows ?? []) as unknown as QuotaRow[];
@@ -310,9 +300,7 @@ export default async function RouteLockSchedulePage() {
 
   return (
     <PageShell>
-      <PageHeader title="Schedule" subtitle="Route Lock • Schedule setup" />
-
-      {/* Quota rollup totals for fiscal month */}
+      <RouteLockBackHeader />
       <Card>
         <div className="flex flex-col gap-2">
           <div className="text-sm font-medium">{fiscalLabel} • Quota totals</div>

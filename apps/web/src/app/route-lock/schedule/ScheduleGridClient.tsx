@@ -1,9 +1,10 @@
 // apps/web/src/app/route-lock/schedule/ScheduleGridClient.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { DataTable, DataTableBody, DataTableHeader, DataTableRow } from "@/components/ui/DataTable";
+import { useToast } from "@/components/ui/Toast";
 
 type Technician = {
   assignment_id: string;
@@ -43,7 +44,7 @@ type RowState = {
   assignmentId: string;
   techId: string;
   name: string;
-  routeId: string; // "" for unset
+  routeId: string; // "" means unset
   days: Record<DayKey, boolean>;
 };
 
@@ -85,6 +86,34 @@ function DayToggle({
   );
 }
 
+function isoToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeFromScheduleRow(s?: ScheduleRow) {
+  // Schedule rows use nullable booleans; null means "default ON" in your existing UI logic
+  return {
+    routeId: String(s?.default_route_id ?? ""),
+    days: {
+      sun: s?.sun ?? true,
+      mon: s?.mon ?? true,
+      tue: s?.tue ?? true,
+      wed: s?.wed ?? true,
+      thu: s?.thu ?? true,
+      fri: s?.fri ?? true,
+      sat: s?.sat ?? true,
+    } as Record<DayKey, boolean>,
+  };
+}
+
+function rowsEqual(a: RowState, b: { routeId: string; days: Record<DayKey, boolean> }) {
+  if (a.routeId !== b.routeId) return false;
+  for (const d of DAYS) {
+    if (a.days[d.key] !== b.days[d.key]) return false;
+  }
+  return true;
+}
+
 export function ScheduleGridClient({
   technicians,
   routes,
@@ -98,27 +127,34 @@ export function ScheduleGridClient({
   defaults: { unitsPerHour: number; hoursPerDay: number };
   onTotalsChange?: (t: ScheduleTotals) => void;
 }) {
+  // Effective date for the rolling baseline write
+  const [startDate, setStartDate] = useState<string>(isoToday());
+
   const [rows, setRows] = useState<RowState[]>(() => {
     return technicians.map((t) => {
       const s = scheduleByAssignment[t.assignment_id];
+      const norm = normalizeFromScheduleRow(s);
       return {
         assignmentId: t.assignment_id,
         techId: t.tech_id,
         name: t.full_name,
-        routeId: String(s?.default_route_id ?? ""),
-        // default ON when null/undefined
-        days: {
-          sun: s?.sun ?? true,
-          mon: s?.mon ?? true,
-          tue: s?.tue ?? true,
-          wed: s?.wed ?? true,
-          thu: s?.thu ?? true,
-          fri: s?.fri ?? true,
-          sat: s?.sat ?? true,
-        },
+        routeId: norm.routeId,
+        days: norm.days,
       };
     });
   });
+
+  // Baseline snapshot used for dirty detection (initialized once)
+  const baselineRef = useRef<Record<string, { routeId: string; days: Record<DayKey, boolean> }> | null>(null);
+
+  if (baselineRef.current === null) {
+    const snap: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
+    for (const t of technicians) {
+      const s = scheduleByAssignment[t.assignment_id];
+      snap[t.assignment_id] = normalizeFromScheduleRow(s);
+    }
+    baselineRef.current = snap;
+  }
 
   const totals = useMemo<ScheduleTotals>(() => {
     const perDay: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
@@ -149,31 +185,138 @@ export function ScheduleGridClient({
     onTotalsChange?.(totals);
   }, [totals, onTotalsChange]);
 
+  const dirtyRows = useMemo(() => {
+    const base = baselineRef.current ?? {};
+    return rows.filter((r) => {
+      const b = base[r.assignmentId];
+      if (!b) return true; // new/unknown assignment => treat as dirty
+      return !rowsEqual(r, b);
+    });
+  }, [rows]);
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string>("");
+  const toast = useToast();
+
+  async function commitChanges() {
+    setSaveMsg("");
+    if (dirtyRows.length === 0) {
+      setSaveMsg("No changes to commit.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const payload = {
+        start_date: startDate,
+        hoursPerDay: defaults.hoursPerDay,
+        unitsPerHour: defaults.unitsPerHour,
+        rows: dirtyRows.map((r) => ({
+          assignment_id: r.assignmentId,
+          default_route_id: r.routeId ? r.routeId : null,
+          days: r.days,
+        })),
+      };
+
+      const res = await fetch("/api/route-lock/schedule/upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok || !json?.ok) {
+        const err = String(json?.error ?? `Commit failed (${res.status})`);
+        setSaveMsg(err);
+        return;
+      }
+
+      // Update baseline snapshot to the new committed state so dirty clears
+      const nextBase: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
+      for (const r of rows) {
+        nextBase[r.assignmentId] = { routeId: r.routeId, days: { ...r.days } };
+      }
+      baselineRef.current = nextBase;
+
+      toast.push({
+        variant: "success",
+        title: "Schedule committed",
+        message: `Committed ${dirtyRows.length} row(s).`,
+        durationMs: 1800,
+      });
+
+  // Navigate right away — toast persists across routes because ToastProvider is global.
+  window.location.href = "/route-lock";
+      } catch (e: any) {
+        setSaveMsg(String(e?.message ?? "Commit failed"));
+      } finally {
+        setIsSaving(false);
+      }
+    }
+
   const gridStyle = useMemo(
     () =>
       ({
-        gridTemplateColumns:
-          "6rem minmax(12rem,1fr) 12rem repeat(7, 5.5rem) minmax(16rem, 0.9fr)",
+        gridTemplateColumns: "6rem minmax(12rem,1fr) 12rem repeat(7, 5.5rem) minmax(16rem, 0.9fr)",
       }) as const,
     []
   );
 
   return (
     <Card>
-        <DataTableRow gridStyle={gridStyle}>
-            <div className="whitespace-nowrap font-medium"></div>
-            <div className="min-w-0 font-medium"></div>
-            <div className="min-w-0 font-medium">Scheduled Totals</div>
+      {/* Top action bar */}
+      <div className="flex flex-col gap-2 p-3 border-b border-[var(--to-border)]">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <div className="text-xs text-[var(--to-ink-muted)]">Effective start date</div>
+            <input
+              className="to-input"
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+          </div>
 
-            {DAYS.map((d) => (
-              <div key={d.key} className="text-center">
-                <span className="text-sm font-medium">{totals.perDay[d.key]}</span>
-              </div>
-            ))}
+          <div className="flex flex-col gap-1">
+            <div className="text-xs text-[var(--to-ink-muted)]">Dirty rows</div>
+            <div className="text-sm font-medium">{dirtyRows.length}</div>
+          </div>
 
-            {/* Stats column intentionally blank now */}
-            <div />
-          </DataTableRow>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              className={cls("to-btn", dirtyRows.length ? "to-btn--secondary" : "to-btn--secondary")}
+              disabled={isSaving || dirtyRows.length === 0}
+              onClick={commitChanges}
+              aria-disabled={isSaving || dirtyRows.length === 0}
+            >
+              {isSaving ? "Committing…" : "Commit changes"}
+            </button>
+          </div>
+        </div>
+
+        {saveMsg ? <div className="text-sm text-[var(--to-ink-muted)]">{saveMsg}</div> : null}
+        <div className="text-xs text-[var(--to-ink-muted)]">
+          Commits only changed rows. Rolling baseline: prior open row closes, new row opens with end_date NULL.
+        </div>
+      </div>
+
+      {/* Totals row */}
+      <DataTableRow gridStyle={gridStyle}>
+        <div className="whitespace-nowrap font-medium"></div>
+        <div className="min-w-0 font-medium"></div>
+        <div className="min-w-0 font-medium">Scheduled Totals</div>
+
+        {DAYS.map((d) => (
+          <div key={d.key} className="text-center">
+            <span className="text-sm font-medium">{totals.perDay[d.key]}</span>
+          </div>
+        ))}
+
+        <div />
+      </DataTableRow>
+
       <DataTable layout="fixed" gridStyle={gridStyle}>
         <DataTableHeader gridStyle={gridStyle}>
           <div className="whitespace-nowrap">Tech Id</div>
@@ -188,9 +331,6 @@ export function ScheduleGridClient({
         </DataTableHeader>
 
         <DataTableBody zebra>
-          {/* Totals row: keep day column totals; remove the big stats block from Stats column */}
-          
-
           {rows.map((r) => {
             const daysOn = Object.values(r.days).reduce((acc, v) => acc + (v ? 1 : 0), 0);
             const hours = daysOn * defaults.hoursPerDay;
@@ -239,10 +379,33 @@ export function ScheduleGridClient({
                   </div>
                 ))}
 
-                <div className="text-sm">
-                  <span className="font-medium">{daysOn}</span> {daysOn === 1 ? "day" : "days"} •{" "}
-                  <span className="font-medium">{units}</span> units •{" "}
-                  <span className="font-medium">{hours}</span> hours
+                <div className="text-sm flex items-center justify-between gap-2">
+                  <div>
+                    <span className="font-medium">{daysOn}</span> {daysOn === 1 ? "day" : "days"} •{" "}
+                    <span className="font-medium">{units}</span> units •{" "}
+                    <span className="font-medium">{hours}</span> hours
+                  </div>
+
+                  <button
+                    type="button"
+                    className="to-btn to-btn--secondary px-2 py-1"
+                    onClick={() => {
+                      // "Remove" = clear route + turn all days off (counts as dirty)
+                      setRows((prev) =>
+                        prev.map((x) =>
+                          x.assignmentId === r.assignmentId
+                            ? {
+                                ...x,
+                                routeId: "",
+                                days: { sun: false, mon: false, tue: false, wed: false, thu: false, fri: false, sat: false },
+                              }
+                            : x
+                        )
+                      );
+                    }}
+                  >
+                    Remove
+                  </button>
                 </div>
               </DataTableRow>
             );

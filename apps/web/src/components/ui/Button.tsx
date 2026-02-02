@@ -16,49 +16,32 @@ export function Button({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
   const base =
-    // Layout + typography
+    // Base button system (tokens + hover + disabled handled in ui.css via .to-btn + variants)
     "to-btn inline-flex items-center justify-center gap-2 whitespace-nowrap select-none" +
     // Shape + motion
     " rounded-xl transition-[transform,opacity,background-color,box-shadow,border-color,color] duration-150 ease-out" +
     // Press feedback
     " active:translate-y-px" +
-    // Consistent focus (global focus-visible rules already exist)
+    // Focus
     " focus-visible:outline-none";
 
-  const vPrimary =
-    // Core
-    "to-btn--primary text-[var(--to-ink)]" +
-    // Slight highlight + depth (still neutral; uses your surface tokens)
-    " shadow-[0_10px_28px_rgba(15,23,42,0.12)]" +
-    // Subtle hover polish (avoid gaudy glow)
-    " hover:bg-[var(--to-surface-2)]";
-
-  const vSecondary =
-    // Core surface button
-    "to-btn--secondary bg-[var(--to-surface)] text-[var(--to-ink)]" +
-    // Slight depth so it doesn’t feel “flat”
-    " shadow-[0_1px_0_rgba(15,23,42,0.06)]";
-
-  const vGhost =
-    // Modern tertiary button (not link-like)
-    "bg-transparent text-[var(--to-ink)]" +
-    " hover:bg-[var(--to-surface-2)]";
+  // IMPORTANT:
+  // Do NOT set text colors / hover backgrounds here for primary.
+  // Those are already defined in ui.css on .to-btn--primary / --secondary / --ghost.
+  const vPrimary = "to-btn--primary";
+  const vSecondary = "to-btn--secondary";
+  const vGhost = "to-btn--ghost";
 
   return (
-  <button
-    {...props}
-    className={cls(
-      base,
-      variant === "primary"
-        ? vPrimary
-        : variant === "secondary"
-          ? vSecondary
-          : vGhost,
-      className
-    )}
-  >
-    {children}
-  </button>
-);
-
+    <button
+      {...props}
+      className={cls(
+        base,
+        variant === "primary" ? vPrimary : variant === "secondary" ? vSecondary : vGhost,
+        className
+      )}
+    >
+      {children}
+    </button>
+  );
 }

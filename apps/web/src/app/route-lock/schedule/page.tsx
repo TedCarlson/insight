@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { PageShell, PageHeader } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
 import { Toolbar } from "@/components/ui/Toolbar";
 import { supabaseServer } from "@/lib/supabase/server";
@@ -23,6 +23,8 @@ type RosterRow = {
   reports_to_assignment_id: string | null;
   reports_to_person_id: string | null;
   reports_to_full_name: string | null;
+
+  co_name: string | null;
 };
 
 type ScheduleRow = {
@@ -163,7 +165,7 @@ export default async function RouteLockSchedulePage() {
       .filter(Boolean)
   );
 
-  // Roster import (trimmed to what we need)
+  // Roster import (include co_name for affiliation display/search)
   const { data: rosterRows, error: rosterErr } = await sb
     .from("master_roster_v")
     .select(
@@ -178,9 +180,12 @@ export default async function RouteLockSchedulePage() {
         "reports_to_assignment_id",
         "reports_to_person_id",
         "reports_to_full_name",
+        "co_name",
       ].join(",")
     )
     .eq("pc_org_id", pc_org_id)
+    // Default sort by tech_id (matches your requirement)
+    .order("tech_id", { ascending: true })
     .order("full_name", { ascending: true });
 
   if (rosterErr) {
@@ -195,6 +200,7 @@ export default async function RouteLockSchedulePage() {
       assignment_id: String(r.assignment_id ?? ""),
       tech_id: String(r.tech_id ?? ""),
       full_name: String(r.full_name ?? ""),
+      co_name: String(r.co_name ?? "").trim() || null,
     }))
     .filter((r) => r.assignment_id && r.tech_id && r.full_name);
 
@@ -239,18 +245,28 @@ export default async function RouteLockSchedulePage() {
 
   const schedules = (scheduleRows ?? []) as unknown as ScheduleRow[];
 
-  // Pick the "active" schedule per assignment: end_date is null OR >= today, newest start_date first
+  // Pick the schedule row that is in-effect "today":
+  // start_date <= today AND (end_date IS NULL OR end_date >= today).
+  // If none exists for an assignment, we intentionally leave it missing so the client can fallback to default-ON.
   const today = new Date().toISOString().slice(0, 10);
   const scheduleByAssignment = new Map<string, ScheduleRow>();
+
   for (const s of schedules) {
     const aid = String(s.assignment_id ?? "").trim();
     if (!aid || scheduleByAssignment.has(aid)) continue;
+
+    const start = String(s.start_date ?? "").trim();
     const end = String(s.end_date ?? "").trim();
-    const isActive = !end || end >= today;
-    if (isActive) scheduleByAssignment.set(aid, s);
+
+    const coversToday =
+      !!start &&
+      start <= today &&
+      (!end || end >= today);
+
+    if (coversToday) scheduleByAssignment.set(aid, s);
   }
 
-  // Quota rollup totals for current fiscal month
+  // Quota rollup totals for current fiscal month (existing behavior)
   const { data: quotaRows, error: quotaErr } = await sb
     .from("quota_admin_v")
     .select(
@@ -282,32 +298,22 @@ export default async function RouteLockSchedulePage() {
     .lte("fiscal_month_start_date", today)
     .gte("fiscal_month_end_date", today);
 
-  if (quotaErr) {
-    return <ErrorShell message={`Could not load quota rollup (quota_admin_v): ${quotaErr.message}`} />;
-  }
-
+  // If quota fails, still render schedule editor (quota banner can be empty)
   const quota = (quotaRows ?? []) as unknown as QuotaRow[];
 
-  const fiscalLabel = quota[0]?.fiscal_month_label ?? "Fiscal month";
-  const rollup = quota.reduce(
-    (acc, q) => {
-      acc.qt_hours += Number(q.qt_hours ?? 0);
-      acc.qt_units += Number(q.qt_units ?? 0);
-      return acc;
-    },
-    { qt_hours: 0, qt_units: 0 }
-  );
+  const quotaLabel = String(quota?.[0]?.fiscal_month_label ?? "").trim();
+  const totalHours = quota.reduce((acc, r) => acc + (Number(r.qt_hours ?? 0) || 0), 0);
+  const totalUnits = quota.reduce((acc, r) => acc + (Number(r.qt_units ?? 0) || 0), 0);
 
   return (
     <PageShell>
       <RouteLockBackHeader />
+
       <Card>
-        <div className="flex flex-col gap-2">
-          <div className="text-sm font-medium">{fiscalLabel} • Quota totals</div>
-          <div className="text-sm text-[var(--to-ink-muted)]">
-            Total Hours: <span className="font-medium text-[var(--to-ink)]">{rollup.qt_hours}</span> • Total Units:{" "}
-            <span className="font-medium text-[var(--to-ink)]">{rollup.qt_units}</span>
-          </div>
+        <div className="text-sm font-medium">{quotaLabel ? `${quotaLabel} · Quota totals` : "Quota totals"}</div>
+        <div className="text-xs text-[var(--to-ink-muted)]">
+          Total Hours: {Math.round(totalHours)} · Total Units: {Math.round(totalUnits)}
+          {quotaErr ? <span className="ml-2 text-[var(--to-warning)]">(quota unavailable)</span> : null}
         </div>
       </Card>
 

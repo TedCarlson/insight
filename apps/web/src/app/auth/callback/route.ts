@@ -29,7 +29,7 @@ export async function GET(req: Request) {
 
   // For invite + recovery flows, always land on set-password first,
   // then continue to the intended next.
-  const forceSetPassword = type === "invite" || type === "recovery";
+  const forceSetPassword = type === "invite" || type === "recovery" || type === "magiclink";
   const next = forceSetPassword
     ? `/auth/set-password?next=${encodeURIComponent(rawNext)}`
     : rawNext;
@@ -120,8 +120,8 @@ export async function GET(req: Request) {
         if (typeof next !== "string" || next[0] !== "/") next = "/";
 
         var type = params.get("type");
-        if (type === "invite" || type === "recovery") {
-          next = "/auth/set-password?next=" + encodeURIComponent(next);
+        if (type === "invite" || type === "recovery" || type === "magiclink") {
+        next = "/auth/set-password?next=" + encodeURIComponent(next);
         }
 
         // Preserve fragment tokens

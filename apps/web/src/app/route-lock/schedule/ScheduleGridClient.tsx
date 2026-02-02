@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { Card } from "@/components/ui/Card";
 import { DataTable, DataTableBody, DataTableHeader, DataTableRow } from "@/components/ui/DataTable";
 import { useToast } from "@/components/ui/Toast";
@@ -10,6 +11,7 @@ type Technician = {
   assignment_id: string;
   tech_id: string;
   full_name: string;
+  co_name: string | null;
 };
 
 type RouteRow = { route_id: string; route_name: string };
@@ -44,6 +46,7 @@ type RowState = {
   assignmentId: string;
   techId: string;
   name: string;
+  coName: string | null;
   routeId: string; // "" means unset
   days: Record<DayKey, boolean>;
 };
@@ -60,6 +63,12 @@ function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+function techSortKey(techId: string) {
+  // numeric-first sort; fallback to string
+  const n = Number(techId);
+  return Number.isFinite(n) ? n : techId;
+}
+
 function DayToggle({
   dayLabel,
   value,
@@ -74,7 +83,8 @@ function DayToggle({
       type="button"
       onClick={onToggle}
       className={cls(
-        "to-pill w-full text-center select-none",
+        "to-pill select-none w-full",
+        "h-7 px-2 text-xs leading-none", // smaller + no row height blowout
         value
           ? "border-[var(--to-success)] text-[var(--to-success)] bg-[var(--to-toggle-active-bg)]"
           : "border-[var(--to-warning)] text-[var(--to-warning)] bg-[var(--to-surface-soft)]"
@@ -130,14 +140,28 @@ export function ScheduleGridClient({
   // Effective date for the rolling baseline write
   const [startDate, setStartDate] = useState<string>(isoToday());
 
+  // Instant search (client-side)
+  const [search, setSearch] = useState<string>("");
+
   const [rows, setRows] = useState<RowState[]>(() => {
-    return technicians.map((t) => {
+    const sorted = [...technicians].sort((a, b) => {
+      const ak = techSortKey(String(a.tech_id ?? ""));
+      const bk = techSortKey(String(b.tech_id ?? ""));
+      // @ts-ignore: ak/bk can be number|string; JS compares fine for our use
+      if (ak < bk) return -1;
+      // @ts-ignore
+      if (ak > bk) return 1;
+      return String(a.full_name ?? "").localeCompare(String(b.full_name ?? ""));
+    });
+
+    return sorted.map((t) => {
       const s = scheduleByAssignment[t.assignment_id];
       const norm = normalizeFromScheduleRow(s);
       return {
         assignmentId: t.assignment_id,
         techId: t.tech_id,
         name: t.full_name,
+        coName: t.co_name ?? null,
         routeId: norm.routeId,
         days: norm.days,
       };
@@ -189,7 +213,7 @@ export function ScheduleGridClient({
     const base = baselineRef.current ?? {};
     return rows.filter((r) => {
       const b = base[r.assignmentId];
-      if (!b) return true; // new/unknown assignment => treat as dirty
+      if (!b) return true;
       return !rowsEqual(r, b);
     });
   }, [rows]);
@@ -229,6 +253,7 @@ export function ScheduleGridClient({
       if (!res.ok || !json?.ok) {
         const err = String(json?.error ?? `Commit failed (${res.status})`);
         setSaveMsg(err);
+        toast.push({ variant: "danger", title: "Commit failed", message: err, durationMs: 2600 });
         return;
       }
 
@@ -246,22 +271,74 @@ export function ScheduleGridClient({
         durationMs: 1800,
       });
 
-  // Navigate right away — toast persists across routes because ToastProvider is global.
-  window.location.href = "/route-lock";
-      } catch (e: any) {
-        setSaveMsg(String(e?.message ?? "Commit failed"));
-      } finally {
-        setIsSaving(false);
-      }
+      // keep existing behavior: bounce back to Route Lock
+      window.location.href = "/route-lock";
+    } catch (e: any) {
+      const msg = String(e?.message ?? "Commit failed");
+      setSaveMsg(msg);
+      toast.push({ variant: "danger", title: "Commit failed", message: msg, durationMs: 2600 });
+    } finally {
+      setIsSaving(false);
     }
+  }
 
-  const gridStyle = useMemo(
-    () =>
-      ({
-        gridTemplateColumns: "6rem minmax(12rem,1fr) 12rem repeat(7, 5.5rem) minmax(16rem, 0.9fr)",
-      }) as const,
+  const gridStyle: CSSProperties = useMemo(
+    () => ({
+      gridTemplateColumns:
+        "6rem minmax(14rem,1fr) 11rem repeat(7, 5.25rem) minmax(16rem, 0.9fr) 5.25rem",
+    }),
     []
   );
+
+  function setRoute(assignmentId: string, nextRouteId: string) {
+    setRows((prev) =>
+      prev.map((r) => (r.assignmentId === assignmentId ? { ...r, routeId: nextRouteId } : r))
+    );
+  }
+
+  function toggleDay(assignmentId: string, day: DayKey) {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.assignmentId === assignmentId ? { ...r, days: { ...r.days, [day]: !r.days[day] } } : r
+      )
+    );
+  }
+
+  // "Remove" in your UI = clear this schedule row (route cleared + all days off)
+  function clearRow(assignmentId: string) {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.assignmentId !== assignmentId) return r;
+        return {
+          ...r,
+          routeId: "",
+          days: { sun: false, mon: false, tue: false, wed: false, thu: false, fri: false, sat: false },
+        };
+      })
+    );
+  }
+
+  const viewRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = !q
+      ? rows
+      : rows.filter((r) => {
+          const tech = String(r.techId ?? "").toLowerCase();
+          const name = String(r.name ?? "").toLowerCase();
+          const co = String(r.coName ?? "").toLowerCase();
+          return tech.includes(q) || name.includes(q) || co.includes(q);
+        });
+
+    return [...filtered].sort((a, b) => {
+      const ak = techSortKey(String(a.techId ?? ""));
+      const bk = techSortKey(String(b.techId ?? ""));
+      // @ts-ignore
+      if (ak < bk) return -1;
+      // @ts-ignore
+      if (ak > bk) return 1;
+      return String(a.name ?? "").localeCompare(String(b.name ?? ""));
+    });
+  }, [rows, search]);
 
   return (
     <Card>
@@ -270,12 +347,7 @@ export function ScheduleGridClient({
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
             <div className="text-xs text-[var(--to-ink-muted)]">Effective start date</div>
-            <input
-              className="to-input"
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
+            <input className="to-input h-8 text-xs" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </div>
 
           <div className="flex flex-col gap-1">
@@ -283,10 +355,20 @@ export function ScheduleGridClient({
             <div className="text-sm font-medium">{dirtyRows.length}</div>
           </div>
 
+          <div className="flex flex-col gap-1">
+            <div className="text-xs text-[var(--to-ink-muted)]">Search</div>
+            <input
+              className="to-input h-8 text-xs w-[min(320px,60vw)]"
+              placeholder="tech id, name, company…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
-              className={cls("to-btn", dirtyRows.length ? "to-btn--secondary" : "to-btn--secondary")}
+              className="to-btn to-btn--secondary h-8 px-3 text-xs"
               disabled={isSaving || dirtyRows.length === 0}
               onClick={commitChanges}
               aria-disabled={isSaving || dirtyRows.length === 0}
@@ -303,7 +385,7 @@ export function ScheduleGridClient({
       </div>
 
       {/* Totals row */}
-      <DataTableRow gridStyle={gridStyle}>
+      <DataTableRow gridStyle={gridStyle} className="items-center">
         <div className="whitespace-nowrap font-medium"></div>
         <div className="min-w-0 font-medium"></div>
         <div className="min-w-0 font-medium">Scheduled Totals</div>
@@ -314,6 +396,7 @@ export function ScheduleGridClient({
           </div>
         ))}
 
+        <div />
         <div />
       </DataTableRow>
 
@@ -328,29 +411,31 @@ export function ScheduleGridClient({
             </div>
           ))}
           <div className="whitespace-nowrap">Stats</div>
+          <div className="whitespace-nowrap text-right"> </div>
         </DataTableHeader>
 
         <DataTableBody zebra>
-          {rows.map((r) => {
+          {viewRows.map((r) => {
             const daysOn = Object.values(r.days).reduce((acc, v) => acc + (v ? 1 : 0), 0);
             const hours = daysOn * defaults.hoursPerDay;
             const units = hours * defaults.unitsPerHour;
 
             return (
-              <DataTableRow key={r.assignmentId} gridStyle={gridStyle}>
+              <DataTableRow key={r.assignmentId} gridStyle={gridStyle} className="items-center">
                 <div className="whitespace-nowrap">{r.techId}</div>
-                <div className="min-w-0 truncate">{r.name}</div>
 
-                <div>
+                <div className="min-w-0">
+                  <div className="truncate">{r.name}</div>
+                  {r.coName ? (
+                    <div className="truncate text-xs text-[var(--to-ink-muted)]">{r.coName}</div>
+                  ) : null}
+                </div>
+
+                <div className="flex items-center">
                   <select
-                    className="to-select"
+                    className="to-select h-8 text-xs"
                     value={r.routeId}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setRows((prev) =>
-                        prev.map((x) => (x.assignmentId === r.assignmentId ? { ...x, routeId: v } : x))
-                      );
-                    }}
+                    onChange={(e) => setRoute(r.assignmentId, e.target.value)}
                   >
                     <option value="">—</option>
                     {routes.map((rt) => (
@@ -362,47 +447,21 @@ export function ScheduleGridClient({
                 </div>
 
                 {DAYS.map((d) => (
-                  <div key={d.key} className="text-center">
-                    <DayToggle
-                      dayLabel={d.label}
-                      value={r.days[d.key]}
-                      onToggle={() => {
-                        setRows((prev) =>
-                          prev.map((x) =>
-                            x.assignmentId === r.assignmentId
-                              ? { ...x, days: { ...x.days, [d.key]: !x.days[d.key] } }
-                              : x
-                          )
-                        );
-                      }}
-                    />
+                  <div key={d.key} className="flex items-center">
+                    <DayToggle dayLabel={d.label} value={!!r.days[d.key]} onToggle={() => toggleDay(r.assignmentId, d.key)} />
                   </div>
                 ))}
 
-                <div className="text-sm flex items-center justify-between gap-2">
-                  <div>
-                    <span className="font-medium">{daysOn}</span> {daysOn === 1 ? "day" : "days"} •{" "}
-                    <span className="font-medium">{units}</span> units •{" "}
-                    <span className="font-medium">{hours}</span> hours
-                  </div>
+                <div className="whitespace-nowrap text-sm">
+                  {daysOn} days • {Math.round(units)} units • {hours.toFixed(0)} hours
+                </div>
 
+                <div className="flex items-center justify-end">
                   <button
                     type="button"
-                    className="to-btn to-btn--secondary px-2 py-1"
-                    onClick={() => {
-                      // "Remove" = clear route + turn all days off (counts as dirty)
-                      setRows((prev) =>
-                        prev.map((x) =>
-                          x.assignmentId === r.assignmentId
-                            ? {
-                                ...x,
-                                routeId: "",
-                                days: { sun: false, mon: false, tue: false, wed: false, thu: false, fri: false, sat: false },
-                              }
-                            : x
-                        )
-                      );
-                    }}
+                    className="to-btn to-btn--secondary h-7 px-2 text-xs"
+                    onClick={() => clearRow(r.assignmentId)}
+                    title="Clear schedule (route + all days off)"
                   >
                     Remove
                   </button>

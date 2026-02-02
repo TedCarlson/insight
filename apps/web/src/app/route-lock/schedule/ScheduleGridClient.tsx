@@ -64,7 +64,6 @@ function cls(...parts: Array<string | false | undefined>) {
 }
 
 function techSortKey(techId: string) {
-  // numeric-first sort; fallback to string
   const n = Number(techId);
   return Number.isFinite(n) ? n : techId;
 }
@@ -84,7 +83,7 @@ function DayToggle({
       onClick={onToggle}
       className={cls(
         "to-pill select-none w-full",
-        "h-7 px-2 text-xs leading-none", // smaller + no row height blowout
+        "h-7 px-2 text-xs leading-none",
         value
           ? "border-[var(--to-success)] text-[var(--to-success)] bg-[var(--to-toggle-active-bg)]"
           : "border-[var(--to-warning)] text-[var(--to-warning)] bg-[var(--to-surface-soft)]"
@@ -106,7 +105,6 @@ function isoToday(): string {
 }
 
 function normalizeFromScheduleRow(s?: ScheduleRow) {
-  // Schedule rows use nullable booleans; null means "default ON" in your existing UI logic
   return {
     routeId: String(s?.default_route_id ?? ""),
     days: {
@@ -167,21 +165,15 @@ export function ScheduleGridClient({
   defaults: { unitsPerHour: number; hoursPerDay: number };
   onTotalsChange?: (t: ScheduleTotals) => void;
 }) {
-  // Effective date for the rolling baseline write
   const [startDate, setStartDate] = useState<string>(isoToday());
-
-  // Instant search (client-side)
   const [search, setSearch] = useState<string>("");
 
   const [rows, setRows] = useState<RowState[]>(() => buildRows(technicians, scheduleByAssignment));
 
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState<string>("");
-
   // Baseline snapshot used for dirty detection
   const baselineRef = useRef<Record<string, { routeId: string; days: Record<DayKey, boolean> }> | null>(null);
 
-  // Initialize baseline once for first render (so dirtyRows doesn't flash wrong)
+  // Initialize baseline once (first render)
   if (baselineRef.current === null) {
     const snap: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
     for (const t of technicians) {
@@ -191,7 +183,15 @@ export function ScheduleGridClient({
     baselineRef.current = snap;
   }
 
-  // ✅ HYDRATION: when server-provided props change, reset rows + baseline to DB truth
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string>("");
+  const toast = useToast();
+
+  /**
+   * ✅ C) HYDRATION FIX (THIS IS THE ONE YOU ASKED “WHERE DOES IT GO?”)
+   * Put this INSIDE the component, AFTER rows state + baselineRef exist.
+   * It guarantees: when you return to /schedule and props are fresh, the UI resets to DB truth.
+   */
   useEffect(() => {
     const nextRows = buildRows(technicians, scheduleByAssignment);
     setRows(nextRows);
@@ -203,9 +203,7 @@ export function ScheduleGridClient({
     }
     baselineRef.current = snap;
 
-    // Keep surface clean when it rehydrates
     setSaveMsg("");
-    setIsSaving(false);
   }, [technicians, scheduleByAssignment]);
 
   const totals = useMemo<ScheduleTotals>(() => {
@@ -246,8 +244,6 @@ export function ScheduleGridClient({
     });
   }, [rows]);
 
-  const toast = useToast();
-
   async function commitChanges() {
     setSaveMsg("");
     if (dirtyRows.length === 0) {
@@ -283,7 +279,7 @@ export function ScheduleGridClient({
         return;
       }
 
-      // Update baseline snapshot to the new committed state so dirty clears
+      // Update baseline to match committed state
       const nextBase: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
       for (const r of rows) {
         nextBase[r.assignmentId] = { routeId: r.routeId, days: { ...r.days } };
@@ -297,7 +293,6 @@ export function ScheduleGridClient({
         durationMs: 1800,
       });
 
-      // keep existing behavior: bounce back to Route Lock
       window.location.href = "/route-lock";
     } catch (e: any) {
       const msg = String(e?.message ?? "Commit failed");
@@ -310,8 +305,7 @@ export function ScheduleGridClient({
 
   const gridStyle: CSSProperties = useMemo(
     () => ({
-      gridTemplateColumns:
-        "6rem minmax(14rem,1fr) 11rem repeat(7, 5.25rem) minmax(16rem, 0.9fr) 5.25rem",
+      gridTemplateColumns: "6rem minmax(14rem,1fr) 11rem repeat(7, 5.25rem) minmax(16rem, 0.9fr) 5.25rem",
     }),
     []
   );
@@ -326,7 +320,6 @@ export function ScheduleGridClient({
     );
   }
 
-  // "Remove" in your UI = clear this schedule row (route cleared + all days off)
   function clearRow(assignmentId: string) {
     setRows((prev) =>
       prev.map((r) => {
@@ -364,17 +357,11 @@ export function ScheduleGridClient({
 
   return (
     <Card>
-      {/* Top action bar */}
       <div className="flex flex-col gap-2 p-3 border-b border-[var(--to-border)]">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
             <div className="text-xs text-[var(--to-ink-muted)]">Effective start date</div>
-            <input
-              className="to-input h-8 text-xs"
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-            />
+            <input className="to-input h-8 text-xs" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </div>
 
           <div className="flex flex-col gap-1">
@@ -411,7 +398,6 @@ export function ScheduleGridClient({
         </div>
       </div>
 
-      {/* Totals row */}
       <DataTableRow gridStyle={gridStyle} className="items-center">
         <div className="whitespace-nowrap font-medium"></div>
         <div className="min-w-0 font-medium"></div>

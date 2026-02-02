@@ -50,6 +50,13 @@ function normalizeDays(days: any): DayFlags {
   };
 }
 
+function addDaysISO(iso: string, days: number): string {
+  // Treat ISO date as UTC midnight. We only care about YYYY-MM-DD.
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function deriveNumbers(days: DayFlags, hoursPerDay: number, unitsPerHour: number) {
   const h = {
     sun: days.sun ? hoursPerDay : 0,
@@ -158,28 +165,29 @@ export async function POST(req: Request) {
     }
 
     const saved_schedule_ids: string[] = [];
+    const dayBefore = addDaysISO(start_date, -1);
 
     // Rolling baseline per assignment:
-    // - close any open row (end_date IS NULL) => end_date = start_date
-    // - insert new row with end_date = NULL
+    // - If an open row already exists WITH THE SAME start_date => UPDATE it (no duplicate “covers today” rows)
+    // - Else close open row => end_date = dayBeforeStart
+    // - Insert new open row with end_date NULL
     for (const r of clean) {
       const { h, u } = deriveNumbers(r.days, hoursPerDay, unitsPerHour);
 
-      // Close any currently-open schedule row for this assignment
-      const { error: closeErr } = await admin
+      // Find the currently-open schedule row for this assignment (if any)
+      const { data: openRow, error: openErr } = await admin
         .from("schedule")
-        .update({ end_date: start_date })
+        .select("schedule_id,start_date")
         .eq("assignment_id", r.assignment_id!)
-        .is("end_date", null);
+        .is("end_date", null)
+        .maybeSingle();
 
-      if (closeErr) return NextResponse.json({ ok: false, error: closeErr.message }, { status: 500 });
+      if (openErr) return NextResponse.json({ ok: false, error: openErr.message }, { status: 500 });
 
-      // Insert the new baseline row (open-ended)
-      const insertPayload: any = {
-        assignment_id: r.assignment_id!,
-        schedule_name: `planning_week_${start_date}`,
-        start_date,
-        end_date: null,
+      const openStart = String(openRow?.start_date ?? "").trim();
+      const openId = String(openRow?.schedule_id ?? "").trim();
+
+      const commonPayload: any = {
         default_route_id: r.default_route_id ?? null,
 
         sun: r.days.sun,
@@ -205,6 +213,39 @@ export async function POST(req: Request) {
         sch_units_thu: u.thu,
         sch_units_fri: u.fri,
         sch_units_sat: u.sat,
+      };
+
+      // Case A: open row exists with same start_date -> update it in place
+      if (openId && openStart === start_date) {
+        const { data: upd, error: updErr } = await admin
+          .from("schedule")
+          .update(commonPayload)
+          .eq("schedule_id", openId)
+          .select("schedule_id")
+          .maybeSingle();
+
+        if (updErr) return NextResponse.json({ ok: false, error: updErr.message }, { status: 500 });
+        if (upd?.schedule_id) saved_schedule_ids.push(String(upd.schedule_id));
+        continue;
+      }
+
+      // Case B: open row exists but different start_date -> close it so it does NOT cover start_date
+      if (openId) {
+        const { error: closeErr } = await admin
+          .from("schedule")
+          .update({ end_date: dayBefore })
+          .eq("schedule_id", openId);
+
+        if (closeErr) return NextResponse.json({ ok: false, error: closeErr.message }, { status: 500 });
+      }
+
+      // Insert the new open-ended baseline row
+      const insertPayload: any = {
+        assignment_id: r.assignment_id!,
+        schedule_name: `planning_week_${start_date}`,
+        start_date,
+        end_date: null,
+        ...commonPayload,
       };
 
       const { data: ins, error: insErr } = await admin
@@ -235,6 +276,7 @@ export async function POST(req: Request) {
         selected_pc_org_id: guard.pc_org_id,
         auth_user_id: guard.auth_user_id,
         start_date,
+        dayBefore,
         hoursPerDay,
         unitsPerHour,
         rows: clean.length,

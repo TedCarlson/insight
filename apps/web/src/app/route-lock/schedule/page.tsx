@@ -156,6 +156,7 @@ function todayInNY(): string {
 }
 
 export default async function RouteLockSchedulePage() {
+  noStore();
   const scope = await requireSelectedPcOrgServer();
   if (!scope.ok) redirect("/home");
 
@@ -250,7 +251,9 @@ export default async function RouteLockSchedulePage() {
       ].join(",")
     )
     .eq("pc_org_id", pc_org_id)
-    .order("start_date", { ascending: false });
+    .order("start_date", { ascending: false })
+    .order("end_date", { ascending: false, nullsFirst: true })
+    .order("schedule_id", { ascending: false });
 
   if (scheduleErr) {
     return <ErrorShell message={`Could not load schedules (schedule_admin_v): ${scheduleErr.message}`} />;

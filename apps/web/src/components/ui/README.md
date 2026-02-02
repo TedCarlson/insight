@@ -1,5 +1,7 @@
 # UI System: Command Center + No-Drift Primitives
 
+> **Doc note:** Canonical context lives in `/README.md`. When you update this area of the app, update the relevant README section in the same PR.
+
 This folder is the **single source of truth** for the app’s UI building blocks.
 
 ## Goals

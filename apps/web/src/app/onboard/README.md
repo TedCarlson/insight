@@ -1,5 +1,7 @@
 # Onboard
 
+> **Doc note:** Canonical context lives in `/README.md`. When you update this area of the app, update the relevant README section in the same PR.
+
 This route is the lightweight entry point for onboarding a person into the currently scoped PC Org.
 
 ## Current behavior

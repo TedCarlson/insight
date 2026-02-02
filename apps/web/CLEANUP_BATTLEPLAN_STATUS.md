@@ -1,5 +1,7 @@
 # Cleanup Battle Plan Status
 
+> **Doc note:** Canonical context lives in `/README.md`. When you update this area of the app, update the relevant README section in the same PR.
+
 ## Phase 1 — Auth redirect + signout integrity (COMPLETED)
 - ✅ Hardened `next` handling to prevent login redirect loops.
 - ✅ Implemented authoritative signout flow (client best-effort + server cookie clear).

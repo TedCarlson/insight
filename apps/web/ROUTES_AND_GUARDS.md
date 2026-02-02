@@ -1,5 +1,7 @@
 # Routes and Guards Catalog
 
+> ⚠️ **Deprecated / may drift:** The authoritative route + guard documentation lives in `/README.md` under **Routing + access control**. This file is kept for historical reference.
+
 Generated from `apps/web/src/app/**` (Next.js App Router).
 
 ## Legend
@@ -62,5 +64,4 @@ Source: `apps/web/middleware.ts`
 ## `/dev/kit` in prod
 - In non-development environments, middleware redirects `/dev/kit*` → `/` before auth checks.
 - `/` redirects to `/home` only when signed in; otherwise it renders a public landing.
-
 

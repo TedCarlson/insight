@@ -1,5 +1,7 @@
 # Database Security Model: RLS + API Gate + Edge Grants
 
+> **Doc note:** Canonical context lives in `/README.md`. When you update this area of the app, update the relevant README section in the same PR.
+
 This doc describes the **Row Level Security (RLS)** protocol and the **API “gate” conventions** currently wired into the database for the roster + onboarding flows.
 
 The intent is:

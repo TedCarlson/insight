@@ -15,8 +15,8 @@ export default function FooterHelp() {
     <footer className="mt-10 py-6 border-t border-black/10 text-sm text-black/70 flex items-center justify-between">
       <div>
         Need help?{" "}
-        <a className="underline" href="mailto:support@teamoptix.com">
-          support@teamoptix.com
+        <a className="underline" href="mailto:admin@teamoptix.com">
+          admin@teamoptix.com
         </a>
       </div>
 

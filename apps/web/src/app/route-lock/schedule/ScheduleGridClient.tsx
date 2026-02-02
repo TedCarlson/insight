@@ -279,7 +279,7 @@ export function ScheduleGridClient({
           </div>
 
           <div className="flex flex-col gap-1">
-            <div className="text-xs text-[var(--to-ink-muted)]">Dirty rows</div>
+            <div className="text-xs text-[var(--to-ink-muted)]">Schedule Changes</div>
             <div className="text-sm font-medium">{dirtyRows.length}</div>
           </div>
 

@@ -111,20 +111,13 @@ export default function LoginClient() {
           {loading ? "Working…" : "Sign in"}
         </button>
 
-        <button
-          onClick={onMagicLink}
-          disabled={loading}
-          className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
-          style={{ borderColor: "var(--to-border)" }}
-        >
-          {loading ? "Working…" : "Send magic link"}
-        </button>
-
         <Link
           href={`/login/reset${next ? `?next=${encodeURIComponent(next)}` : ""}`}
-          className="text-sm underline underline-offset-4 text-[var(--to-ink-muted)]"
+          className="inline-flex h-10 items-center justify-center rounded border px-3 text-sm font-medium
+                    text-[var(--to-ink)] hover:bg-[var(--to-surface-2)] disabled:opacity-60"
+          style={{ borderColor: "var(--to-border)" }}
         >
-          Forgot password? Reset with code
+          Request Reset Code
         </Link>
 
         {out && (

@@ -1,160 +1,142 @@
-// apps/web/src/app/(public)/login/LoginClient.tsx
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { useSearchParams } from "next/navigation";
+import { useMemo, useState } from "react";
 import { normalizeNext } from "@/lib/navigation/next";
 
-type BootstrapResponse = {
-  ok: boolean;
-  auth_user_id: string;
-  status: string | null;
-  person_id: string | null;
-  selected_pc_org_id: string | null;
-  created: boolean;
-  hydrated: boolean;
-  notes?: string[];
-  error?: string;
-};
-
-function hardNavigate(to: string) {
-  // Forces a full navigation so middleware + SSR cookies take effect immediately.
-  window.location.assign(to);
-}
-
-function getHashParams(): URLSearchParams {
-  if (typeof window === "undefined") return new URLSearchParams();
-  const h = window.location.hash || "";
-  const raw = h.startsWith("#") ? h.slice(1) : h;
-  return new URLSearchParams(raw);
-}
-
-async function callBootstrap(): Promise<BootstrapResponse | null> {
-  try {
-    const res = await fetch("/api/auth/bootstrap", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-    });
-
-    const json = (await res.json()) as BootstrapResponse;
-
-    if (!res.ok) {
-      return { ...json, ok: false, error: json.error ?? `bootstrap failed (${res.status})` };
-    }
-
-    return json;
-  } catch {
-    return null;
-  }
-}
-
-export default function LoginPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const supabase = useMemo(() => createClient(), []);
-  const next = normalizeNext(searchParams.get("next"));
+export default function ResetClient() {
+  const sp = useSearchParams();
+  const next = useMemo(() => normalizeNext(sp.get("next")), [sp]);
 
   const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
 
-  const [error, setError] = useState("");
-  const [bootMsg, setBootMsg] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [out, setOut] = useState<string>("");
+  const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState<number>(0);
 
-  // IMPORTANT: If Supabase drops invite/recovery tokens onto /login (hash fragment),
-  // forward the user to /auth/set-password while preserving the fragment.
-  // This fixes the "invite link opens login instead of set-password" loop.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+  function hardNavigate(to: string) {
+    window.location.assign(to);
+  }
 
-    const hp = getHashParams();
-    const access_token = hp.get("access_token");
-    const refresh_token = hp.get("refresh_token");
-    const type = (hp.get("type") || "").toLowerCase();
+  function isLikelyEmail(v: string) {
+    const s = v.trim().toLowerCase();
+    return s.includes("@") && s.includes(".");
+  }
 
-    const isInviteOrRecovery = type === "invite" || type === "recovery";
+  async function onSendCode() {
+    setOut("");
 
-    if (access_token && refresh_token && isInviteOrRecovery) {
-      // Preserve hash so SetPassword page can setSession() from tokens.
-      window.location.replace(
-        `/auth/set-password?next=${encodeURIComponent(next)}` + window.location.hash
-      );
+    const now = Date.now();
+    if (cooldownUntil && now < cooldownUntil) {
+      const secs = Math.ceil((cooldownUntil - now) / 1000);
+      setOut(`Please wait ${secs}s before trying again.`);
+      return;
     }
-  }, [next]);
 
-  // If a session exists, bounce to next (middleware usually handles this, but this prevents edge-case flashes)
-  useEffect(() => {
-    let alive = true;
+    const normalized = email.trim().toLowerCase();
+    if (!isLikelyEmail(normalized)) {
+      setOut("Enter a valid email address.");
+      return;
+    }
 
-    (async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (!alive) return;
-
-      if (error) return; // don’t show as error; middleware will govern access anyway
-      if (data.session) {
-        // Best-effort bootstrap
-        const boot = await callBootstrap();
-        if (boot?.ok) setBootMsg(`bootstrap ok (status=${boot.status ?? "?"})`);
-        hardNavigate(next);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [supabase, router, next]);
-
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setBootMsg("");
-    setLoading(true);
-
+    setSending(true);
     try {
-      const normalizedEmail = email.trim().toLowerCase();
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: normalizedEmail,
-        password,
+      const res = await fetch("/api/auth/code/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: normalized, purpose: "reset" }),
       });
 
-      if (error) {
-        setError(error.message);
+      // Always generic success (avoid enumeration), but still show useful UX
+      if (!res.ok) {
+        const text = await res.text();
+        setOut(`ERROR: HTTP ${res.status}\n${text || "(empty)"}`);
         return;
       }
 
-      if (!data.session) {
-        setError("Login succeeded but no session was returned.");
-        return;
-      }
+      // 60s UI cooldown to prevent hammering / accidental re-sends
+      setCooldownUntil(Date.now() + 60_000);
 
-      // Best-effort bootstrap
-      const boot = await callBootstrap();
-      if (boot?.ok) {
-        setBootMsg(`bootstrap ok (status=${boot.status ?? "?"})`);
-      } else if (boot && !boot.ok) {
-        setBootMsg("bootstrap not ok (continuing)");
-      }
-
-      hardNavigate(next);
+      setOut(
+        "If an account exists for that email, you’ll receive a 6-digit code shortly. " +
+          "Enter it below along with your new password."
+      );
     } finally {
-      setLoading(false);
+      setSending(false);
     }
   }
+
+  async function onSetPassword() {
+    setOut("");
+
+    const normalized = email.trim().toLowerCase();
+    if (!isLikelyEmail(normalized)) {
+      setOut("Enter a valid email address.");
+      return;
+    }
+    const c = code.trim();
+    if (c.length < 4) {
+      setOut("Enter the code from your email.");
+      return;
+    }
+    if (!password || password.length < 8) {
+      setOut("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirm) {
+      setOut("Passwords do not match.");
+      return;
+    }
+
+    setVerifying(true);
+    try {
+      const res = await fetch("/api/auth/code/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: normalized, code: c, new_password: password }),
+      });
+
+      const text = await res.text();
+      let json: any = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = null;
+      }
+
+      if (!res.ok) {
+        const msg = json?.error ? String(json.error) : text || "Password set failed.";
+        setOut(msg);
+        return;
+      }
+
+      setOut("Password set successfully. Redirecting to login…");
+
+      const loginUrl = `/login${next ? `?next=${encodeURIComponent(next)}` : ""}`;
+      hardNavigate(loginUrl);
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  const inCooldown = cooldownUntil ? Date.now() < cooldownUntil : false;
 
   return (
     <main className="mx-auto max-w-md p-6">
-      <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Sign in</h1>
-      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">Use your credentials to access the app.</p>
+      <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Reset password</h1>
+      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
+        We’ll email you a short code. Enter the code and choose a new password. (No clickable auth link required.)
+      </p>
 
-      <form onSubmit={handleLogin} className="mt-6 grid gap-3">
+      <div className="mt-6 grid gap-3">
         <label className="grid gap-1">
           <span className="text-xs text-[var(--to-ink-muted)]">Email</span>
           <input
-            type="email"
-            required
             className="rounded border px-3 py-2 text-sm"
             style={{ borderColor: "var(--to-border)", background: "transparent" }}
             value={email}
@@ -164,49 +146,83 @@ export default function LoginPage() {
           />
         </label>
 
-        <label className="grid gap-1">
-          <span className="text-xs text-[var(--to-ink-muted)]">Password</span>
-          <input
-            type="password"
-            required
-            className="rounded border px-3 py-2 text-sm"
-            style={{ borderColor: "var(--to-border)", background: "transparent" }}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            autoComplete="current-password"
-          />
-        </label>
+        <button
+          onClick={onSendCode}
+          disabled={sending || inCooldown}
+          className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
+          style={{ borderColor: "var(--to-border)" }}
+        >
+          {sending ? "Sending…" : inCooldown ? "Please wait…" : "Send code"}
+        </button>
 
-        <div className="mt-2 flex items-center justify-between gap-3">
+        <div className="mt-2 grid gap-3 rounded border p-3" style={{ borderColor: "var(--to-border)" }}>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+            Enter code and new password
+          </div>
+
+          <label className="grid gap-1">
+            <span className="text-xs text-[var(--to-ink-muted)]">Code</span>
+            <input
+              className="rounded border px-3 py-2 text-sm"
+              style={{ borderColor: "var(--to-border)", background: "transparent" }}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="123456"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+            />
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-xs text-[var(--to-ink-muted)]">New password</span>
+            <input
+              type="password"
+              className="rounded border px-3 py-2 text-sm"
+              style={{ borderColor: "var(--to-border)", background: "transparent" }}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-xs text-[var(--to-ink-muted)]">Confirm password</span>
+            <input
+              type="password"
+              className="rounded border px-3 py-2 text-sm"
+              style={{ borderColor: "var(--to-border)", background: "transparent" }}
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+
           <button
-            type="submit"
-            disabled={loading}
+            onClick={onSetPassword}
+            disabled={verifying}
             className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
             style={{ borderColor: "var(--to-border)" }}
           >
-            {loading ? "Signing in..." : "Sign in"}
+            {verifying ? "Saving…" : "Save password"}
           </button>
-
-          <Link
-            href={`/login/reset?next=${encodeURIComponent(next)}`}
-            className="text-sm underline underline-offset-4 text-[var(--to-ink-muted)] hover:text-[var(--to-ink)]"
-          >
-            Forgot password?
-          </Link>
         </div>
 
-        {error && (
+        <Link
+          href={`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+          className="text-sm underline underline-offset-4 text-[var(--to-ink-muted)]"
+        >
+          Back to login
+        </Link>
+
+        {out && (
           <pre
             className="whitespace-pre-wrap rounded border p-3 text-xs"
             style={{ borderColor: "var(--to-border)", background: "var(--to-surface-2)" }}
           >
-            {error}
+            {out}
           </pre>
         )}
-
-        {bootMsg && <p className="text-xs text-[var(--to-ink-muted)]">{bootMsg}</p>}
-      </form>
+      </div>
     </main>
   );
 }

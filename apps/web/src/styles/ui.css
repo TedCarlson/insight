@@ -341,7 +341,7 @@
 
 .to-menu__item {
   @apply w-full rounded-lg px-2 py-2 text-left text-[var(--to-ink)] hover:bg-[var(--to-surface-2)] focus:outline-none focus-visible:ring-2;
-  ring-color: var(--to-focus);
+--tw-ring-color: var(--to-accent);
 }
 
 .to-menu__item--danger {

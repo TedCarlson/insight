@@ -18,6 +18,9 @@ type InviteBody = {
  * Sends an invite email (Supabase admin.inviteUserByEmail) and stamps the invited user's metadata
  * so the app can bootstrap user_profile on first login.
  *
+ * Existing user fallback: email_exists -> send magic link (signInWithOtp) that lands on /auth/callback
+ * so session cookies/tokens are established before set-password.
+ *
  * Requires env:
  *   - NEXT_PUBLIC_SUPABASE_URL
  *   - NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -103,7 +106,7 @@ export async function POST(req: Request) {
      * - callback then routes to /auth/set-password for invite/recovery/magiclink types
      *
      * Direct-to /auth/set-password is less deterministic on mobile (easy to lose session/fragment),
-     * which is exactly what your screenshot shows ("No active session found").
+     * which can produce "No active session found" on the set-password page.
      */
     const inviteCb = new URL("/auth/callback", siteUrl);
     inviteCb.searchParams.set("type", "invite");
@@ -115,7 +118,7 @@ export async function POST(req: Request) {
     magicCb.searchParams.set("next", postPasswordNext);
     const magicLinkRedirectTo = magicCb.toString();
 
-    // Validate prerequisites via assignment_admin_v (already present in Phase 2 work)
+    // Validate prerequisites via assignment_admin_v
     const prereq = await supabase
       .from("assignment_admin_v")
       .select("assignment_id, person_id, position_title, pc_org_id, pc_org_name")
@@ -156,7 +159,7 @@ export async function POST(req: Request) {
     // Service-role client (admin)
     const admin = createClient(url, service, { auth: { persistSession: false } });
 
-    // Stamp metadata for bootstrap (client never sees service key)
+    // Stamp metadata for bootstrap
     const meta = { assignment_id, person_id, position_title, pc_org_id, pc_org_name };
 
     // Send invite email (Supabase sends the email)
@@ -174,7 +177,7 @@ export async function POST(req: Request) {
           email,
           options: {
             shouldCreateUser: false,
-            emailRedirectTo: magicLinkRedirectTo,
+            emailRedirectTo: magicLinkRedirectTo, // ✅ must be /auth/callback (not bare siteUrl)
           },
         });
 

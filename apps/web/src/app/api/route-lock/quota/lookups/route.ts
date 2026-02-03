@@ -24,7 +24,7 @@ async function guardSelectedOrgQuotaAccess(): Promise<GuardOk | GuardFail> {
   const { data, error: userErr } = await sb.auth.getUser();
   const user = data?.user ?? null;
 
-  if (userErr || !user) {
+  if (userErr || !user?.id) {
     return { ok: false, status: 401, error: "not_authenticated" };
   }
 
@@ -40,29 +40,31 @@ async function guardSelectedOrgQuotaAccess(): Promise<GuardOk | GuardFail> {
   const pc_org_id = String(profile?.selected_pc_org_id ?? "").trim();
   if (!pc_org_id) return { ok: false, status: 409, error: "no_selected_pc_org" };
 
-  // IMPORTANT:
-  // Do NOT use api RPC here. Managers often won't have EXECUTE on api schema/functions.
-  // Instead, verify the grant row exists via service role.
-  //
-  // Primary permission for Route Lock management: roster_manage
-  // Optional future split: quota_manage
-  const { data: grantRows, error: grantErr } = await admin
-    .from("pc_org_permission_grant")
-    .select("permission_key, expires_at")
-    .eq("pc_org_id", pc_org_id)
+  // ✅ Owner bypass
+  const { data: ownerRow, error: ownerErr } = await admin
+    .from("app_owners")
+    .select("auth_user_id")
     .eq("auth_user_id", user.id)
-    .in("permission_key", ["roster_manage", "quota_manage"]);
+    .maybeSingle();
 
-  if (grantErr) {
-    // If something is wrong with grants table access/schema, treat as forbidden (not 500)
-    // so we don't leak internals and we keep UI behavior consistent.
-    return { ok: false, status: 403, error: "forbidden" };
-  }
+  if (ownerErr) return { ok: false, status: 500, error: ownerErr.message };
+  if (ownerRow?.auth_user_id) return { ok: true, pc_org_id, auth_user_id: user.id };
+
+  // ✅ Canonical grants check (api schema)
+  const { data: grants, error: grantErr } = await (admin as any)
+    .schema("api")
+    .from("pc_org_permission_grant")
+    .select("permission_key, expires_at, revoked_at")
+    .eq("pc_org_id", pc_org_id)
+    .eq("grantee_user_id", user.id)
+    .is("revoked_at", null)
+    .in("permission_key", ["route_lock_manage", "roster_manage"]);
+
+  if (grantErr) return { ok: false, status: 403, error: "forbidden" };
 
   const nowIso = new Date().toISOString();
-  const allowed = (grantRows ?? []).some((g: any) => {
+  const allowed = (grants ?? []).some((g: any) => {
     const exp = g?.expires_at ? String(g.expires_at) : "";
-    // allowed if no expiry or expiry in the future
     return !exp || exp > nowIso;
   });
 

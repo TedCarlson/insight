@@ -5,7 +5,10 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
-async function guardSelectedOrgRosterManage() {
+type GuardOk = { ok: true; auth_user_id: string; pc_org_id: string };
+type GuardFail = { ok: false; status: number; error: string };
+
+async function guardSelectedOrgRosterManage(): Promise<GuardOk | GuardFail> {
   const sb = await supabaseServer();
   const admin = supabaseAdmin();
 
@@ -14,12 +17,10 @@ async function guardSelectedOrgRosterManage() {
     error: userErr,
   } = await sb.auth.getUser();
 
-  // Hard stop if not authenticated
   if (userErr || !user?.id) {
-    return { ok: false as const, status: 401, error: "Unauthorized" };
+    return { ok: false, status: 401, error: "Unauthorized" };
   }
 
-  // Capture userId AFTER the null check so TS is happy everywhere below
   const userId = user.id;
 
   // Selected org comes from user_profile (admin read)
@@ -30,27 +31,45 @@ async function guardSelectedOrgRosterManage() {
     .maybeSingle();
 
   if (profErr) {
-    return { ok: false as const, status: 500, error: profErr.message };
+    return { ok: false, status: 500, error: profErr.message };
   }
 
   const pc_org_id = String(profile?.selected_pc_org_id ?? "").trim();
   if (!pc_org_id) {
-    return { ok: false as const, status: 409, error: "No PC org selected" };
+    return { ok: false, status: 409, error: "No PC org selected" };
   }
 
-  // Permission gate (use the logged-in user's session client so RLS/claims apply)
-  const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
+  // ✅ Owner bypass
+  const { data: ownerRow, error: ownerErr } = await admin
+    .from("app_owners")
+    .select("auth_user_id")
+    .eq("auth_user_id", userId)
+    .maybeSingle();
 
-  const { data: allowed, error: permErr } = await apiClient.rpc("has_pc_org_permission", {
-    p_pc_org_id: pc_org_id,
-    p_permission_key: "roster_manage",
+  if (ownerErr) return { ok: false, status: 500, error: ownerErr.message };
+  if (ownerRow?.auth_user_id) return { ok: true, auth_user_id: userId, pc_org_id };
+
+  // ✅ Canonical grants check (api schema)
+  const { data: grants, error: grantErr } = await (admin as any)
+    .schema("api")
+    .from("pc_org_permission_grant")
+    .select("permission_key, expires_at, revoked_at")
+    .eq("pc_org_id", pc_org_id)
+    .eq("grantee_user_id", userId)
+    .is("revoked_at", null)
+    .in("permission_key", ["route_lock_manage", "roster_manage"]);
+
+  if (grantErr) return { ok: false, status: 403, error: "forbidden" };
+
+  const nowIso = new Date().toISOString();
+  const allowed = (grants ?? []).some((g: any) => {
+    const exp = g?.expires_at ? String(g.expires_at) : "";
+    return !exp || exp > nowIso;
   });
 
-  if (permErr || !allowed) {
-    return { ok: false as const, status: 403, error: "forbidden" };
-  }
+  if (!allowed) return { ok: false, status: 403, error: "forbidden" };
 
-  return { ok: true as const, auth_user_id: userId, pc_org_id };
+  return { ok: true, auth_user_id: userId, pc_org_id };
 }
 
 export async function POST(req: Request) {
@@ -71,7 +90,6 @@ export async function POST(req: Request) {
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 2000) : 500;
 
     let q = admin.from("quota_admin_v").select("*").eq("pc_org_id", pc_org_id);
-
     if (fiscal_month_id) q = q.eq("fiscal_month_id", fiscal_month_id);
 
     const { data, error } = await q

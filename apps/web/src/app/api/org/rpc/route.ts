@@ -298,7 +298,16 @@ export async function POST(req: NextRequest) {
     const { data, error } = args ? await rpcClient.rpc(fn, args) : await rpcClient.rpc(fn);
 
     if (error) {
-      return json(500, { ok: false, request_id: rid, error: error.message, code: "rpc_failed", fn, schema });
+      return json(500, {
+        ok: false,
+        request_id: rid,
+        error: error.message,
+        code: (error as any)?.code ?? "rpc_failed",     // <-- pass through PostgREST code e.g. PGRST203
+        details: (error as any)?.details ?? null,
+        hint: (error as any)?.hint ?? null,
+        fn,
+        schema,
+      });
     }
 
     return json(200, { ok: true, request_id: rid, data });

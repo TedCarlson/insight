@@ -407,17 +407,44 @@ private async rpcWrite<T>(
    * Try the same RPC with multiple argument-shapes.
    * This prevents UI drift when SQL param names are refined.
    */
-  private async rpcWithFallback<T>(fn: string, argAttempts: Array<Record<string, any> | undefined>): Promise<T> {
-    let lastErr: any = null;
+  private async rpcWithFallback<T>(
+  fn: string,
+  argAttempts: Array<Record<string, any> | undefined>
+    ): Promise<T> {
+      let firstErr: any = null;
 
-    for (const args of argAttempts) {
-      const { data, error } = args ? await (this.api() as any).rpc(fn, args) : await (this.api() as any).rpc(fn);
-      if (!error) return data as T;
-      lastErr = error;
+      for (const rawArgs of argAttempts) {
+        const args = rawArgs ? (this.compactRecord(rawArgs) as Record<string, any>) : undefined;
+
+        const { data, error } = args
+          ? await (this.api() as any).rpc(fn, args)
+          : await (this.api() as any).rpc(fn);
+
+        if (!error) return data as T;
+
+        // Keep the first error so we don't mask it with a later fallback error
+        if (!firstErr) firstErr = error;
+
+        const code = (error as any)?.code;
+        const msg = String((error as any)?.message ?? "");
+
+        // Retry ONLY when it's a schema-cache/signature mismatch:
+        // - PGRST202: function not found with given params
+        // - PGRST203: ambiguous overload selection
+        const retryable =
+          code === "PGRST202" ||
+          code === "PGRST203" ||
+          msg.includes("schema cache") ||
+          msg.includes("Could not find the function") ||
+          msg.includes("Could not choose the best candidate function");
+
+        if (!retryable) {
+          throw this.normalize(error); // real error: stop immediately
+        }
+      }
+
+      throw this.normalize(firstErr);
     }
-
-    throw this.normalize(lastErr);
-  }
 
   async pcOrgChoices(): Promise<PcOrgChoice[]> {
     return (await this.rpcWithFallback<PcOrgChoice[]>("pc_org_choices", [undefined])) ?? [];

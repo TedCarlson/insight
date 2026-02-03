@@ -5,49 +5,65 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
-async function guardSelectedOrg() {
-  const supabase = await supabaseServer();
+async function guardSelectedOrgRosterManage() {
+  const sb = await supabaseServer();
   const admin = supabaseAdmin();
 
   const {
     data: { user },
     error: userErr,
-  } = await supabase.auth.getUser();
+  } = await sb.auth.getUser();
 
-  if (userErr || !user) {
+  // Hard stop if not authenticated
+  if (userErr || !user?.id) {
     return { ok: false as const, status: 401, error: "Unauthorized" };
   }
 
+  // Capture userId AFTER the null check so TS is happy everywhere below
+  const userId = user.id;
+
+  // Selected org comes from user_profile (admin read)
   const { data: profile, error: profErr } = await admin
     .from("user_profile")
     .select("selected_pc_org_id")
-    .eq("auth_user_id", user.id)
+    .eq("auth_user_id", userId)
     .maybeSingle();
 
   if (profErr) {
     return { ok: false as const, status: 500, error: profErr.message };
   }
 
-  const selected = String(profile?.selected_pc_org_id ?? "").trim();
-  if (!selected) {
-    return { ok: false as const, status: 400, error: "No PC org selected" };
+  const pc_org_id = String(profile?.selected_pc_org_id ?? "").trim();
+  if (!pc_org_id) {
+    return { ok: false as const, status: 409, error: "No PC org selected" };
   }
 
-  return { ok: true as const, auth_user_id: user.id, pc_org_id: selected };
+  // Permission gate (use the logged-in user's session client so RLS/claims apply)
+  const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
+
+  const { data: allowed, error: permErr } = await apiClient.rpc("has_pc_org_permission", {
+    p_pc_org_id: pc_org_id,
+    p_permission_key: "roster_manage",
+  });
+
+  if (permErr || !allowed) {
+    return { ok: false as const, status: 403, error: "forbidden" };
+  }
+
+  return { ok: true as const, auth_user_id: userId, pc_org_id };
 }
 
 export async function POST(req: Request) {
   try {
-    const guard = await guardSelectedOrg();
+    const guard = await guardSelectedOrgRosterManage();
     if (!guard.ok) {
       return NextResponse.json({ ok: false, error: guard.error }, { status: guard.status });
     }
 
     const admin = supabaseAdmin();
-
     const body = (await req.json().catch(() => ({}))) as any;
 
-    // Allow the client to pass pc_org_id, but do NOT trust it.
+    // Do NOT trust client-passed org id
     const pc_org_id = guard.pc_org_id;
 
     const fiscal_month_id = String(body?.fiscal_month_id ?? "").trim() || null;
@@ -56,9 +72,7 @@ export async function POST(req: Request) {
 
     let q = admin.from("quota_admin_v").select("*").eq("pc_org_id", pc_org_id);
 
-    if (fiscal_month_id) {
-      q = q.eq("fiscal_month_id", fiscal_month_id);
-    }
+    if (fiscal_month_id) q = q.eq("fiscal_month_id", fiscal_month_id);
 
     const { data, error } = await q
       .order("fiscal_month_start_date", { ascending: false })

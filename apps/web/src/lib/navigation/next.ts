@@ -4,21 +4,24 @@
 const FALLBACK = "/";
 
 // Allowlist of valid destinations in *this* app.
-// Keep this list tight; add more routes as needed.
+// IMPORTANT: Keep this aligned with apps/web/middleware.ts (ALLOWED_NEXT_PREFIXES there).
 const ALLOWED_NEXT_PREFIXES = [
-  "/",              // landing
+  "/",
   "/home",
-  "/roster",
   "/admin",
+  "/org",
+  "/roster",
   "/onboard",
-  "/access",
-  "/auth/set-password",
+  "/route-lock",
+  "/metrics",
+  "/access", // note: disallowed below (prevents loops), but kept for parity
+  "/auth/set-password", // allow explicit internal jump used by callback wrapper
 ] as const;
 
 // Disallow redirecting back into auth machinery / doors.
 // (We allow /auth/set-password above explicitly.)
 const DISALLOWED_EXACT = new Set<string>(["/auth/callback", "/auth/signout"]);
-const DISALLOWED_PREFIXES = ["/login"] as const;
+const DISALLOWED_PREFIXES = ["/login", "/auth", "/access"] as const;
 
 function isAllowed(pathname: string) {
   return ALLOWED_NEXT_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
@@ -35,15 +38,12 @@ export function normalizeNext(input: string | null): string {
   // Must be an internal absolute path; block protocol-relative ("//...") too.
   if (!raw.startsWith("/") || raw.startsWith("//")) return FALLBACK;
 
-  // Strip query/hash; keep redirects simple and avoid pathname weirdness.
-  const pathname = raw.split("?")[0].split("#")[0];
+  // Keep querystring, but strip hash (hash is not meaningful server-side and can cause weird loops)
+  const [pathPlusQuery] = raw.split("#");
+  const pathname = pathPlusQuery.split("?")[0];
 
-  // Prevent loops / auth machinery
   if (isDisallowed(pathname)) return FALLBACK;
-
-  // Prevent nonsense routes (like /that-page) from becoming the post-login destination
   if (!isAllowed(pathname)) return FALLBACK;
 
-  // If you want to preserve query params for valid routes, change this to return `raw`.
-  return pathname;
+  return pathPlusQuery;
 }

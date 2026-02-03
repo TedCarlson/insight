@@ -1,39 +1,74 @@
 // apps/web/src/app/api/route-lock/quota/lookups/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
-async function guardSelectedOrgRosterManage() {
+type GuardOk = {
+  ok: true;
+  pc_org_id: string;
+  auth_user_id: string;
+};
+
+type GuardFail = {
+  ok: false;
+  status: number;
+  error: string;
+};
+
+async function guardSelectedOrgQuotaAccess(): Promise<GuardOk | GuardFail> {
   const sb = await supabaseServer();
-  const {
-    data: { user },
-    error: userErr,
-  } = await sb.auth.getUser();
+  const admin = supabaseAdmin();
 
-  if (!user || userErr) return { ok: false as const, status: 401, error: "unauthorized" };
+  const { data, error: userErr } = await sb.auth.getUser();
+  const user = data?.user ?? null;
 
-  const { data: profile, error: profileErr } = await sb
+  if (userErr || !user) {
+    return { ok: false, status: 401, error: "not_authenticated" };
+  }
+
+  // Read selected org using service role (bypass RLS on user_profile)
+  const { data: profile, error: profErr } = await admin
     .from("user_profile")
     .select("selected_pc_org_id")
     .eq("auth_user_id", user.id)
     .maybeSingle();
 
-  if (profileErr) return { ok: false as const, status: 500, error: profileErr.message };
+  if (profErr) return { ok: false, status: 500, error: profErr.message };
 
-  const pc_org_id = (profile?.selected_pc_org_id ?? null) as string | null;
-  if (!pc_org_id) return { ok: false as const, status: 409, error: "no selected org" };
+  const pc_org_id = String(profile?.selected_pc_org_id ?? "").trim();
+  if (!pc_org_id) return { ok: false, status: 409, error: "no_selected_pc_org" };
 
-  const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
-  const { data: allowed, error: permErr } = await apiClient.rpc("has_pc_org_permission", {
-    p_pc_org_id: pc_org_id,
-    p_permission_key: "roster_manage",
+  // IMPORTANT:
+  // Do NOT use api RPC here. Managers often won't have EXECUTE on api schema/functions.
+  // Instead, verify the grant row exists via service role.
+  //
+  // Primary permission for Route Lock management: roster_manage
+  // Optional future split: quota_manage
+  const { data: grantRows, error: grantErr } = await admin
+    .from("pc_org_permission_grant")
+    .select("permission_key, expires_at")
+    .eq("pc_org_id", pc_org_id)
+    .eq("auth_user_id", user.id)
+    .in("permission_key", ["roster_manage", "quota_manage"]);
+
+  if (grantErr) {
+    // If something is wrong with grants table access/schema, treat as forbidden (not 500)
+    // so we don't leak internals and we keep UI behavior consistent.
+    return { ok: false, status: 403, error: "forbidden" };
+  }
+
+  const nowIso = new Date().toISOString();
+  const allowed = (grantRows ?? []).some((g: any) => {
+    const exp = g?.expires_at ? String(g.expires_at) : "";
+    // allowed if no expiry or expiry in the future
+    return !exp || exp > nowIso;
   });
 
-  if (permErr || !allowed) return { ok: false as const, status: 403, error: "forbidden" };
+  if (!allowed) return { ok: false, status: 403, error: "forbidden" };
 
-  return { ok: true as const, pc_org_id, auth_user_id: user.id };
+  return { ok: true, pc_org_id, auth_user_id: user.id };
 }
 
 function isoDateOnly(d: Date) {
@@ -41,28 +76,22 @@ function isoDateOnly(d: Date) {
 }
 
 async function handler() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const guard = await guardSelectedOrgQuotaAccess();
+  if (!guard.ok) {
+    return NextResponse.json({ ok: false, error: guard.error }, { status: guard.status });
+  }
 
-  if (!url) return NextResponse.json({ ok: false, error: "missing NEXT_PUBLIC_SUPABASE_URL" }, { status: 500 });
-  if (!service) return NextResponse.json({ ok: false, error: "missing SUPABASE_SERVICE_ROLE_KEY" }, { status: 500 });
+  const admin = supabaseAdmin();
 
-  const guard = await guardSelectedOrgRosterManage();
-  if (!guard.ok) return NextResponse.json({ ok: false, error: guard.error }, { status: guard.status });
-
-  const admin = createClient(url, service, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
-  // Limit months to: 3 months back OR oldest record (if newer), plus ~2 months ahead.
+  // Limit months to: ~3 months back + ~2 months ahead (or oldest record if newer)
   const today = new Date();
   const startDefault = new Date(today);
-  startDefault.setDate(startDefault.getDate() - 92); // ~3 months back
+  startDefault.setDate(startDefault.getDate() - 92);
 
   const endDefault = new Date(today);
-  endDefault.setDate(endDefault.getDate() + 70); // ~2 months ahead
+  endDefault.setDate(endDefault.getDate() + 70);
 
-  // If the org has fewer than 3 months of history, start at oldest record’s month start.
+  // If org has fewer than 3 months of history, start at oldest record’s month start.
   const { data: oldestRow } = await admin
     .from("quota_admin_v")
     .select("fiscal_month_start_date")
@@ -114,7 +143,7 @@ export async function POST() {
   return handler();
 }
 
-// Optional: allow GET for manual testing in browser
+// Allow GET too so you never get a 405 if a caller hits it via browser / tooling.
 export async function GET() {
   return handler();
 }

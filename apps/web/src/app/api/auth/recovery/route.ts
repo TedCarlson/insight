@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     }
 
     const email = (body.email ?? "").trim().toLowerCase();
-    const next = normalizeNext(body.next ?? null);
+    const postPasswordNext = normalizeNext(body.next ?? null);
 
     if (!isLikelyEmail(email)) {
       return NextResponse.json({ error: "Valid email is required" }, { status: 400 });
@@ -58,12 +58,17 @@ export async function POST(req: NextRequest) {
     const base =
       (process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin || "http://localhost:3000").replace(/\/+$/, "");
 
-    // After recovery, Supabase redirects here:
-    //   /auth/callback?next=/auth/set-password?next=<next>
-    const innerNext = `/auth/set-password?next=${encodeURIComponent(next)}`;
-
+    /**
+     * IMPORTANT (fix):
+     * Do NOT pre-wrap /auth/set-password inside the "next" query param here.
+     * The callback route owns that decision (based on type=recovery), and will wrap idempotently.
+     *
+     * If we wrap here AND callback wraps again, users land in:
+     *   /auth/set-password?next=/auth/set-password?next=/home
+     */
     const callbackUrl = new URL("/auth/callback", base);
-    callbackUrl.searchParams.set("next", innerNext);
+    callbackUrl.searchParams.set("type", "recovery");
+    callbackUrl.searchParams.set("next", postPasswordNext);
     const redirectTo = callbackUrl.toString();
 
     const client = createClient(url, anon, { auth: { persistSession: false } });
@@ -115,7 +120,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({
           ok: true,
           email,
-          next,
+          next: postPasswordNext,
           redirect_to: redirectTo,
           action_link: actionLink,
           dev_only: true,
@@ -129,7 +134,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({
           ok: true,
           email,
-          next,
+          next: postPasswordNext,
           redirect_to: redirectTo,
           dev_only: true,
           note: "resetPasswordForEmail() sent an email; dev action_link generation failed.",
@@ -141,7 +146,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       email,
-      next,
+      next: postPasswordNext,
       redirect_to: redirectTo,
       dev_only: true,
       note: "resetPasswordForEmail() sent an email; no SUPABASE_SERVICE_ROLE_KEY so no action_link returned.",

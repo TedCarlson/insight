@@ -3,13 +3,25 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
+type CallbackType = "recovery" | "invite" | "magiclink" | "email_change";
+
 function pickNext(u: URL) {
   const all = u.searchParams.getAll("next");
-  // choose the last next if multiple exist
   const n = all.length ? all[all.length - 1] : null;
   // only allow internal paths
   if (!n || !n.startsWith("/")) return "/";
   return n;
+}
+
+function ensureSetPasswordNext(type: CallbackType | null, rawNext: string) {
+  const force = type === "invite" || type === "recovery" || type === "magiclink";
+  if (!force) return rawNext;
+
+  // Make wrapping idempotent to avoid loops like:
+  // /auth/set-password?next=/auth/set-password?next=/home
+  if (rawNext.startsWith("/auth/set-password")) return rawNext;
+
+  return `/auth/set-password?next=${encodeURIComponent(rawNext)}`;
 }
 
 export async function GET(req: Request) {
@@ -18,22 +30,10 @@ export async function GET(req: Request) {
   const code = url.searchParams.get("code");
   const token_hash = url.searchParams.get("token_hash");
   const token = url.searchParams.get("token");
-  const type = url.searchParams.get("type") as
-    | "recovery"
-    | "invite"
-    | "magiclink"
-    | "email_change"
-    | null;
+  const type = (url.searchParams.get("type") as CallbackType | null) ?? null;
 
   const rawNext = pickNext(url);
-
-  // For invite + recovery flows, always land on set-password first,
-  // then continue to the intended next.
-  const forceSetPassword =
-    type === "invite" || type === "recovery" || type === "magiclink";
-  const next = forceSetPassword
-    ? `/auth/set-password?next=${encodeURIComponent(rawNext)}`
-    : rawNext;
+  const next = ensureSetPasswordNext(type, rawNext);
 
   const cookieStore = await cookies();
 
@@ -56,7 +56,7 @@ export async function GET(req: Request) {
     },
   });
 
-  // 1) PKCE exchange
+  // 1) PKCE exchange (OAuth / magic link using code)
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
@@ -101,7 +101,7 @@ export async function GET(req: Request) {
    * access_token/refresh_token are in the URL fragment (#...), which the server cannot read.
    *
    * We must NOT redirect server-side (redirect drops the fragment). Instead, return a tiny HTML
-   * page that does a client-side redirect to `next` while preserving window.location.hash.
+   * page that does a client-side redirect to the computed destination while preserving window.location.hash.
    */
   const html = `<!doctype html>
 <html>
@@ -116,12 +116,17 @@ export async function GET(req: Request) {
     (function () {
       try {
         var params = new URLSearchParams(window.location.search);
-        var nextAll = params.getAll("next");
-        var next = (nextAll.length ? nextAll[nextAll.length - 1] : "/") || "/";
-        if (typeof next !== "string" || next[0] !== "/") next = "/";
+        var type = params.get("type"); // <-- was missing; caused nondeterministic redirects
 
-        if (type === "invite" || type === "recovery" || type === "magiclink") {
-          next = "/auth/set-password?next=" + encodeURIComponent(next);
+        var nextAll = params.getAll("next");
+        var rawNext = (nextAll.length ? nextAll[nextAll.length - 1] : "/") || "/";
+        if (typeof rawNext !== "string" || rawNext[0] !== "/") rawNext = "/";
+
+        // Idempotent "force set-password" for invite/recovery/magiclink
+        var force = (type === "invite" || type === "recovery" || type === "magiclink");
+        var next = rawNext;
+        if (force && !rawNext.startsWith("/auth/set-password")) {
+          next = "/auth/set-password?next=" + encodeURIComponent(rawNext);
         }
 
         // Preserve fragment tokens

@@ -4,7 +4,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOrg } from "@/state/org";
-import { useSession } from "@/state/session";
 import {
   api,
   type PcOrgPermissionGrantRow,
@@ -47,29 +46,21 @@ function displayUser(u: UserHit) {
 const OWNER_AUTH_USER_ID = process.env.NEXT_PUBLIC_OWNER_AUTH_USER_ID ?? "";
 
 /**
- * “Manager Bundle”
+ * Manager Bundle:
  * - people_manage: onboarding/person edits
- * - roster_manage: roster + all Route Lock write surfaces (routes/quota/schedule/shift validation)
- * - leadership_manage: reporting chain changes (if applicable in your org flows)
- *
- * NOTE: Bundle grant/revoke is intended to be **admin/app-owner only**.
- * Managers can still grant/revoke *individual* permissions (if you allow them into this console),
- * but they should not be able to apply the full bundle.
+ * - roster_manage: roster + Route Lock write surfaces (routes/quota/schedule/shift validation)
+ * - leadership_manage: reporting chain changes (if applicable)
  */
 const MANAGER_BUNDLE = ["people_manage", "roster_manage", "leadership_manage"] as const;
 type ManagerKey = (typeof MANAGER_BUNDLE)[number];
 
 export default function EdgePermissionsConsolePage() {
   const { selectedOrgId, orgs, orgsLoading } = useOrg();
-  const session = useSession();
 
-  // Viewer identity/role
-  const viewerReady = !!session?.ready;
-  const viewerAuthUserId = session?.userId ?? "";
-  const viewerIsOwner = !!session?.isOwner;
-  const viewerLoading = !viewerReady;
-
-  const canUseManagerBundle = viewerIsOwner || (!!OWNER_AUTH_USER_ID && viewerAuthUserId === OWNER_AUTH_USER_ID);
+  // Viewer (the person using this console) — used to lock the Manager Bundle buttons to owner only
+  const [viewerAuthUserId, setViewerAuthUserId] = useState<string>("");
+  const [viewerIsOwner, setViewerIsOwner] = useState<boolean>(false);
+  const [viewerLoading, setViewerLoading] = useState<boolean>(true);
 
   const selectedOrgName = useMemo(() => {
     if (!selectedOrgId) return null;
@@ -119,8 +110,6 @@ export default function EdgePermissionsConsolePage() {
   const [bundleBusy, setBundleBusy] = useState(false);
 
   const visibleOrgs: PcOrgChoice[] = useMemo(() => {
-    // Reuse the org list already present in the session/org wrapper.
-    // For dev this is effectively “all orgs”; for others it is “orgs you can see/manage.”
     const list = (orgs ?? []) as any[];
     return list as PcOrgChoice[];
   }, [orgs]);
@@ -135,12 +124,44 @@ export default function EdgePermissionsConsolePage() {
     });
   }, [visibleOrgs, orgFilter]);
 
+  // Load viewer identity once (owner gating for Manager Bundle)
+  useEffect(() => {
+    let alive = true;
+
+    async function loadViewer() {
+      setViewerLoading(true);
+      try {
+        const r = await fetch("/api/admin/me", { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j?.ok) throw new Error(j?.error ?? `Failed to load viewer (${r.status})`);
+
+        if (!alive) return;
+        const vid = String(j.auth_user_id ?? "");
+        setViewerAuthUserId(vid);
+        // Prefer server truth; fallback to env compare for safety
+        const isOwner = !!j.is_owner || (!!OWNER_AUTH_USER_ID && vid === OWNER_AUTH_USER_ID);
+        setViewerIsOwner(isOwner);
+      } catch {
+        if (!alive) return;
+        setViewerAuthUserId("");
+        setViewerIsOwner(false);
+      } finally {
+        if (!alive) return;
+        setViewerLoading(false);
+      }
+    }
+
+    loadViewer();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const loadIsItgSupervisor = useCallback(async (userId: string) => {
     try {
       const out = await api.isItgSupervisor(userId);
       setIsItgSupervisor(!!out);
     } catch {
-      // If the RPC is not available or forbidden for some reason, default to false.
       setIsItgSupervisor(false);
     }
   }, []);
@@ -150,9 +171,7 @@ export default function EdgePermissionsConsolePage() {
     setErr(null);
     try {
       const rows = await api.pcOrgEligibilityForUser(userId);
-      const s = new Set<string>(
-        (rows ?? []).map((r: PcOrgEligibilityRow) => String(r.pc_org_id ?? "")).filter(Boolean)
-      );
+      const s = new Set<string>((rows ?? []).map((r: PcOrgEligibilityRow) => String(r.pc_org_id ?? "")).filter(Boolean));
       setEligibleOrgIds(s);
     } catch (e: any) {
       setEligibleOrgIds(new Set());
@@ -198,9 +217,7 @@ export default function EdgePermissionsConsolePage() {
     setUsersLoading(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/admin/org-users?pc_org_id=${encodeURIComponent(selectedOrgId)}`, {
-        cache: "no-store",
-      });
+      const r = await fetch(`/api/admin/org-users?pc_org_id=${encodeURIComponent(selectedOrgId)}`, { cache: "no-store" });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error ?? `Failed to load users (${r.status})`);
       const list = (j?.users ?? []) as UserHit[];
@@ -237,7 +254,6 @@ export default function EdgePermissionsConsolePage() {
 
   useEffect(() => {
     if (!selectedOrgId || orgsLoading) return;
-    // Load once per org selection
     refreshAll();
   }, [selectedOrgId, orgsLoading, refreshAll]);
 
@@ -250,7 +266,6 @@ export default function EdgePermissionsConsolePage() {
     loadEligibilityForUser(authUserId);
   }, [authUserId, loadIsItgSupervisor, loadEligibilityForUser]);
 
-  // Simple workflow: click to grant/revoke (single permission)
   async function togglePermission(permission_key: string) {
     if (!selectedOrgId) return;
     if (!authUserId) return;
@@ -273,7 +288,6 @@ export default function EdgePermissionsConsolePage() {
           expires_at: advancedOpen && expiresAt.trim() ? expiresAt.trim() : null,
           notes: advancedOpen && notes.trim() ? notes.trim() : null,
         });
-        // Clear advanced fields after a successful grant so they don't "stick" unexpectedly
         setExpiresAt("");
         setNotes("");
       }
@@ -284,11 +298,10 @@ export default function EdgePermissionsConsolePage() {
     }
   }
 
-  // Bundle helpers (fast manager setup)
+  // Bundle helpers
   const availablePermissionKeys = useMemo(() => new Set(defs.map((d) => String(d.permission_key))), [defs]);
 
   const managerBundleKeys: ManagerKey[] = useMemo(() => {
-    // only keys that exist in defs to avoid confusing “missing permission def” errors
     return MANAGER_BUNDLE.filter((k) => availablePermissionKeys.has(k)) as ManagerKey[];
   }, [availablePermissionKeys]);
 
@@ -298,12 +311,19 @@ export default function EdgePermissionsConsolePage() {
     return n;
   }, [managerBundleKeys, grantedKeys]);
 
+  const canUseManagerBundleButtons = useMemo(() => {
+    // Bundle is admin/owner-only. This is the behavior you asked for.
+    if (viewerLoading) return false;
+    return viewerIsOwner;
+  }, [viewerLoading, viewerIsOwner]);
+
   async function grantManagerBundle() {
     if (!selectedOrgId || !authUserId) return;
-    if (!canUseManagerBundle) {
-      setErr("Only the app owner/admin can grant the Manager Bundle.");
+    if (!canUseManagerBundleButtons) {
+      setErr("Manager Bundle can only be granted by the app owner/admin.");
       return;
     }
+
     setErr(null);
     setBundleBusy(true);
     try {
@@ -327,10 +347,11 @@ export default function EdgePermissionsConsolePage() {
 
   async function revokeManagerBundle() {
     if (!selectedOrgId || !authUserId) return;
-    if (!canUseManagerBundle) {
-      setErr("Only the app owner/admin can revoke the Manager Bundle.");
+    if (!canUseManagerBundleButtons) {
+      setErr("Manager Bundle can only be revoked by the app owner/admin.");
       return;
     }
+
     setErr(null);
     setBundleBusy(true);
     try {
@@ -376,27 +397,10 @@ export default function EdgePermissionsConsolePage() {
               Org: <span className="text-[var(--to-ink)]">{selectedOrgName ?? selectedOrgId}</span>
             </div>
 
-            {/* Helpful note: who is viewing + whether bundle is available */}
-            <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
-              Viewer: {viewerLoading ? "Loading…" : viewerAuthUserId ? viewerAuthUserId : "—"}
-              {viewerLoading ? "" : canUseManagerBundle ? " • Admin: Manager Bundle enabled" : " • Manager Bundle locked (owner/admin only)"}
-            </div>
-
             {err ? (
               <div className="mt-3">
                 <Notice variant="danger" title="Error">
                   <div className="text-sm">{err}</div>
-                </Notice>
-              </div>
-            ) : null}
-
-            {!viewerLoading && !canUseManagerBundle ? (
-              <div className="mt-3">
-                <Notice variant="warning" title="Manager Bundle is locked">
-                  <div className="text-sm">
-                    This console still lets you grant/revoke individual permissions, but the <b>Manager Bundle</b> grant/revoke
-                    buttons are restricted to the app owner/admin.
-                  </div>
                 </Notice>
               </div>
             ) : null}
@@ -553,6 +557,7 @@ export default function EdgePermissionsConsolePage() {
                   {authUserId ? (
                     <div className="text-xs text-[var(--to-ink-muted)] mt-1">
                       Manager Bundle: {managerBundleGrantedCount}/{managerBundleKeys.length} granted
+                      {!viewerLoading && !viewerIsOwner ? " • (bundle is owner-only)" : ""}
                     </div>
                   ) : null}
                 </div>
@@ -563,8 +568,14 @@ export default function EdgePermissionsConsolePage() {
                       type="button"
                       variant="secondary"
                       onClick={grantManagerBundle}
-                      disabled={bundleBusy || loading || managerBundleKeys.length === 0 || viewerLoading || !canUseManagerBundle}
-                      title={canUseManagerBundle ? "Grant the standard Manager Bundle" : "Owner/Admin only"}
+                      disabled={
+                        bundleBusy ||
+                        loading ||
+                        managerBundleKeys.length === 0 ||
+                        viewerLoading ||
+                        !viewerIsOwner
+                      }
+                      title={viewerIsOwner ? "Grant the standard Manager Bundle" : "Owner/admin only"}
                     >
                       {bundleBusy ? "Working…" : "Grant Manager Bundle"}
                     </Button>
@@ -579,9 +590,9 @@ export default function EdgePermissionsConsolePage() {
                         managerBundleKeys.length === 0 ||
                         managerBundleGrantedCount === 0 ||
                         viewerLoading ||
-                        !canUseManagerBundle
+                        !viewerIsOwner
                       }
-                      title={canUseManagerBundle ? "Revoke the standard Manager Bundle" : "Owner/Admin only"}
+                      title={viewerIsOwner ? "Revoke the standard Manager Bundle" : "Owner/admin only"}
                     >
                       {bundleBusy ? "Working…" : "Revoke Manager Bundle"}
                     </Button>
@@ -619,7 +630,12 @@ export default function EdgePermissionsConsolePage() {
                           ) : null}
                         </div>
 
-                        <Button type="button" variant="secondary" onClick={() => togglePermission(key)} disabled={loading || bundleBusy}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => togglePermission(key)}
+                          disabled={loading || bundleBusy}
+                        >
                           {on ? "Revoke" : "Grant"}
                         </Button>
                       </div>

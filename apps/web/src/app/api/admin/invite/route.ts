@@ -96,19 +96,20 @@ export async function POST(req: Request) {
     const postPasswordNext = normalizeNext(body.next ?? "/home");
 
     /**
-     * IMPORTANT:
-     * For Supabase invites, send users DIRECTLY to /auth/set-password.
-     * That page can consume the token fragment (#access_token/#refresh_token)
-     * and complete the password set + session bootstrap.
+     * IMPORTANT (fix):
+     * ALL emailed auth links (invite, magiclink fallback) should land on /auth/callback first.
+     * - callback can exchange/verify and set cookies server-side when possible
+     * - callback has an HTML fallback that preserves #access_token fragments
+     * - callback then routes to /auth/set-password for invite/recovery/magiclink types
      *
-     * Also: use URL() to be origin-safe even if NEXT_PUBLIC_SITE_URL includes a path.
+     * Direct-to /auth/set-password is less deterministic on mobile (easy to lose session/fragment),
+     * which is exactly what your screenshot shows ("No active session found").
      */
-    const setPasswordUrl = new URL("/auth/set-password", siteUrl);
-    setPasswordUrl.searchParams.set("next", postPasswordNext);
-    const redirectTo = setPasswordUrl.toString();
+    const inviteCb = new URL("/auth/callback", siteUrl);
+    inviteCb.searchParams.set("type", "invite");
+    inviteCb.searchParams.set("next", postPasswordNext);
+    const redirectTo = inviteCb.toString();
 
-    // For magic links, always go through /auth/callback so cookies/session get set.
-    // Then callback will forward to /auth/set-password and preserve tokens if needed.
     const magicCb = new URL("/auth/callback", siteUrl);
     magicCb.searchParams.set("type", "magiclink");
     magicCb.searchParams.set("next", postPasswordNext);
@@ -167,13 +168,13 @@ export async function POST(req: Request) {
     if (inviteRes.error) {
       const code = (inviteRes.error as any)?.code;
 
-      // If the user already exists, require magic link instead of invite.
+      // Existing user: invites won't email; send magic link instead.
       if (code === "email_exists") {
         const { error: otpErr } = await supabase.auth.signInWithOtp({
           email,
           options: {
             shouldCreateUser: false,
-            emailRedirectTo: redirectTo, // send them right to /auth/set-password?next=...
+            emailRedirectTo: magicLinkRedirectTo,
           },
         });
 
@@ -182,7 +183,7 @@ export async function POST(req: Request) {
             {
               error: "email_exists fallback failed (signInWithOtp)",
               details: otpErr,
-              redirect_to: redirectTo,
+              redirect_to: magicLinkRedirectTo,
             },
             { status: 400 }
           );
@@ -195,54 +196,18 @@ export async function POST(req: Request) {
             mode: "magic_link_existing_user",
             existing_user: true,
             email,
-            redirect_to: redirectTo,
+            redirect_to: magicLinkRedirectTo,
             post_password_next: postPasswordNext,
           },
           { status: 200 }
         );
       }
 
-      if (inviteRes.error) {
-        const code = (inviteRes.error as any)?.code;
-
-        // Existing user: invite won't email. Require magic link instead.
-        if (code === "email_exists") {
-          const { error: otpErr } = await supabase.auth.signInWithOtp({
-            email,
-            options: {
-              shouldCreateUser: false,
-              emailRedirectTo: magicLinkRedirectTo,
-            },
-          });
-
-          if (otpErr) {
-            return NextResponse.json(
-              {
-                error: "email_exists fallback failed (signInWithOtp)",
-                details: otpErr,
-                redirect_to: magicLinkRedirectTo,
-              },
-              { status: 400 }
-            );
-          }
-
-          return NextResponse.json({
-            ok: true,
-            emailed: true,
-            mode: "magic_link_existing_user",
-            email,
-            redirect_to: magicLinkRedirectTo,
-            post_password_next: postPasswordNext,
-          });
-        }
-
-        return NextResponse.json(
-          { error: "inviteUserByEmail failed", details: inviteRes.error, redirect_to: redirectTo },
-          { status: 400 }
-        );
-      }
+      return NextResponse.json(
+        { error: "inviteUserByEmail failed", details: inviteRes.error, redirect_to: redirectTo },
+        { status: 400 }
+      );
     }
-
 
     const invitedUserId = (inviteRes.data as any)?.user?.id ?? null;
 
@@ -253,6 +218,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // (Optional but helpful) ensure metadata is correct on the auth user
     const upd = await admin.auth.admin.updateUserById(invitedUserId, {
       user_metadata: meta,
       app_metadata: { assignment_id },
@@ -267,6 +233,7 @@ export async function POST(req: Request) {
           warning_details: upd.error,
           invited: { email, auth_user_id: invitedUserId, ...meta },
           redirect_to: redirectTo,
+          post_password_next: postPasswordNext,
         },
         { status: 200 }
       );

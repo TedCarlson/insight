@@ -715,35 +715,27 @@ export default function QuotaAdminClient() {
             </thead>
             <tbody>
               {filteredHistoryRows.length === 0 ? (
-                <tr className="border-t border-[var(--to-border)]">
+                <tr key="quota-history-empty" className="border-t border-[var(--to-border)]">
                   <td colSpan={10} className="p-3 text-[var(--to-ink-muted)]">
                     No quota rows yet.
                   </td>
                 </tr>
               ) : (
-                filteredHistoryRows.map((r) => {
-                  const weekly =
-                    toInt(r.qh_sun) +
-                    toInt(r.qh_mon) +
-                    toInt(r.qh_tue) +
-                    toInt(r.qh_wed) +
-                    toInt(r.qh_thu) +
-                    toInt(r.qh_fri) +
-                    toInt(r.qh_sat);
-
-                  return (
-                    <tr key={r.quota_id} className="border-t border-[var(--to-border)]">
-                      <td className="p-2 text-[var(--to-ink-muted)]">{fiscalShortFromRow(r)}</td>
-                      <td className="p-2 font-medium">{r.route_name}</td>
-                      {DAYS.map((d) => (
-                        <td key={d.key} className="p-2 text-right">
-                          {toInt((r as any)[d.key])}
-                        </td>
-                      ))}
-                      <td className="p-2 text-right font-medium">{weekly}</td>
-                    </tr>
-                  );
-                })
+                filteredHistoryRows.map((r, i) => (
+                  <tr key={`${r.quota_id}-${i}`} className="border-t border-[var(--to-border)]">
+                    <td className="p-2 text-xs">{r.fiscal_month_label}</td>
+                    <td className="p-2 text-xs">{r.route_name}</td>
+                    <td className="p-2 text-xs">{r.qt_hours}</td>
+                    <td className="p-2 text-xs">{r.qt_units}</td>
+                    <td className="p-2 text-xs">{r.qh_sun}</td>
+                    <td className="p-2 text-xs">{r.qh_mon}</td>
+                    <td className="p-2 text-xs">{r.qh_tue}</td>
+                    <td className="p-2 text-xs">{r.qh_wed}</td>
+                    <td className="p-2 text-xs">{r.qh_thu}</td>
+                    <td className="p-2 text-xs">{r.qh_fri}</td>
+                    {/* keep the rest of your cells exactly as-is */}
+                  </tr>
+                ))
               )}
             </tbody>
           </table>

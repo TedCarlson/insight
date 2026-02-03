@@ -575,16 +575,7 @@ export default function OnboardPage() {
         co_code: derived_co_code,
         role: derived_role,
       });
-
-      if (opts.onboard) {
-        const start_date = new Date().toISOString().slice(0, 10);
-        await api.wizardProcessToRoster({
-          pc_org_id: String(validatedOrgId),
-          person_id,
-          start_date,
-        });
-      }
-
+      
       setCreateOpen(false);
       setCreateDraft({ active: true, co_ref_id: null });
 
@@ -1016,23 +1007,12 @@ const filteredRows = useMemo(() => {
                   </Button>
 
                                     <Button
-                    type="button"
+                    type="button" variant="secondary"
                     onClick={() => void handleCreatePerson({ onboard: false })}
                     disabled={createSaving || !createValid}
                   >
                     {createSaving ? "Creating…" : "Create"}
                   </Button>
-
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => void handleCreatePerson({ onboard: true })}
-                    disabled={createSaving || !createValid}
-                    title="Creates the person then immediately runs the onboarding wizard into roster."
-                  >
-                    {createSaving ? "Working…" : "Create & Onboard"}
-                  </Button>
-
                 </div>
               </div>
             </Card>

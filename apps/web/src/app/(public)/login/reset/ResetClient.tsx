@@ -1,23 +1,36 @@
+//apps/web/src/app/(public)/login/ResetClient.tsx
 "use client";
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { normalizeNext } from "@/lib/navigation/next";
 
 export default function ResetClient() {
   const sp = useSearchParams();
-  const next = sp.get("next") || "/";
+  const next = useMemo(() => normalizeNext(sp.get("next")), [sp]);
 
   const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+
   const [out, setOut] = useState<string>("");
-  const [actionLink, setActionLink] = useState<string>("");
   const [sending, setSending] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState<number>(0);
 
-    async function onSend() {
+  function hardNavigate(to: string) {
+    window.location.assign(to);
+  }
+
+  function isLikelyEmail(v: string) {
+    const s = v.trim().toLowerCase();
+    return s.includes("@") && s.includes(".");
+  }
+
+  async function onSendCode() {
     setOut("");
-    setActionLink("");
 
     const now = Date.now();
     if (cooldownUntil && now < cooldownUntil) {
@@ -26,19 +39,65 @@ export default function ResetClient() {
       return;
     }
 
-
     const normalized = email.trim().toLowerCase();
-    if (!normalized || !normalized.includes("@") || !normalized.includes(".")) {
+    if (!isLikelyEmail(normalized)) {
       setOut("Enter a valid email address.");
       return;
     }
 
     setSending(true);
     try {
-      const res = await fetch("/api/auth/recovery", {
+      const res = await fetch("/api/auth/code/request", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: normalized, next }),
+        body: JSON.stringify({ email: normalized, purpose: "reset" }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        setOut(`ERROR: HTTP ${res.status}\n${text || "(empty)"}`);
+        return;
+      }
+
+      setCooldownUntil(Date.now() + 60_000);
+
+      setOut(
+        "If an account exists for that email, you’ll receive a 6-digit code shortly. " +
+          "Enter it below along with your new password."
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function onSetPassword() {
+    setOut("");
+
+    const normalized = email.trim().toLowerCase();
+    if (!isLikelyEmail(normalized)) {
+      setOut("Enter a valid email address.");
+      return;
+    }
+    const c = code.trim();
+    if (c.length < 4) {
+      setOut("Enter the code from your email.");
+      return;
+    }
+    if (!password || password.length < 8) {
+      setOut("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirm) {
+      setOut("Passwords do not match.");
+      return;
+    }
+
+    setVerifying(true);
+    try {
+      const res = await fetch("/api/auth/code/confirm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: normalized, code: c, new_password: password }),
       });
 
       const text = await res.text();
@@ -49,56 +108,28 @@ export default function ResetClient() {
         json = null;
       }
 
-            if (!res.ok) {
-        if (res.status === 429 && json?.error === "email_rate_limited") {
-          // 60s UI cooldown to prevent hammering
-          setCooldownUntil(Date.now() + 60_000);
-          setOut(json?.message ?? "Too many email attempts. Please wait a minute and try again.");
-          return;
-        }
-
-        setOut(
-          `ERROR: HTTP ${res.status}\n` +
-            (json ? JSON.stringify(json, null, 2) : text || "(empty)")
-        );
+      if (!res.ok) {
+        const msg = json?.error ? String(json.error) : text || "Password set failed.";
+        setOut(msg);
         return;
       }
 
+      setOut("Password set successfully. Redirecting to login…");
 
-            const link = json?.action_link ?? "";
-
-      // Success UX should not depend on action_link (prod won't return it).
-      // Always show a generic "check your email" message; show dev link only if provided.
-      if (link) {
-        setActionLink(link);
-        setOut(
-          "If an account exists for that email, a password reset email was triggered. (Dev link is shown below for convenience.)"
-        );
-      } else {
-        setOut(
-          "If an account exists for that email, you'll receive a password reset link shortly. Please check your inbox and spam/junk folder."
-        );
-      }
-
+      const loginUrl = `/login${next ? `?next=${encodeURIComponent(next)}` : ""}`;
+      hardNavigate(loginUrl);
     } finally {
-      setSending(false);
+      setVerifying(false);
     }
   }
 
-  async function copyLink() {
-    try {
-      await navigator.clipboard.writeText(actionLink);
-      setOut("Copied link to clipboard.");
-    } catch {
-      setOut("Could not copy automatically. Please select and copy the link manually.");
-    }
-  }
+  const inCooldown = cooldownUntil ? Date.now() < cooldownUntil : false;
 
   return (
     <main className="mx-auto max-w-md p-6">
       <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Reset password</h1>
       <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-        In dev mode, we generate a recovery link for you to open (no email required).
+        We’ll email you a short code. Enter the code and choose a new password. (No clickable auth link required.)
       </p>
 
       <div className="mt-6 grid gap-3">
@@ -115,43 +146,65 @@ export default function ResetClient() {
         </label>
 
         <button
-          onClick={onSend}
-          disabled={sending || (cooldownUntil ? Date.now() < cooldownUntil : false)}
+          onClick={onSendCode}
+          disabled={sending || inCooldown}
           className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
           style={{ borderColor: "var(--to-border)" }}
         >
-          {sending ? "Generating..." : cooldownUntil && Date.now() < cooldownUntil ? "Please wait…" : "Generate reset link"}
+          {sending ? "Sending…" : inCooldown ? "Please wait…" : "Send code"}
         </button>
 
-        {actionLink && (
-          <div className="grid gap-2 rounded border p-3" style={{ borderColor: "var(--to-border)" }}>
-            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-              Recovery link
-            </div>
-            <pre
-              className="whitespace-pre-wrap break-all rounded border p-2 text-xs"
-              style={{ borderColor: "var(--to-border)", background: "var(--to-surface-2)" }}
-            >
-              {actionLink}
-            </pre>
-            <div className="flex gap-2">
-              <button
-                onClick={copyLink}
-                className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)]"
-                style={{ borderColor: "var(--to-border)" }}
-              >
-                Copy link
-              </button>
-              <a
-                href={actionLink}
-                className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)]"
-                style={{ borderColor: "var(--to-border)" }}
-              >
-                Open link
-              </a>
-            </div>
+        <div className="mt-2 grid gap-3 rounded border p-3" style={{ borderColor: "var(--to-border)" }}>
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
+            Enter code and new password
           </div>
-        )}
+
+          <label className="grid gap-1">
+            <span className="text-xs text-[var(--to-ink-muted)]">Code</span>
+            <input
+              className="rounded border px-3 py-2 text-sm"
+              style={{ borderColor: "var(--to-border)", background: "transparent" }}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="123456"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+            />
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-xs text-[var(--to-ink-muted)]">New password</span>
+            <input
+              type="password"
+              className="rounded border px-3 py-2 text-sm"
+              style={{ borderColor: "var(--to-border)", background: "transparent" }}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-xs text-[var(--to-ink-muted)]">Confirm password</span>
+            <input
+              type="password"
+              className="rounded border px-3 py-2 text-sm"
+              style={{ borderColor: "var(--to-border)", background: "transparent" }}
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+
+          <button
+            onClick={onSetPassword}
+            disabled={verifying}
+            className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
+            style={{ borderColor: "var(--to-border)" }}
+          >
+            {verifying ? "Saving…" : "Save password"}
+          </button>
+        </div>
 
         <Link
           href={`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`}

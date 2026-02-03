@@ -1,137 +1,81 @@
+// apps/web/src/app/(public)/login/LoginClient.tsx
+
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { normalizeNext } from "@/lib/navigation/next";
+import { createClient } from "@/lib/supabase/client";
 
-export default function ResetClient() {
+function hardNavigate(to: string) {
+  window.location.assign(to);
+}
+
+export default function LoginClient() {
   const sp = useSearchParams();
   const next = useMemo(() => normalizeNext(sp.get("next")), [sp]);
+  const supabase = useMemo(() => createClient(), []);
 
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
 
-  const [out, setOut] = useState<string>("");
-  const [sending, setSending] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [cooldownUntil, setCooldownUntil] = useState<number>(0);
-
-  function hardNavigate(to: string) {
-    window.location.assign(to);
-  }
+  const [out, setOut] = useState("");
+  const [loading, setLoading] = useState(false);
 
   function isLikelyEmail(v: string) {
     const s = v.trim().toLowerCase();
     return s.includes("@") && s.includes(".");
   }
 
-  async function onSendCode() {
+  async function onPasswordLogin() {
     setOut("");
+    const e = email.trim().toLowerCase();
+    if (!isLikelyEmail(e)) return setOut("Enter a valid email.");
+    if (!password) return setOut("Enter your password.");
 
-    const now = Date.now();
-    if (cooldownUntil && now < cooldownUntil) {
-      const secs = Math.ceil((cooldownUntil - now) / 1000);
-      setOut(`Please wait ${secs}s before trying again.`);
-      return;
-    }
-
-    const normalized = email.trim().toLowerCase();
-    if (!isLikelyEmail(normalized)) {
-      setOut("Enter a valid email address.");
-      return;
-    }
-
-    setSending(true);
+    setLoading(true);
     try {
-      const res = await fetch("/api/auth/code/request", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: normalized, purpose: "reset" }),
-      });
+      const { error } = await supabase.auth.signInWithPassword({ email: e, password });
+      if (error) return setOut(error.message);
 
-      // Always generic success (avoid enumeration), but still show useful UX
-      if (!res.ok) {
-        const text = await res.text();
-        setOut(`ERROR: HTTP ${res.status}\n${text || "(empty)"}`);
-        return;
-      }
-
-      // 60s UI cooldown to prevent hammering / accidental re-sends
-      setCooldownUntil(Date.now() + 60_000);
-
-      setOut(
-        "If an account exists for that email, you’ll receive a 6-digit code shortly. " +
-          "Enter it below along with your new password."
-      );
+      hardNavigate(next);
     } finally {
-      setSending(false);
+      setLoading(false);
     }
   }
 
-  async function onSetPassword() {
+  async function onMagicLink() {
     setOut("");
+    const e = email.trim().toLowerCase();
+    if (!isLikelyEmail(e)) return setOut("Enter a valid email.");
 
-    const normalized = email.trim().toLowerCase();
-    if (!isLikelyEmail(normalized)) {
-      setOut("Enter a valid email address.");
-      return;
-    }
-    const c = code.trim();
-    if (c.length < 4) {
-      setOut("Enter the code from your email.");
-      return;
-    }
-    if (!password || password.length < 8) {
-      setOut("Password must be at least 8 characters.");
-      return;
-    }
-    if (password !== confirm) {
-      setOut("Passwords do not match.");
-      return;
-    }
-
-    setVerifying(true);
+    setLoading(true);
     try {
-      const res = await fetch("/api/auth/code/confirm", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: normalized, code: c, new_password: password }),
+      // Ensure magic link returns to callback, not directly to app root
+      const base =
+        (process.env.NEXT_PUBLIC_SITE_URL || window.location.origin).replace(/\/+$/, "");
+      const cb = new URL("/auth/callback", base);
+      cb.searchParams.set("type", "magiclink");
+      cb.searchParams.set("next", next);
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: e,
+        options: { emailRedirectTo: cb.toString() },
       });
 
-      const text = await res.text();
-      let json: any = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch {
-        json = null;
-      }
+      if (error) return setOut(error.message);
 
-      if (!res.ok) {
-        const msg = json?.error ? String(json.error) : text || "Password set failed.";
-        setOut(msg);
-        return;
-      }
-
-      setOut("Password set successfully. Redirecting to login…");
-
-      const loginUrl = `/login${next ? `?next=${encodeURIComponent(next)}` : ""}`;
-      hardNavigate(loginUrl);
+      setOut("Check your email for a sign-in link.");
     } finally {
-      setVerifying(false);
+      setLoading(false);
     }
   }
-
-  const inCooldown = cooldownUntil ? Date.now() < cooldownUntil : false;
 
   return (
     <main className="mx-auto max-w-md p-6">
-      <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Reset password</h1>
-      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">
-        We’ll email you a short code. Enter the code and choose a new password. (No clickable auth link required.)
-      </p>
+      <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Login</h1>
+      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">Sign in with your password or request a magic link.</p>
 
       <div className="mt-6 grid gap-3">
         <label className="grid gap-1">
@@ -146,72 +90,41 @@ export default function ResetClient() {
           />
         </label>
 
+        <label className="grid gap-1">
+          <span className="text-xs text-[var(--to-ink-muted)]">Password</span>
+          <input
+            type="password"
+            className="rounded border px-3 py-2 text-sm"
+            style={{ borderColor: "var(--to-border)", background: "transparent" }}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+        </label>
+
         <button
-          onClick={onSendCode}
-          disabled={sending || inCooldown}
+          onClick={onPasswordLogin}
+          disabled={loading}
           className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
           style={{ borderColor: "var(--to-border)" }}
         >
-          {sending ? "Sending…" : inCooldown ? "Please wait…" : "Send code"}
+          {loading ? "Working…" : "Sign in"}
         </button>
 
-        <div className="mt-2 grid gap-3 rounded border p-3" style={{ borderColor: "var(--to-border)" }}>
-          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--to-ink-muted)]">
-            Enter code and new password
-          </div>
-
-          <label className="grid gap-1">
-            <span className="text-xs text-[var(--to-ink-muted)]">Code</span>
-            <input
-              className="rounded border px-3 py-2 text-sm"
-              style={{ borderColor: "var(--to-border)", background: "transparent" }}
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="123456"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-            />
-          </label>
-
-          <label className="grid gap-1">
-            <span className="text-xs text-[var(--to-ink-muted)]">New password</span>
-            <input
-              type="password"
-              className="rounded border px-3 py-2 text-sm"
-              style={{ borderColor: "var(--to-border)", background: "transparent" }}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </label>
-
-          <label className="grid gap-1">
-            <span className="text-xs text-[var(--to-ink-muted)]">Confirm password</span>
-            <input
-              type="password"
-              className="rounded border px-3 py-2 text-sm"
-              style={{ borderColor: "var(--to-border)", background: "transparent" }}
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              autoComplete="new-password"
-            />
-          </label>
-
-          <button
-            onClick={onSetPassword}
-            disabled={verifying}
-            className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
-            style={{ borderColor: "var(--to-border)" }}
-          >
-            {verifying ? "Saving…" : "Save password"}
-          </button>
-        </div>
+        <button
+          onClick={onMagicLink}
+          disabled={loading}
+          className="rounded border px-3 py-2 text-sm font-medium hover:bg-[var(--to-surface-2)] disabled:opacity-60"
+          style={{ borderColor: "var(--to-border)" }}
+        >
+          {loading ? "Working…" : "Send magic link"}
+        </button>
 
         <Link
-          href={`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+          href={`/login/reset${next ? `?next=${encodeURIComponent(next)}` : ""}`}
           className="text-sm underline underline-offset-4 text-[var(--to-ink-muted)]"
         >
-          Back to login
+          Forgot password? Reset with code
         </Link>
 
         {out && (

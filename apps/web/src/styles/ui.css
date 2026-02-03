@@ -77,12 +77,15 @@
 
 /* Primary: premium, not neon. Uses your accent token. */
 .to-btn--primary {
-  /* subtle top highlight for “glass” feel */
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--to-accent) 92%, white 8%),
-    var(--to-accent)
-  );
+  /*
+    Safari/WebKit can fail the entire `background:` declaration when it contains
+    unsupported color functions (e.g. `color-mix()`), which results in a
+    transparent button with white text (looks "blank").
+
+    Use a safe fallback first, then layer a subtle highlight for the "glass" feel.
+  */
+  background: var(--to-accent);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0));
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
   @apply text-white;
 }

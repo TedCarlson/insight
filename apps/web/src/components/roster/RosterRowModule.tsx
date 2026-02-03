@@ -904,37 +904,6 @@ export function RosterRowModule({
   }, [personDraft, person, pcOrgId, row, orgAssociationEndedAt, activeAssignmentCount, activeLeadershipCount]);
   const endOrgBlocked = recordStatus.assignmentOk && recordStatus.leadershipOk;
 
-  async function submitRosterRecord(mode: "complete" | "incomplete") {
-    const incomplete = !recordStatus.complete;
-
-    if (mode === "complete" && incomplete) {
-      toast.push({
-        title: "Incomplete roster record",
-        message: `Missing: ${recordStatus.missing.join(", ")}`,
-        variant: "warning",
-        durationMs: 3200,
-      });
-    }
-
-    if (mode === "incomplete") {
-      toast.push({
-        title: "Submitted incomplete",
-        message: `Reminder: Missing: ${recordStatus.missing.join(", ") || "None"}`,
-        variant: incomplete ? "warning" : "success",
-        durationMs: 3200,
-      });
-    } else {
-      toast.push({
-        title: "Submitted",
-        message: incomplete ? "Submitted with missing fields." : "Roster record looks complete.",
-        variant: incomplete ? "warning" : "success",
-        durationMs: 2600,
-      });
-    }
-
-    onClose();
-  }
-
   async function endPcOrgCascade() {
     // NOTE: This does NOT end the PC Org itself (dimension table).
     // It ends THIS PERSON'S association to the current PC Org (person_pc_org).
@@ -1260,12 +1229,6 @@ export function RosterRowModule({
       size="lg"
       footer={
         <>
-          <Button variant="secondary" type="button" onClick={() => submitRosterRecord("complete")}>
-            Submit
-          </Button>
-          <Button variant="ghost" type="button" onClick={() => submitRosterRecord("incomplete")}>
-            Submit incomplete
-          </Button>
           <Button variant="ghost" type="button" onClick={onClose}>
             Close
           </Button>

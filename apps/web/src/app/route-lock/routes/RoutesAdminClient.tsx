@@ -242,7 +242,7 @@ export default function RoutesAdminClient() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button type="button" onClick={save} disabled={loading} className="h-10 px-3 text-xs">
+            <Button type="button" variant="secondary" onClick={save} disabled={loading} className="h-10 px-3 text-xs">
               {loading ? "Saving…" : selected ? "Save changes" : "Add route"}
             </Button>
 

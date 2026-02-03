@@ -1,81 +1,94 @@
 // apps/web/src/app/api/route-lock/quota/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
-async function getSelectedPcOrgId(supabase: any, authUserId: string) {
-  const { data, error } = await supabase
-    .from("user_profile")
-    .select("selected_pc_org_id")
-    .eq("auth_user_id", authUserId)
-    .maybeSingle();
+async function guardSelectedOrgRosterManage(req: Request) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  if (!url || !anon) {
+    return { ok: false as const, status: 500, error: "Missing Supabase env vars" };
+  }
 
-  if (error) throw new Error(error.message);
-  const id = (data?.selected_pc_org_id ?? null) as string | null;
-  return id;
-}
+  // Use bearer token if present; otherwise rely on cookies (same-origin fetch)
+  const authHeader = req.headers.get("authorization") ?? "";
+  const sb = createClient(url, anon, {
+    global: { headers: authHeader ? { Authorization: authHeader } : {} },
+    auth: { persistSession: false },
+  });
 
-export async function POST() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const admin = supabaseAdmin();
 
-  if (!url) return NextResponse.json({ ok: false, error: "missing env: NEXT_PUBLIC_SUPABASE_URL" }, { status: 500 });
-  if (!service) return NextResponse.json({ ok: false, error: "missing env: SUPABASE_SERVICE_ROLE_KEY" }, { status: 500 });
-
-  const supabase = await supabaseServer();
   const {
     data: { user },
     error: userErr,
-  } = await supabase.auth.getUser();
+  } = await sb.auth.getUser();
 
-  if (!user || userErr) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  if (!user || userErr) return { ok: false as const, status: 401, error: "unauthorized" };
 
-  const selected_pc_org_id = await getSelectedPcOrgId(supabase, user.id);
-  if (!selected_pc_org_id) return NextResponse.json({ ok: false, error: "no selected org" }, { status: 409 });
+  // IMPORTANT: read selected org via service-role to avoid user_profile RLS surprises
+  const { data: profile, error: profErr } = await admin
+    .from("user_profile")
+    .select("selected_pc_org_id")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
 
-  // service-role client for reads (views) — permission gating happens elsewhere (writes)
-  const admin = createClient(url, service, { auth: { persistSession: false, autoRefreshToken: false } });
+  if (profErr) return { ok: false as const, status: 500, error: profErr.message };
 
-  const [routesRes, monthsRes, quotaRes] = await Promise.all([
-    admin
-      .from("route_admin_v")
-      .select(
-        "route_id, route_name, pc_org_id, pc_org_name, mso_id, mso_name, division_id, division_name, division_code, region_id, region_name, region_code, pc_id, pc_number"
-      )
-      .eq("pc_org_id", selected_pc_org_id)
-      .order("route_name", { ascending: true }),
+  const pc_org_id = String(profile?.selected_pc_org_id ?? "").trim();
+  if (!pc_org_id) return { ok: false as const, status: 409, error: "no selected org" };
 
-    admin
-      .from("fiscal_month_dim")
-      .select("fiscal_month_id, month_key, label, start_date, end_date")
-      .order("start_date", { ascending: false })
-      .limit(36),
+  // Your RPC is in schema "api"
+  const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
 
-    admin
-      .from("quota_admin_v")
-      .select(
-        "quota_id, route_id, route_name, fiscal_month_id, fiscal_month_key, fiscal_month_label, fiscal_month_start_date, fiscal_month_end_date, pc_org_id, pc_org_name, qh_sun,qh_mon,qh_tue,qh_wed,qh_thu,qh_fri,qh_sat, qu_sun,qu_mon,qu_tue,qu_wed,qu_thu,qu_fri,qu_sat, qt_hours, qt_units"
-      )
-      .eq("pc_org_id", selected_pc_org_id)
-      .order("fiscal_month_start_date", { ascending: false })
-      .order("route_name", { ascending: true })
-      .limit(500),
-  ]);
+  const { data: allowed, error: permErr } = await apiClient.rpc("has_pc_org_permission", {
+    p_pc_org_id: pc_org_id,
+    p_permission_key: "roster_manage",
+  });
 
-  if (routesRes.error) return NextResponse.json({ ok: false, error: routesRes.error.message }, { status: 500 });
-  if (monthsRes.error) return NextResponse.json({ ok: false, error: monthsRes.error.message }, { status: 500 });
-  if (quotaRes.error) return NextResponse.json({ ok: false, error: quotaRes.error.message }, { status: 500 });
+  if (permErr) return { ok: false as const, status: 500, error: permErr.message };
+  if (!allowed) return { ok: false as const, status: 403, error: "forbidden" };
+
+  return { ok: true as const, sb, apiClient, admin, auth_user_id: user.id, pc_org_id };
+}
+
+export async function POST(req: Request) {
+  const guard = await guardSelectedOrgRosterManage(req);
+  if (!guard.ok) return NextResponse.json({ ok: false, error: guard.error }, { status: guard.status });
+
+  const body = await req.json().catch(() => null);
+  const fiscal_month_start_date = String(body?.fiscal_month_start_date ?? "").trim();
+  const fiscal_month_end_date = String(body?.fiscal_month_end_date ?? "").trim();
+  if (!fiscal_month_start_date || !fiscal_month_end_date) {
+    return NextResponse.json({ ok: false, error: "Missing fiscal month dates" }, { status: 400 });
+  }
+
+  // quota_rollup_build is also in schema "api"
+  const { data: built, error: buildErr } = await guard.apiClient.rpc("quota_rollup_build", {
+    p_pc_org_id: guard.pc_org_id,
+    p_fiscal_month_start_date: fiscal_month_start_date,
+    p_fiscal_month_end_date: fiscal_month_end_date,
+  });
+
+  if (buildErr) return NextResponse.json({ ok: false, error: buildErr.message }, { status: 500 });
+
+  // Pull the rollup rows from public table/view (should be accessible via normal policies)
+  const { data: rows, error: rowsErr } = await guard.sb
+    .from("quota_rollup")
+    .select("*")
+    .eq("pc_org_id", guard.pc_org_id)
+    .eq("fiscal_month_start_date", fiscal_month_start_date)
+    .eq("fiscal_month_end_date", fiscal_month_end_date)
+    .order("route_name", { ascending: true });
+
+  if (rowsErr) return NextResponse.json({ ok: false, error: rowsErr.message }, { status: 500 });
 
   return NextResponse.json({
     ok: true,
-    routes: routesRes.data ?? [],
-    months: monthsRes.data ?? [],
-    quota: quotaRes.data ?? [],
-    debug: {
-      selected_pc_org_id,
-      auth_user_id: user.id,
-    },
+    built: built ?? null,
+    pc_org_id: guard.pc_org_id,
+    rows: rows ?? [],
   });
 }

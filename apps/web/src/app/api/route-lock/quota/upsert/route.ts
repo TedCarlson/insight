@@ -18,6 +18,18 @@ type QuotaUpsertRow = {
   qh_sat: number;
 };
 
+type GuardOk = {
+  ok: true;
+  pc_org_id: string;
+  auth_user_id: string;
+};
+
+type GuardFail = {
+  ok: false;
+  status: number;
+  error: string;
+};
+
 function asUuid(v: unknown): string | null {
   const s = typeof v === "string" ? v.trim() : "";
   if (!s) return null;
@@ -31,7 +43,23 @@ function int0(v: unknown): number {
   return Math.max(0, Math.trunc(n));
 }
 
-async function guardSelectedOrgRosterManage() {
+async function hasAnyRole(admin: any, auth_user_id: string, roleKeys: string[]): Promise<boolean> {
+  const { data, error } = await admin.from("user_roles").select("role_key").eq("auth_user_id", auth_user_id);
+  if (error) return false;
+  const roles: string[] = (data ?? []).map((r: { role_key?: unknown }) => String(r?.role_key ?? ""));
+  return roles.some((rk: string) => roleKeys.includes(rk));
+}
+
+/**
+ * Guard for Quota WRITE operations.
+ * Must be scoped to selected_pc_org_id and allow:
+ * - owner
+ * - ITG leadership roles (admin/dev/director/manager/vp)
+ * - explicit org-scoped grants: route_lock_manage (preferred) OR roster_manage (legacy compatibility)
+ *
+ * Always requires baseline org access via api.can_access_pc_org(selected_org).
+ */
+async function guardSelectedOrgQuotaWrite(): Promise<GuardOk | GuardFail> {
   const sb = await supabaseServer();
   const admin = supabaseAdmin();
 
@@ -40,36 +68,75 @@ async function guardSelectedOrgRosterManage() {
     error: userErr,
   } = await sb.auth.getUser();
 
-  if (!user || userErr) return { ok: false as const, status: 401, error: "unauthorized" };
+  if (userErr || !user?.id) return { ok: false, status: 401, error: "unauthorized" };
+  const userId = user.id;
 
+  // Read selected org using service role (bypass RLS on user_profile)
   const { data: profile, error: profErr } = await admin
     .from("user_profile")
-    .select("selected_pc_org_id")
-    .eq("auth_user_id", user.id)
+    .select("selected_pc_org_id,status")
+    .eq("auth_user_id", userId)
     .maybeSingle();
 
-  if (profErr) return { ok: false as const, status: 500, error: profErr.message };
+  if (profErr) return { ok: false, status: 500, error: profErr.message };
 
   const pc_org_id = String(profile?.selected_pc_org_id ?? "").trim();
-  if (!pc_org_id) return { ok: false as const, status: 409, error: "no selected org" };
+  if (!pc_org_id) return { ok: false, status: 409, error: "no selected org" };
 
-  const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
-  const { data: allowed, error: permErr } = await apiClient.rpc("has_pc_org_permission", {
+  // Optional: require active
+  // if (String(profile?.status ?? "") !== "active") return { ok: false, status: 403, error: "forbidden" };
+
+  // ✅ Baseline org scope (session-aware)
+  const { data: canAccess, error: accessErr } = await (sb as any).schema("api").rpc("can_access_pc_org", {
     p_pc_org_id: pc_org_id,
-    p_permission_key: "roster_manage",
   });
 
-  if (permErr || !allowed) return { ok: false as const, status: 403, error: "forbidden" };
+  if (accessErr || !canAccess) return { ok: false, status: 403, error: "forbidden" };
 
-  return { ok: true as const, pc_org_id, auth_user_id: user.id };
+  // ✅ Owner bypass
+  const { data: ownerRow, error: ownerErr } = await admin
+    .from("app_owners")
+    .select("auth_user_id")
+    .eq("auth_user_id", userId)
+    .maybeSingle();
+
+  if (ownerErr) return { ok: false, status: 500, error: ownerErr.message };
+  if (ownerRow?.auth_user_id) return { ok: true, pc_org_id, auth_user_id: userId };
+
+  // ✅ Role bypass (ITG management roles)
+  const roleAllowed = await hasAnyRole(admin, userId, ["admin", "dev", "director", "manager", "vp"]);
+  if (roleAllowed) return { ok: true, pc_org_id, auth_user_id: userId };
+
+  // ✅ Canonical grants check (api schema)
+  // For quota writes, we specifically allow route_lock_manage (canonical) and roster_manage (legacy compatibility).
+  const { data: grants, error: grantErr } = await (admin as any)
+    .schema("api")
+    .from("pc_org_permission_grant")
+    .select("permission_key, expires_at, revoked_at")
+    .eq("pc_org_id", pc_org_id)
+    .eq("grantee_user_id", userId)
+    .is("revoked_at", null)
+    .in("permission_key", ["route_lock_manage", "roster_manage"]);
+
+  if (grantErr) return { ok: false, status: 403, error: "forbidden" };
+
+  const nowIso = new Date().toISOString();
+  const allowed = (grants ?? []).some((g: { expires_at?: unknown }) => {
+    const exp = g?.expires_at ? String(g.expires_at) : "";
+    return !exp || exp > nowIso;
+  });
+
+  if (!allowed) return { ok: false, status: 403, error: "forbidden" };
+
+  return { ok: true, pc_org_id, auth_user_id: userId };
 }
 
 export async function POST(req: Request) {
   try {
-    const guard = await guardSelectedOrgRosterManage();
+    const guard = await guardSelectedOrgQuotaWrite();
     if (!guard.ok) return NextResponse.json({ ok: false, error: guard.error }, { status: guard.status });
 
-    const body = await req.json().catch(() => null);
+    const body = (await req.json().catch(() => null)) as any;
     const rows = (body?.rows ?? []) as QuotaUpsertRow[];
 
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -108,7 +175,7 @@ export async function POST(req: Request) {
 
     if (routesErr) return NextResponse.json({ ok: false, error: routesErr.message }, { status: 500 });
 
-    const allowedSet = new Set((allowedRoutes ?? []).map((x: any) => String(x.route_id)));
+    const allowedSet = new Set((allowedRoutes ?? []).map((x: { route_id?: unknown }) => String(x.route_id ?? "")));
     const rejected = routeIds.filter((id) => !allowedSet.has(String(id)));
     if (rejected.length) {
       return NextResponse.json(
@@ -118,7 +185,7 @@ export async function POST(req: Request) {
     }
 
     // Manual upsert: select existing quota_id for (pc_org_id, route_id, fiscal_month_id), then update/insert.
-    const saved: any[] = [];
+    const saved: Array<Record<string, any> | null> = [];
 
     for (const r of clean) {
       const { data: existing, error: findErr } = await admin
@@ -152,10 +219,8 @@ export async function POST(req: Request) {
           .select("quota_id, pc_org_id, route_id, fiscal_month_id")
           .maybeSingle();
 
-        if (updErr) {
-          return NextResponse.json({ ok: false, error: updErr.message }, { status: 500 });
-        }
-        saved.push(upd);
+        if (updErr) return NextResponse.json({ ok: false, error: updErr.message }, { status: 500 });
+        saved.push(upd ?? null);
       } else {
         const { data: ins, error: insErr } = await admin
           .from("quota")
@@ -174,10 +239,8 @@ export async function POST(req: Request) {
           .select("quota_id, pc_org_id, route_id, fiscal_month_id")
           .maybeSingle();
 
-        if (insErr) {
-          return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
-        }
-        saved.push(ins);
+        if (insErr) return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
+        saved.push(ins ?? null);
       }
     }
 

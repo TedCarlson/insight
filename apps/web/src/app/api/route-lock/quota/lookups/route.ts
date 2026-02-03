@@ -5,17 +5,19 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
-type GuardOk = {
-  ok: true;
-  pc_org_id: string;
-  auth_user_id: string;
-};
+type GuardOk = { ok: true; pc_org_id: string; auth_user_id: string; apiClient: any };
+type GuardFail = { ok: false; status: number; error: string; debug?: any };
 
-type GuardFail = {
-  ok: false;
-  status: number;
-  error: string;
-};
+async function hasAnyRole(admin: any, auth_user_id: string, roleKeys: string[]): Promise<boolean> {
+  const { data, error } = await admin.from("user_roles").select("role_key").eq("auth_user_id", auth_user_id);
+  if (error) return false;
+  const roles = (data ?? []).map((r: any) => String(r?.role_key ?? ""));
+  return roles.some((rk: string) => roleKeys.includes(rk));
+}
+
+function isoDateOnly(d: Date) {
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
+}
 
 async function guardSelectedOrgQuotaAccess(): Promise<GuardOk | GuardFail> {
   const sb = await supabaseServer();
@@ -24,68 +26,62 @@ async function guardSelectedOrgQuotaAccess(): Promise<GuardOk | GuardFail> {
   const { data, error: userErr } = await sb.auth.getUser();
   const user = data?.user ?? null;
 
-  if (userErr || !user?.id) {
-    return { ok: false, status: 401, error: "not_authenticated" };
-  }
+  if (userErr || !user?.id) return { ok: false, status: 401, error: "not_authenticated", debug: { step: "no_user" } };
+  const userId = user.id;
 
-  // Read selected org using service role (bypass RLS on user_profile)
+  // Selected org via service role
   const { data: profile, error: profErr } = await admin
     .from("user_profile")
-    .select("selected_pc_org_id")
-    .eq("auth_user_id", user.id)
+    .select("selected_pc_org_id,status")
+    .eq("auth_user_id", userId)
     .maybeSingle();
 
-  if (profErr) return { ok: false, status: 500, error: profErr.message };
+  if (profErr) return { ok: false, status: 500, error: profErr.message, debug: { step: "profile_read_error", profErr } };
 
   const pc_org_id = String(profile?.selected_pc_org_id ?? "").trim();
-  if (!pc_org_id) return { ok: false, status: 409, error: "no_selected_pc_org" };
+  if (!pc_org_id) return { ok: false, status: 409, error: "no_selected_pc_org", debug: { step: "no_selected_org" } };
 
-  // ✅ Owner bypass
+  // Session-aware API client
+  const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
+
+  // Baseline org access (table-driven eligibility/grants/derived leadership)
+  const { data: canAccess, error: accessErr } = await apiClient.rpc("can_access_pc_org", { p_pc_org_id: pc_org_id });
+  if (accessErr || !canAccess) {
+    return { ok: false, status: 403, error: "forbidden", debug: { step: "baseline_access_rpc", accessErr, canAccess } };
+  }
+
+  // Owner bypass
   const { data: ownerRow, error: ownerErr } = await admin
     .from("app_owners")
     .select("auth_user_id")
-    .eq("auth_user_id", user.id)
+    .eq("auth_user_id", userId)
     .maybeSingle();
 
-  if (ownerErr) return { ok: false, status: 500, error: ownerErr.message };
-  if (ownerRow?.auth_user_id) return { ok: true, pc_org_id, auth_user_id: user.id };
+  if (ownerErr) return { ok: false, status: 500, error: ownerErr.message, debug: { step: "owner_check_error", ownerErr } };
+  if (ownerRow?.auth_user_id) return { ok: true, pc_org_id, auth_user_id: userId, apiClient };
 
-  // ✅ Canonical grants check (api schema)
-  const { data: grants, error: grantErr } = await (admin as any)
-    .schema("api")
-    .from("pc_org_permission_grant")
-    .select("permission_key, expires_at, revoked_at")
-    .eq("pc_org_id", pc_org_id)
-    .eq("grantee_user_id", user.id)
-    .is("revoked_at", null)
-    .in("permission_key", ["route_lock_manage", "roster_manage"]);
+  // Role bypass (ITG management)
+  const roleAllowed = await hasAnyRole(admin, userId, ["admin", "dev", "director", "manager", "vp"]);
+  if (roleAllowed) return { ok: true, pc_org_id, auth_user_id: userId, apiClient };
 
-  if (grantErr) return { ok: false, status: 403, error: "forbidden" };
-
-  const nowIso = new Date().toISOString();
-  const allowed = (grants ?? []).some((g: any) => {
-    const exp = g?.expires_at ? String(g.expires_at) : "";
-    return !exp || exp > nowIso;
+  // Grants check (no direct table read)
+  const { data: allowedByGrant, error: grantRpcErr } = await apiClient.rpc("has_any_pc_org_permission", {
+    p_pc_org_id: pc_org_id,
+    p_permission_keys: ["route_lock_manage", "roster_manage"],
   });
 
-  if (!allowed) return { ok: false, status: 403, error: "forbidden" };
+  if (grantRpcErr) return { ok: false, status: 403, error: "forbidden", debug: { step: "grant_rpc_error", grantRpcErr } };
+  if (!allowedByGrant) return { ok: false, status: 403, error: "forbidden", debug: { step: "no_matching_grant" } };
 
-  return { ok: true, pc_org_id, auth_user_id: user.id };
-}
-
-function isoDateOnly(d: Date) {
-  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
+  return { ok: true, pc_org_id, auth_user_id: userId, apiClient };
 }
 
 async function handler() {
   const guard = await guardSelectedOrgQuotaAccess();
-  if (!guard.ok) {
-    return NextResponse.json({ ok: false, error: guard.error }, { status: guard.status });
-  }
+  if (!guard.ok) return NextResponse.json({ ok: false, error: guard.error, debug: guard.debug ?? null }, { status: guard.status });
 
   const admin = supabaseAdmin();
 
-  // Limit months to: ~3 months back + ~2 months ahead (or oldest record if newer)
   const today = new Date();
   const startDefault = new Date(today);
   startDefault.setDate(startDefault.getDate() - 92);
@@ -114,9 +110,7 @@ async function handler() {
     .eq("pc_org_id", guard.pc_org_id)
     .order("route_name", { ascending: true });
 
-  if (routesErr) {
-    return NextResponse.json({ ok: false, error: routesErr.message }, { status: 500 });
-  }
+  if (routesErr) return NextResponse.json({ ok: false, error: routesErr.message }, { status: 500 });
 
   const { data: months, error: monthsErr } = await admin
     .from("fiscal_month_dim")
@@ -125,9 +119,7 @@ async function handler() {
     .lte("start_date", windowEndISO)
     .order("start_date", { ascending: false });
 
-  if (monthsErr) {
-    return NextResponse.json({ ok: false, error: monthsErr.message }, { status: 500 });
-  }
+  if (monthsErr) return NextResponse.json({ ok: false, error: monthsErr.message }, { status: 500 });
 
   return NextResponse.json({
     ok: true,
@@ -145,7 +137,6 @@ export async function POST() {
   return handler();
 }
 
-// Allow GET too so you never get a 405 if a caller hits it via browser / tooling.
 export async function GET() {
   return handler();
 }

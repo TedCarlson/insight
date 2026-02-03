@@ -46,12 +46,13 @@ function displayUser(u: UserHit) {
 const OWNER_AUTH_USER_ID = process.env.NEXT_PUBLIC_OWNER_AUTH_USER_ID ?? "";
 
 /**
- * Manager Bundle:
- * - people_manage: onboarding/person edits
- * - roster_manage: roster + Route Lock write surfaces (routes/quota/schedule/shift validation)
+ * Manager Bundle (org-scoped):
+ * - people_manage: onboarding + person edits
+ * - roster_manage: roster operations (assignments/reporting)
+ * - route_lock_manage: Route Lock (schedule + quota + route + shift validation)
  * - leadership_manage: reporting chain changes (if applicable)
  */
-const MANAGER_BUNDLE = ["people_manage", "roster_manage", "leadership_manage"] as const;
+const MANAGER_BUNDLE = ["people_manage", "roster_manage", "route_lock_manage", "leadership_manage"] as const;
 type ManagerKey = (typeof MANAGER_BUNDLE)[number];
 
 export default function EdgePermissionsConsolePage() {

@@ -723,17 +723,32 @@ export default function QuotaAdminClient() {
               ) : (
                 filteredHistoryRows.map((r, i) => (
                   <tr key={`${r.quota_id}-${i}`} className="border-t border-[var(--to-border)]">
-                    <td className="p-2 text-xs">{r.fiscal_month_label}</td>
+                    {/* Fiscal month (short) */}
+                    <td className="p-2 text-xs whitespace-nowrap">{fiscalShortFromRow(r)}</td>
+
+                    {/* Route */}
                     <td className="p-2 text-xs">{r.route_name}</td>
-                    <td className="p-2 text-xs">{r.qt_hours}</td>
-                    <td className="p-2 text-xs">{r.qt_units}</td>
-                    <td className="p-2 text-xs">{r.qh_sun}</td>
-                    <td className="p-2 text-xs">{r.qh_mon}</td>
-                    <td className="p-2 text-xs">{r.qh_tue}</td>
-                    <td className="p-2 text-xs">{r.qh_wed}</td>
-                    <td className="p-2 text-xs">{r.qh_thu}</td>
-                    <td className="p-2 text-xs">{r.qh_fri}</td>
-                    {/* keep the rest of your cells exactly as-is */}
+
+                    {/* Sun..Sat in correct order */}
+                    {DAYS.map((d) => (
+                      <td key={d.key} className="p-2 text-xs text-right">
+                        {displayValue(mode, toInt((r as any)[d.key]))}
+                      </td>
+                    ))}
+
+                    {/* Weekly = sum(day hours) */}
+                    <td className="p-2 text-xs text-right font-medium">
+                      {displayValue(
+                        mode,
+                        toInt(r.qh_sun) +
+                          toInt(r.qh_mon) +
+                          toInt(r.qh_tue) +
+                          toInt(r.qh_wed) +
+                          toInt(r.qh_thu) +
+                          toInt(r.qh_fri) +
+                          toInt(r.qh_sat)
+                      )}
+                    </td>
                   </tr>
                 ))
               )}

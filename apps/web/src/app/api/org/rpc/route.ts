@@ -279,21 +279,22 @@ export async function POST(req: NextRequest) {
     // ✅ FIX: align Edge gate with DB + edge_permissions config
     // DB function asserts roster_manage, so Edge must require roster_manage too.
     if (fn === "wizard_process_to_roster") {
-      const scope = ensureOrgScope(pcOrgFromArgs);
-      if (!scope.ok) return json(scope.status, scope.body);
+    const scope = ensureOrgScope(pcOrgFromArgs);
+    if (!scope.ok) return json(scope.status, scope.body);
 
-      const allowed = await requirePermission(supabaseUser, pcOrgFromArgs, "roster_manage");
-      if (!allowed) {
-        return json(403, {
-          ok: false,
-          request_id: rid,
-          error: "Forbidden",
-          code: "forbidden",
-          required_permission: "roster_manage",
-          pc_org_id: pcOrgFromArgs,
-        });
-      }
+    // ✅ Must match DB gate: api.assert_pc_org_permission(..., 'roster_manage')
+    const allowed = await requirePermission(supabaseUser, pcOrgFromArgs, "roster_manage");
+    if (!allowed) {
+      return json(403, {
+        ok: false,
+        request_id: rid,
+        error: "Forbidden",
+        code: "forbidden",
+        required_permission: "roster_manage",
+        pc_org_id: pcOrgFromArgs,
+      });
     }
+  }
 
     // For RPC calls, run as the real user so auth.uid() is present in the DB.
     const rpcClient: any = schema === "api" ? (supabaseUser as any).schema("api") : supabaseUser;

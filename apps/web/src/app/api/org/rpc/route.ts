@@ -276,18 +276,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ✅ FIX: align Edge gate with DB + edge_permissions config
+    // DB function asserts roster_manage, so Edge must require roster_manage too.
     if (fn === "wizard_process_to_roster") {
       const scope = ensureOrgScope(pcOrgFromArgs);
       if (!scope.ok) return json(scope.status, scope.body);
 
-      const allowed = await requirePermission(supabaseUser, pcOrgFromArgs, "onboard_manage");
+      const allowed = await requirePermission(supabaseUser, pcOrgFromArgs, "roster_manage");
       if (!allowed) {
         return json(403, {
           ok: false,
           request_id: rid,
           error: "Forbidden",
           code: "forbidden",
-          required_permission: "onboard_manage",
+          required_permission: "roster_manage",
           pc_org_id: pcOrgFromArgs,
         });
       }
@@ -302,7 +304,7 @@ export async function POST(req: NextRequest) {
         ok: false,
         request_id: rid,
         error: error.message,
-        code: (error as any)?.code ?? "rpc_failed",     // <-- pass through PostgREST code e.g. PGRST203
+        code: (error as any)?.code ?? "rpc_failed", // <-- pass through PostgREST code e.g. PGRST203
         details: (error as any)?.details ?? null,
         hint: (error as any)?.hint ?? null,
         fn,

@@ -35,7 +35,7 @@ export function EmptyState({
 }) {
   return (
     <div
-      className={cls("rounded border", compact ? "p-4" : "p-6")}
+      className={cls("rounded border", compact ? "p-2" : "p-6")}
       style={{
         borderColor: "var(--to-empty-border, var(--to-border))",
         background: "var(--to-empty-bg, var(--to-surface))",

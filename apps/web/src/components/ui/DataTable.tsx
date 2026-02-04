@@ -108,7 +108,7 @@ export function DataTableHeader({
 
   return (
     <div
-      className={cls("grid gap-2 border-b px-3 py-2 text-xs font-semibold", effectiveGridClass)}
+      className={cls("grid items-center gap-2 border-b px-3 py-2 text-xs font-semibold", effectiveGridClass)}
       style={{
         borderColor: "var(--to-border)",
         background: "var(--to-row-hover)",
@@ -154,7 +154,7 @@ export function DataTableRow({
       {...props}
       style={{ ...(props.style ?? {}), ...effectiveGridStyle }}
       className={cls(
-        "grid gap-2 px-3 py-3 text-sm transition-colors",
+        "grid items-center gap-2 px-3 py-2 text-sm transition-colors",
         hover && "hover:bg-[var(--to-row-hover)]",
         effectiveGridClass,
         className

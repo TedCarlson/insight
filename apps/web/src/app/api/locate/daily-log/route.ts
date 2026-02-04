@@ -1,3 +1,4 @@
+// apps/web/src/app/api/locate/daily-log/route.ts
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { createClient } from "@supabase/supabase-js";
@@ -11,8 +12,8 @@ type PostBody = {
     state_code: string;
     manpower_count: number;
     tickets_total: number; // AM received OR PM closed
-    project_tickets: number;
-    emergency_tickets: number;
+    project_tickets: number; // independent (not subset)
+    emergency_tickets: number; // independent (not subset)
   }>;
 };
 
@@ -25,6 +26,11 @@ function n(v: any): number {
   return Number.isFinite(x) ? x : 0;
 }
 
+/**
+ * Phase 1 policy:
+ * - any signed-in user can use Locate surfaces
+ * - server uses service-role to avoid RLS surprises while incubating Locate
+ */
 export async function GET(req: NextRequest) {
   const sb = await supabaseServer();
 
@@ -33,21 +39,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  let isOwner = false;
-  try {
-    const { data } = await sb.rpc("is_owner");
-    isOwner = !!data;
-  } catch {
-    isOwner = false;
-  }
-  if (!isOwner) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
-
   const date = req.nextUrl.searchParams.get("date") ?? "";
   if (!isISODate(date)) {
     return NextResponse.json({ ok: false, error: "invalid_date" }, { status: 400 });
   }
 
-  const { data, error } = await sb
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !service) {
+    return NextResponse.json({ ok: false, error: "missing_service_env" }, { status: 500 });
+  }
+
+  const admin = createClient(supabaseUrl, service, { auth: { persistSession: false } });
+
+  const { data, error } = await admin
     .from("locate_daily_call_log_v")
     .select(
       "log_date,state_code,state_name,manpower_count,tickets_received_am,tickets_closed_pm,project_tickets,emergency_tickets,backlog_start,backlog_end,avg_received_per_tech,avg_closed_per_tech,updated_at"
@@ -71,15 +76,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  let isOwner = false;
-  try {
-    const { data } = await sb.rpc("is_owner");
-    isOwner = !!data;
-  } catch {
-    isOwner = false;
-  }
-  if (!isOwner) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
-
   let body: PostBody;
   try {
     body = (await req.json()) as PostBody;
@@ -97,20 +93,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "missing_service_env" }, { status: 500 });
   }
 
-  // Use service-role to avoid RLS complexity for phase-1 (owner-only endpoint)
   const admin = createClient(supabaseUrl, service, { auth: { persistSession: false } });
 
   const rows = Array.isArray(body.rows) ? body.rows : [];
   if (!rows.length) return NextResponse.json({ ok: false, error: "no_rows" }, { status: 400 });
 
-  // Basic validation: project + emergency must not exceed total
+  // Basic validation: non-negative (B = independent counts)
   for (const r of rows) {
     const total = n(r.tickets_total);
     const proj = n(r.project_tickets);
     const emer = n(r.emergency_tickets);
-    if (proj + emer > total) {
+    const manpower = n(r.manpower_count);
+    if (manpower < 0 || total < 0 || proj < 0 || emer < 0) {
       return NextResponse.json(
-        { ok: false, error: "invalid_breakdown", details: { state_code: r.state_code, total, proj, emer } },
+        { ok: false, error: "invalid_numbers", details: { state_code: r.state_code } },
         { status: 400 }
       );
     }
@@ -134,7 +130,6 @@ export async function POST(req: NextRequest) {
     if (frame === "AM") patch.tickets_received_am = n(r.tickets_total);
     if (frame === "PM") patch.tickets_closed_pm = n(r.tickets_total);
 
-    // Pull existing so we preserve the other frame's numbers during the upsert.
     const existing = await admin
       .from("locate_daily_call_log")
       .select("tickets_received_am,tickets_closed_pm")

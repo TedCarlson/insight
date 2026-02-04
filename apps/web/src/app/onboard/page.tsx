@@ -108,7 +108,9 @@ export default function OnboardPage() {
   const router = useRouter();
   const { selectedOrgId, orgs, orgsLoading } = useOrg();
 
-  const supabase = useMemo(() => createClient(), []);
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  if (!supabaseRef.current) supabaseRef.current = createClient();
+  const supabase = supabaseRef.current;
 
   const validatedOrgId = useMemo(() => {
     if (orgsLoading) return null;
@@ -385,84 +387,88 @@ export default function OnboardPage() {
 }
 
 
-  const hydratePeople = useCallback(
-    async (nextRows: PersonRow[]) => {
-      const runId = ++hydrateRunRef.current;
-      const ids = (nextRows ?? [])
+  const hydratePeople = useCallback(async (nextRows: PersonRow[]) => {
+  const runId = ++hydrateRunRef.current;
+
+  const ids = Array.from(
+    new Set(
+      (nextRows ?? [])
         .map((r) => String((r as any)?.person_id ?? "").trim())
-        .filter(Boolean);
-
-      if (ids.length === 0) return;
-
-      setHydrating(true);
-
-      try {
-        // Full read model: public.person_admin_v
-        const { data, error } = await supabase.from("person_admin_v").select("*").in("person_id", ids);
-
-        // If a newer hydration run started, ignore this result.
-        if (runId !== hydrateRunRef.current) return;
-
-        if (error) throw error;
-
-        const byId = new Map<string, any>();
-        for (const row of (data as any[]) ?? []) {
-          const id = String((row as any)?.person_id ?? "").trim();
-          if (!id) continue;
-          byId.set(id, row);
-        }
-
-        setRows((prev) =>
-          prev.map((r) => {
-            const id = String((r as any)?.person_id ?? "").trim();
-            const full = id ? byId.get(id) : null;
-            return full ? ({ ...(r as any), ...(full as any) } as any) : r;
-          })
-        );
-      } catch (e: any) {
-        // Hydration errors should not wipe results; surface as a notice for debugging.
-        setNotice(e?.message ?? "Failed to hydrate person fields");
-      } finally {
-        // Only clear if this run is still the latest
-        if (runId === hydrateRunRef.current) setHydrating(false);
-      }
-    },
-    [supabase]
+        .filter(Boolean)
+    )
   );
 
-    const loadPeople = useCallback(
-    async (nextQuery: string, nextStatus?: "active" | "inactive") => {
-      const effectiveStatus = nextStatus ?? statusFilter;
-      setLoading(true);
-      setNotice(null);
+  if (ids.length === 0) return;
 
-      try {
-        const p_query = (nextQuery ?? "").trim();
-        const p_limit = 100;
+  setHydrating(true);
 
-        // NEW: pull from status-aware RPC so inactive can be loaded from the server
-        const { data, error } = await supabase.rpc("people_global_unassigned_search_any", {
-          p_query,
-          p_limit,
-          p_active_filter: effectiveStatus, // 'active' | 'inactive' | uses current filter if omitted
-        });
+  try {
+    // Full read model: public.person_admin_v
+    const { data, error } = await supabase.from("person_admin_v").select("*").in("person_id", ids);
 
-        if (error) throw error;
+    // If a newer hydration run started, ignore this result.
+    if (runId !== hydrateRunRef.current) return;
 
-        const r = (data as any[]) ?? [];
-        const base = r.slice(0, 50);
+    if (error) throw error;
 
-        setRows(base as any);
-        void hydratePeople(base as any);
-      } catch (e: any) {
-        setRows([]);
-        setNotice(e?.message ?? "Failed to load people");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [supabase, hydratePeople, statusFilter]
-  );
+    const byId = new Map<string, any>();
+    for (const row of (data as any[]) ?? []) {
+      const id = String((row as any)?.person_id ?? "").trim();
+      if (id) byId.set(id, row);
+    }
+
+    setRows((prev) =>
+      prev.map((r) => {
+        const id = String((r as any)?.person_id ?? "").trim();
+        const full = id ? byId.get(id) : null;
+        return full ? ({ ...(r as any), ...(full as any) } as any) : r;
+      })
+    );
+  } catch (e: any) {
+    // Hydration errors should not wipe results; surface as a notice for debugging.
+    setNotice(e?.message ?? "Failed to hydrate person fields");
+  } finally {
+    // Only clear if this run is still the latest
+    if (runId === hydrateRunRef.current) setHydrating(false);
+  }
+}, [supabase]);
+
+
+      // REPLACE your loadPeople useCallback with this (NO supabase closure)
+      const loadPeople = useCallback(
+        async (nextQuery: string, nextStatus?: "active" | "inactive") => {
+          const sb = supabaseRef.current!; // local alias from ref (lint-safe)
+          const effectiveStatus = nextStatus ?? statusFilter;
+
+          setLoading(true);
+          setNotice(null);
+
+          try {
+            const p_query = (nextQuery ?? "").trim();
+            const p_limit = 100;
+
+            const { data, error } = await sb.rpc("people_global_unassigned_search_any", {
+              p_query,
+              p_limit,
+              p_active_filter: effectiveStatus,
+            });
+
+            if (error) throw error;
+
+            const r = (data as any[]) ?? [];
+            const base = r.slice(0, 50);
+
+            setRows(base as any);
+            void hydratePeople(base as any);
+          } catch (e: any) {
+            setRows([]);
+            setNotice(e?.message ?? "Failed to load people");
+          } finally {
+            setLoading(false);
+          }
+        },
+        [hydratePeople, statusFilter]
+      );
 
   useEffect(() => {
     const t = setTimeout(() => loadPeople(query, statusFilter), 250);

@@ -76,23 +76,17 @@
 }
 
 /* Primary: premium, not neon. Uses your accent token. */
-.to-btn--primary {
-  /*
-    Safari/WebKit can fail the entire `background:` declaration when it contains
-    unsupported color functions (e.g. `color-mix()`), which results in a
-    transparent button with white text (looks "blank").
-
-    Use a safe fallback first, then layer a subtle highlight for the "glass" feel.
-  */
-  background: var(--to-accent);
+.to-btn.to-btn--primary {
+  background-color: var(--to-accent, #2563eb) !important;
   background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0));
+  color: #ffffff !important;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
-  @apply text-white;
 }
 
-.to-btn--primary:hover:not(:disabled) {
+.to-btn.to-btn--primary:hover:not(:disabled) {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
-  @apply opacity-95;
+  /* Avoid opacity affecting text readability */
+  filter: brightness(0.98);
 }
 
 /* Secondary: real “button”, subtle depth, with green accent hint (not gaudy). */

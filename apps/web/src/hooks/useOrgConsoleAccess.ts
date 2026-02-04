@@ -42,7 +42,8 @@ export function useOrgConsoleAccess(): Result {
 
       setLoading(true);
       try {
-        const { data, error: rpcErr } = await supabase.rpc("can_manage_pc_org_console", {
+        // NOTE: this RPC is defined in the `api` schema (not `public`).
+        const { data, error: rpcErr } = await (supabase as any).schema("api").rpc("can_manage_pc_org_console", {
           p_pc_org_id: selectedOrgId,
         });
 

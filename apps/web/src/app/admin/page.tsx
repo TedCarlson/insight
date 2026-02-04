@@ -56,9 +56,12 @@ export default async function AdminPage() {
   // Org-scoped admin access check (DB truth)
   let canManageConsole = false;
   try {
-    const { data, error: rpcErr } = await supabase.rpc("can_manage_pc_org_console", {
-      p_pc_org_id: scope.selected_pc_org_id,
-    });
+    // NOTE: can_manage_pc_org_console lives in the `api` schema.
+    const { data, error: rpcErr } = await (supabase as any)
+      .schema("api")
+      .rpc("can_manage_pc_org_console", {
+        p_pc_org_id: scope.selected_pc_org_id,
+      });
     if (!rpcErr) canManageConsole = !!data;
   } catch {
     canManageConsole = false;

@@ -21,7 +21,7 @@ export async function GET() {
     isOwner = false;
   }
   if (isOwner) {
-    return NextResponse.json({ signedIn: true, active: true }, { status: 200 });
+    return NextResponse.json({ signedIn: true, active: true, isOwner: true }, { status: 200 });
   }
 
   // Active check
@@ -39,5 +39,5 @@ export async function GET() {
   }
 
   const active = status === "active";
-  return NextResponse.json({ signedIn: true, active }, { status: 200 });
+  return NextResponse.json({ signedIn: true, active, isOwner: false }, { status: 200 });
 }

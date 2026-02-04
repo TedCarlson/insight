@@ -43,6 +43,7 @@ const ALLOWED_NEXT_PREFIXES = [
   "/onboard",
   "/route-lock",
   "/metrics",
+  "/locate",
 ] as const;
 
 

@@ -875,6 +875,38 @@ async assignmentReportingUpsert(input: {
     }
   }
 
+/**
+ * Globally unassigned people search WITH status filter (active/inactive).
+ *
+ * This uses the `/api/org/rpc` gateway so manager views don't get crippled by RLS,
+ * and so we can keep the UI stable even if we refine RLS policies.
+ *
+ * Expected DB function: public.people_global_unassigned_search_any(p_query, p_limit, p_active_filter)
+ * - p_active_filter: 'active' | 'inactive' (or null to return both)
+ */
+async peopleGlobalUnassignedSearchAny(input?: {
+  query?: string;
+  limit?: number;
+  active_filter?: "active" | "inactive" | null | string;
+  // Accept legacy/canonical param name too (some callers may pass p_active_filter)
+  p_active_filter?: "active" | "inactive" | null | string;
+}): Promise<PersonRow[]> {
+  const p_query = String(input?.query ?? "").trim();
+  const p_limit = Number(input?.limit ?? 25);
+  const p_active_filter =
+    (input as any)?.p_active_filter ?? (input as any)?.active_filter ?? null;
+
+  // Route-gated RPC call (service role). Keep this in "public" schema unless you move the SQL into api.*
+  const data = await this.rpcWrite<any[]>("public", "people_global_unassigned_search_any", {
+    p_query,
+    p_limit,
+    p_active_filter,
+  });
+
+  return (Array.isArray(data) ? data : []) as unknown as PersonRow[];
+}
+
+
   /**
    * Wizard: ensure membership chain + create assignment (adds to roster).
    * API schema: api.wizard_process_to_roster(p_notes, p_pc_org_id, p_person_id, p_position_title, p_start_date)

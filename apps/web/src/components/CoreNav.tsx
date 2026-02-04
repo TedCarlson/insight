@@ -6,14 +6,26 @@ import { useEffect, useMemo, useState } from "react";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { OrgSelector } from "@/components/OrgSelector";
+import { useOrg } from "@/state/org";
 
 const HIDE_ON_PREFIXES = ["/login", "/access", "/auth"];
 
-type SessionStatus = { signedIn: boolean; active: boolean };
+type SessionStatus = { signedIn: boolean; active: boolean; isOwner?: boolean };
 
 export default function CoreNav() {
   const pathname = usePathname();
   const supabase = useMemo(() => createClient(), []);
+  const { orgs, selectedOrgId } = useOrg();
+
+  const selectedOrgName = useMemo(() => {
+    const row = orgs.find((o: any) => String(o?.pc_org_id ?? "") === String(selectedOrgId ?? ""));
+    const name = String(row?.pc_org_name ?? row?.org_name ?? row?.name ?? "").trim();
+    return name || null;
+  }, [orgs, selectedOrgId]);
+
+  const isLocateOrg = useMemo(() => {
+    return (selectedOrgName ?? "").toLowerCase().includes("locate");
+  }, [selectedOrgName]);
 
   const [email, setEmail] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -51,11 +63,9 @@ export default function CoreNav() {
 
     refresh();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(
-      (_event: AuthChangeEvent, _session: Session | null) => {
-        refresh();
-      }
-    );
+    const { data: sub } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, _session: Session | null) => {
+      refresh();
+    });
 
     return () => {
       alive = false;
@@ -66,6 +76,8 @@ export default function CoreNav() {
   if (shouldHideForRoute) return null;
   if (!ready || !email) return null;
   if (!status?.active) return null;
+
+  const canSeeLocate = Boolean(status?.isOwner) || isLocateOrg;
 
   function onSignOut() {
     // Single source of truth: this page handles localStorage + server cookie signout.
@@ -91,6 +103,19 @@ export default function CoreNav() {
             >
               Home
             </Link>
+
+            {canSeeLocate && (
+              <Link
+                href="/locate"
+                className={
+                  pathname === "/locate" || pathname.startsWith("/locate/")
+                    ? "rounded-md px-2 py-1 text-sm font-medium text-foreground"
+                    : "rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
+                }
+              >
+                Locate
+              </Link>
+            )}
           </nav>
         </div>
 
@@ -100,11 +125,7 @@ export default function CoreNav() {
           </div>
 
           <span className="hidden text-xs text-muted-foreground sm:inline">{email}</span>
-          <button
-            type="button"
-            onClick={onSignOut}
-            className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
-          >
+          <button type="button" onClick={onSignOut} className="rounded-md border px-3 py-2 text-sm hover:bg-muted">
             Sign out
           </button>
         </div>

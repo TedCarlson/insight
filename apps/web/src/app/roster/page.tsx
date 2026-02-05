@@ -11,7 +11,7 @@ import { useOrg } from "@/state/org";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useToast } from "@/components/ui/Toast";
 import { useSession } from "@/state/session";
-import { useRosterManageAccess } from "@/hooks/useRosterManageAccess";
+import { useRosterManageAccess } from "@/features/roster/hooks/useRosterManageAccess";
 
 import { PageShell } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";

@@ -14,6 +14,7 @@ import { AffiliationSelector, type AffiliationOption } from "@/components/affili
 import { Notice } from "@/components/ui/Notice";
 import { useToast } from "@/components/ui/Toast";
 import { createClient } from "@/shared/data/supabase/client";
+import { loadPositionTitlesAction } from "./rosterRowModule.actions";
 
 import {
   type TabKey,
@@ -96,30 +97,11 @@ export function RosterRowModule({
   const [positionTitlesError, setPositionTitlesError] = useState<string | null>(null);
 
   const loadPositionTitles = async () => {
-    setPositionTitlesLoading(true);
-    setPositionTitlesError(null);
-    try {
-      const res = await fetch("/api/meta/position-titles", { method: "GET" });
-      const json = (await res.json()) as any;
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error ?? `Failed to load position titles (${res.status})`);
-      }
-      const titles = Array.isArray(json?.titles) ? (json.titles as any[]) : [];
-      setPositionTitles(
-        titles
-          .filter((t) => t && typeof t.position_title === "string")
-          .map((t) => ({
-            position_title: String(t.position_title),
-            sort_order: t.sort_order ?? null,
-            active: t.active ?? null,
-          }))
-      );
-    } catch (e: any) {
-      setPositionTitles([]);
-      setPositionTitlesError(e?.message ?? "Failed to load position titles");
-    } finally {
-      setPositionTitlesLoading(false);
-    }
+    await loadPositionTitlesAction({
+      setLoading: setPositionTitlesLoading,
+      setError: setPositionTitlesError,
+      setRows: setPositionTitles,
+    });
   };
 
   useEffect(() => {

@@ -671,8 +671,8 @@ export default function LocateDailyCallLogClient() {
                             flag === "OK"
                               ? { bg: "rgba(16,185,129,0.14)", fg: "rgb(16,185,129)", label: `${avg}` }
                               : flag === "LOW"
-                                ? { bg: "rgba(249,115,22,0.14)", fg: "rgb(249,115,22)", label: `(!) ${avg}` }
-                                : { bg: "rgba(239,68,68,0.14)", fg: "rgb(239,68,68)", label: `(!) ${avg}` };
+                                ? { bg: "rgba(234,179,8,0.12)", fg: "rgb(234,179,8)", label: `(-) ${avg}` } // yellow
+                                : { bg: "rgba(239,68,68,0.14)", fg: "rgb(239,68,68)", label: `(+) ${avg}` }; // red
 
                           return (
                             <span
@@ -842,8 +842,8 @@ export default function LocateDailyCallLogClient() {
                               pace === "OK"
                                 ? { bg: "rgba(16,185,129,0.14)", fg: "rgb(16,185,129)", label: `${avg}` }
                                 : pace === "LOW"
-                                  ? { bg: "rgba(249,115,22,0.14)", fg: "rgb(249,115,22)", label: `(!) ${avg}` }
-                                  : { bg: "rgba(239,68,68,0.14)", fg: "rgb(239,68,68)", label: `(!) ${avg}` };
+                                  ? { bg: "rgba(249,115,22,0.14)", fg: "rgb(249,115,22)", label: `(-) ${avg}` }
+                                  : { bg: "rgba(239,68,68,0.14)", fg: "rgb(239,68,68)", label: `(+) ${avg}` };
 
                             return (
                               <span

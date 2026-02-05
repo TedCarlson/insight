@@ -18,3 +18,7 @@ snapshots/
 snapshots/
 *.zip
 .DS_Store
+
+# mac junk
+.DS_Store
+**/.DS_Store

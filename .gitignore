@@ -13,3 +13,8 @@ ui-journal-*.zip
 # local snapshots / zips
 snapshots/
 *.zip
+
+# snapshots / archives (do not commit)
+snapshots/
+*.zip
+.DS_Store

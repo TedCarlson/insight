@@ -22,8 +22,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { TextInput } from "@/components/ui/TextInput";
 import { Select } from "@/components/ui/Select";
 
-import { RosterTable } from "@/components/roster/RosterTable";
-import { RosterRowModule } from "@/components/roster/RosterRowModule";
+import { RosterTable } from "@/features/roster/components/RosterTable";
+import { RosterRowModule } from "@/features/roster/components/RosterRowModule";
 
 function pickName(r: RosterRow): string {
   return (

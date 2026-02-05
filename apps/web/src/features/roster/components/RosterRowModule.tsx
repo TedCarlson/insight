@@ -96,13 +96,14 @@ export function RosterRowModule({
   const [positionTitlesLoading, setPositionTitlesLoading] = useState(false);
   const [positionTitlesError, setPositionTitlesError] = useState<string | null>(null);
 
-  const loadPositionTitles = async () => {
-    await loadPositionTitlesAction({
-      setLoading: setPositionTitlesLoading,
-      setError: setPositionTitlesError,
-      setRows: setPositionTitles,
-    });
-  };
+ const loadPositionTitles = async () => {
+  await loadPositionTitlesAction({
+    pcOrgId, // <-- add this
+    setLoading: setPositionTitlesLoading,
+    setError: setPositionTitlesError,
+    setRows: setPositionTitles,
+  });
+};
 
   useEffect(() => {
     if (!open) return;

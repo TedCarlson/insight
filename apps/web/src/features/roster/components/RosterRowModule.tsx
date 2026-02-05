@@ -3,10 +3,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow, type RosterRow } from "@/lib/api";
-import { Card } from "@/components/ui/Card";
+
 import { Modal } from "@/components/ui/Modal";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { TextInput } from "@/components/ui/TextInput";
 import { Select } from "@/components/ui/Select";
 import { AffiliationSelector, type AffiliationOption } from "@/components/affiliation/AffiliationSelector";

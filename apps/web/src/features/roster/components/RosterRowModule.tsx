@@ -1,151 +1,75 @@
-// apps/web/src/components/roster/RosterRowModule.tsx
+// apps/web/src/features/roster/components/RosterRowModule.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow, type RosterRow } from "@/lib/api";
+import { useMemo, useState } from "react";
+import { type RosterRow } from "@/lib/api";
 
 import { Modal } from "@/components/ui/Modal";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/Card";
-import { TextInput } from "@/components/ui/TextInput";
-import { Select } from "@/components/ui/Select";
-import { AffiliationSelector, type AffiliationOption } from "@/components/affiliation/AffiliationSelector";
-import { Notice } from "@/components/ui/Notice";
-import { useToast } from "@/components/ui/Toast";
-import { createClient } from "@/shared/data/supabase/client";
 
+import { PersonTab } from "./row-module/PersonTab";
+import { OrgTab } from "./row-module/OrgTab";
+import { AssignmentTab } from "./row-module/AssignmentTab";
+import { LeadershipTab } from "./row-module/LeadershipTab";
+import { InviteTab } from "./row-module/InviteTab";
 
-type TabKey = "person" | "org" | "assignment" | "leadership" | "invite";
+import { type TabKey, buildTitle } from "./rosterRowModule.helpers";
 
-function formatJson(v: any) {
-  try {
-    return JSON.stringify(v, null, 2);
-  } catch {
-    return String(v);
-  }
-}
+import { useRosterRowModule } from "../hooks/row-module/useRosterRowModule";
+import { usePersonTab } from "../hooks/row-module/usePersonTab";
+import { useAssignmentTab } from "../hooks/row-module/useAssignmentTab";
+import { useOrgTab } from "../hooks/row-module/useOrgTab";
+import { useLeadershipTab } from "../hooks/row-module/useLeadershipTab";
+import { useInviteTab } from "../hooks/row-module/useInviteTab";
 
-function hasOwn(obj: any, key: string) {
-  return obj && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key);
-}
-
-function KVRow({ label, value }: { label: string; value: any }) {
+/** ---- Static component (must be outside render) ---- */
+function Pill({
+  label,
+  ok,
+  title,
+}: {
+  label: string;
+  ok: boolean;
+  title: string;
+}) {
   return (
-    <div className="grid grid-cols-12 gap-2 text-sm">
-      <div className="col-span-4 text-[var(--to-ink-muted)]">{label}</div>
-      <div className="col-span-8 break-words">{value ?? "—"}</div>
-    </div>
+    <span
+      className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold"
+      style={
+        ok
+          ? { background: "rgba(34, 197, 94, 0.14)", color: "var(--to-status-success)" }
+          : { background: "rgba(249, 115, 22, 0.16)", color: "var(--to-status-warning)" }
+      }
+      title={title}
+      aria-label={title}
+    >
+      {String(label ?? "").slice(0, 1).toUpperCase()}
+    </span>
   );
 }
 
-function CollapsibleJson({ obj, label }: { obj: any; label: string }) {
-  return (
-    <Card>
-      <details>
-        <summary className="cursor-pointer text-sm font-semibold">{label}</summary>
-        <pre
-          className="mt-2 max-h-[360px] overflow-auto rounded border p-3 text-xs"
-          style={{ borderColor: "var(--to-border)" }}
-        >
-          {formatJson(obj)}
-        </pre>
-      </details>
-    </Card>
-  );
+/**
+ * Wrapper that forces a remount when:
+ *  - dialog opens/closes
+ *  - row changes
+ * This resets state (tab, invite fields, etc.) WITHOUT a useEffect.
+ */
+export function RosterRowModule(props: {
+  open: boolean;
+  onClose: () => void;
+  pcOrgId: string;
+  pcOrgName?: string | null;
+  row: RosterRow | null;
+}) {
+  const rowKey =
+    String((props.row as any)?.person_id ?? (props.row as any)?.assignment_id ?? (props.row as any)?.tech_id ?? "");
+  const mountKey = `${props.open ? "open" : "closed"}:${props.pcOrgId}:${rowKey}`;
+
+  return <RosterRowModuleInner key={mountKey} {...props} />;
 }
 
-function AllFieldsCard({ title, obj, emptyHint }: { title: string; obj: any; emptyHint?: string }) {
-  const rows = useMemo(() => {
-    if (!obj) return [];
-    const keys = Object.keys(obj).sort((a, b) => a.localeCompare(b));
-    return keys.map((k) => ({ k, v: (obj as any)[k] }));
-  }, [obj]);
-
-  return (
-    <Card>
-      <div className="mb-2 text-sm font-semibold">{title}</div>
-      {!obj ? (
-        <div className="text-sm text-[var(--to-ink-muted)]">{emptyHint ?? "No data."}</div>
-      ) : rows.length ? (
-        <div className="space-y-2">
-          {rows.map((r) => (
-            <KVRow key={r.k} label={r.k} value={r.v} />
-          ))}
-        </div>
-      ) : (
-        <div className="text-sm text-[var(--to-ink-muted)]">No fields.</div>
-      )}
-    </Card>
-  );
-}
-
-function buildTitle(row: RosterRow | null) {
-  if (!row) return "Roster Row";
-
-  // Prefer a human name if present
-  const name =
-    (hasOwn(row, "person_name") && (row as any).person_name) ||
-    (hasOwn(row, "full_name") && (row as any).full_name) ||
-    (hasOwn(row, "display_name") && (row as any).display_name) ||
-    null;
-
-  const assignment =
-    (hasOwn(row, "assignment_name") && (row as any).assignment_name) ||
-    (hasOwn(row, "role") && (row as any).role) ||
-    null;
-
-  if (name && assignment) return `${name} — ${assignment}`;
-  if (name) return String(name);
-  if (assignment) return String(assignment);
-  return "Roster Row";
-}
-
-
-function rowFallbackFullName(row: any): string | null {
-  return (
-    (row && (row.full_name ?? row.person_name ?? row.display_name)) ??
-    null
-  );
-}
-
-function seedPersonFromRow(row: any): any | null {
-  if (!row) return null;
-  const person_id = row.person_id ?? row.personId ?? null;
-  if (!person_id) return null;
-
-  const seed: any = {
-    person_id,
-    full_name: rowFallbackFullName(row),
-    emails: row.emails ?? null,
-    mobile: row.mobile ?? null,
-    fuse_emp_id: row.fuse_emp_id ?? null,
-    person_notes: row.person_notes ?? null,
-    person_nt_login: row.person_nt_login ?? null,
-    person_csg_id: row.person_csg_id ?? null,
-    active: row.active ?? row.person_active ?? null,
-    role: row.role ?? null,
-    co_code: row.co_code ?? null,
-    co_ref_id: row.co_ref_id ?? null,
-  };
-
-  return seed;
-}
-
-function ensurePersonIdentity(obj: any, row: any): any {
-  const next: any = { ...(obj ?? {}) };
-
-  const pid = next.person_id ?? row?.person_id ?? null;
-  if (pid && !next.person_id) next.person_id = pid;
-
-  const fn = next.full_name ?? rowFallbackFullName(row);
-  if (fn && (next.full_name == null || next.full_name === "")) next.full_name = fn;
-
-  return next;
-}
-
-
-export function RosterRowModule({
+function RosterRowModuleInner({
   open,
   onClose,
   pcOrgId,
@@ -159,650 +83,59 @@ export function RosterRowModule({
   row: RosterRow | null;
 }) {
   const [tab, setTab] = useState<TabKey>("person");
-  const [orgAssociationEndedAt, setOrgAssociationEndedAt] = useState<string | null>(null);
-  const supabase = useMemo(() => createClient(), []);
+
+  const title = useMemo(() => buildTitle(row), [row]);
 
   const personId = (row as any)?.person_id ?? null;
   const assignmentId = (row as any)?.assignment_id ?? null;
 
-  // Person (primary source = api.person_get)
-  const [person, setPerson] = useState<PersonRow | null>(null);
-  const [personErr, setPersonErr] = useState<string | null>(null);
-  const [loadingPerson, setLoadingPerson] = useState(false);
+  // ---------------- Hooks (brains) ----------------
+
+  const person = usePersonTab({
+    open,
+    tab,
+    row,
+    personId: personId ? String(personId) : null,
+  });
+
+  const assignment = useAssignmentTab({
+    open,
+    tab,
+    pcOrgId,
+    personId: personId ? String(personId) : null,
+    assignmentId: assignmentId ? String(assignmentId) : null,
+  });
+
+  const leadership = useLeadershipTab({
+    open,
+    pcOrgId,
+    row,
+    personId: personId ? String(personId) : null,
+    assignmentId: assignmentId ? String(assignmentId) : null,
+    master: assignment.master ?? null,
+    masterForPerson: assignment.masterForPerson as any,
+    positionTitles: (assignment as any).positionTitleOptions ?? [],
+  });
 
-  const [editingPerson, setEditingPerson] = useState(false);
-  const [savingPerson, setSavingPerson] = useState(false);
-  const [personBaseline, setPersonBaseline] = useState<any | null>(null);
-  const [personDraft, setPersonDraft] = useState<any | null>(null);
-
-
-  const [coResolved, setCoResolved] = useState<{ kind: "company" | "contractor"; name: string; matched_on: "id" | "code" } | null>(null);
-
-
-  const personHuman = useMemo(() => {
-    if (!person) return null;
-    const base: any = { ...(person as any) };
-
-    const coId = (person as any)?.co_ref_id ?? null;
-    const coCode = (person as any)?.co_code ?? null;
-
-    if (coResolved?.name) {
-      // Display company/contractor name only (no UUID/code)
-      base.co_ref_id = coResolved.name;
-    }
-
-
-    return base;
-  }, [person, coResolved]);
-  // Assignment read model (primary source for assignment tab = api.roster_master)
-  const [master, setMaster] = useState<RosterMasterRow[] | null>(null);
-  const [masterErr, setMasterErr] = useState<string | null>(null);
-  const [loadingMaster, setLoadingMaster] = useState(false);
-
-  // Assignment inline-edit (non-destructive, guarded)
-  const [editingAssignment, setEditingAssignment] = useState(false);
-  const [savingAssignment, setSavingAssignment] = useState(false);
-  const [assignmentErr, setAssignmentErr] = useState<string | null>(null);
-  const [assignmentBaseline, setAssignmentBaseline] = useState<any | null>(null);
-  const [assignmentDraft, setAssignmentDraft] = useState<any | null>(null);
-
-  // Position title lookup 
-  type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
-  const [positionTitles, setPositionTitles] = useState<PositionTitleRow[]>([]);
-  const [positionTitlesLoading, setPositionTitlesLoading] = useState(false);
-  const [positionTitlesError, setPositionTitlesError] = useState<string | null>(null);
-
-  const loadPositionTitles = async () => {
-    setPositionTitlesLoading(true);
-    setPositionTitlesError(null);
-    try {
-      const res = await fetch("/api/meta/position-titles", { method: "GET" });
-      const json = (await res.json()) as any;
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error ?? `Failed to load position titles (${res.status})`);
-      }
-      const titles = Array.isArray(json?.titles) ? (json.titles as any[]) : [];
-      setPositionTitles(
-        titles
-          .filter((t) => t && typeof t.position_title === "string")
-          .map((t) => ({
-            position_title: String(t.position_title),
-            sort_order: t.sort_order ?? null,
-            active: t.active ?? null,
-          }))
-      );
-    } catch (e: any) {
-      setPositionTitles([]);
-      setPositionTitlesError(e?.message ?? "Failed to load position titles");
-    } finally {
-      setPositionTitlesLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    if (tab !== "assignment" && tab !== "leadership") return;
-    void loadPositionTitles();
-  }, [open, tab]);
-  const positionTitleOptions = useMemo(() => {
-    const list = [...positionTitles];
-    // server already sorts, but keep deterministic
-    list.sort(
-      (a, b) =>
-        Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || a.position_title.localeCompare(b.position_title)
-    );
-    return list;
-  }, [positionTitles]);
-
-  const defaultPositionTitle = useMemo(() => {
-    // Prefer exact match; fall back to case-insensitive match
-    const exact = positionTitleOptions.find((t) => t.position_title === "Technician")?.position_title;
-    if (exact) return exact;
-
-    const ci = positionTitleOptions.find((t) => t.position_title.toLowerCase() === "technician")?.position_title;
-    return ci ?? null;
-  }, [positionTitleOptions]);
-
-  useEffect(() => {
-    // Only set a default if nothing is selected yet (prevents clobbering hydration)
-    if (!editingAssignment) return;
-    if ((assignmentDraft as any)?.position_title) return;
-    if (!defaultPositionTitle) return;
-
-    setAssignmentDraft((a: any) => ({ ...(a ?? {}), position_title: defaultPositionTitle }));
-  }, [editingAssignment, assignmentDraft, defaultPositionTitle]);
-
-  // Leadership overlays / history (primary source for leadership tab = api.roster_drilldown)
-  const [drilldown, setDrilldown] = useState<RosterDrilldownRow[] | null>(null);
-  const [drillErr, setDrillErr] = useState<string | null>(null);
-  const [loadingDrill, setLoadingDrill] = useState(false);
-
-  // Leadership inline-edit (reporting relationship)
-  const [editingLeadership, setEditingLeadership] = useState(false);
-  const [savingLeadership, setSavingLeadership] = useState(false);
-  const [leadershipErr, setLeadershipErr] = useState<string | null>(null);
-  const [leadershipBaseline, setLeadershipBaseline] = useState<any | null>(null);
-  const [leadershipDraft, setLeadershipDraft] = useState<any | null>(null);
-
-
-  const title = useMemo(() => buildTitle(row), [row]);
-
-  const selectionContext = useMemo(() => {
-    return {
-      pc_org_id: pcOrgId,
-      pc_org_name: pcOrgName ?? null,
-      person_id: personId,
-      assignment_id: assignmentId,
-    };
-  }, [pcOrgId, pcOrgName, personId, assignmentId]);
-
-
-  // Invite workflow (email is sent by server route; server enforces owner-only for launch)
-  const [inviteEmail, setInviteEmail] = useState<string>("");
-  const [inviteStatus, setInviteStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
-  const [inviteErr, setInviteErr] = useState<string | null>(null);
-
-  // Keep modal open + show wiring on success
-  const [inviteOk, setInviteOk] = useState<string | null>(null);
-
-
-
-  const inferredEmail = useMemo(() => {
-    const s =
-      String((person as any)?.emails ?? (row as any)?.emails ?? (row as any)?.email ?? "").trim();
-    if (!s) return "";
-    const first = s
-      .split(/[;,\n]+/)
-      .map((x) => x.trim())
-      .filter(Boolean)[0];
-    return first ?? "";
-  }, [person, row]);
-
-  useEffect(() => {
-    if (!open) return;
-    // Seed invite email from the person row (editable)
-    setInviteEmail((prev) => prev || inferredEmail);
-    setInviteStatus("idle");
-    setInviteErr(null);
-    setInviteOk(null);
-  }, [open, inferredEmail]);
-
-  async function sendInvite() {
-  if (!assignmentId) {
-    setInviteErr("No assignment_id on this roster row — cannot invite.");
-    setInviteStatus("error");
-    return;
-  }
-
-  const email = String(inviteEmail ?? "").trim();
-  if (!email) {
-    setInviteErr("Email is required.");
-    setInviteStatus("error");
-    return;
-  }
-
-  setInviteStatus("sending");
-  setInviteErr(null);
-  setInviteOk(null);
-
-  try {
-    const res = await fetch("/api/admin/invite", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, assignment_id: String(assignmentId) }),
-    });
-
-    const json = await res.json().catch(() => ({} as any));
-
-    if (!res.ok) {
-      const top =
-        (json && (json.error || json.message)) ||
-        (res.status === 403 ? "Not authorized to invite." : "Invite failed.");
-
-      // Supabase admin errors often arrive as an object in `details`
-      const d = (json as any)?.details;
-      const detailMsg =
-        (d && (d.message || d.error_description || d.error)) ||
-        (typeof d === "string" ? d : d ? JSON.stringify(d) : "");
-
-      const redirectTo = (json as any)?.redirect_to
-        ? `redirect_to=${String((json as any).redirect_to)}`
-        : "";
-
-      setInviteErr(`${String(top)}${detailMsg ? ` — ${detailMsg}` : ""}${redirectTo ? ` — ${redirectTo}` : ""}`);
-      setInviteStatus("error");
-      return;
-    }
-
-    setInviteStatus("sent");
-
-    // Keep modal open so ops can confirm wiring (no auto-close)
-    const rt = (json as any)?.redirect_to ? String((json as any).redirect_to) : "";
-    const nxt = (json as any)?.post_password_next ? String((json as any).post_password_next) : "";
-    setInviteOk(`Invite sent. redirect_to=${rt || "?"}${nxt ? ` • post_password_next=${nxt}` : ""}`);
-  } catch (e: any) {
-    setInviteErr(e?.message ?? "Invite failed.");
-    setInviteStatus("error");
-  }
-}
-
-
-  const invitePill = useMemo(() => {
-    if (inviteStatus === "sending") return { label: "Sending…", tone: "neutral" as const };
-    if (inviteStatus === "sent") return { label: "Sent", tone: "success" as const };
-    if (inviteStatus === "error") return { label: "Error", tone: "danger" as const };
-    return { label: "Not sent", tone: "neutral" as const };
-  }, [inviteStatus]);
-  const PERSON_FIELDS = [
-    { key: "full_name", label: "Full name" },
-    { key: "emails", label: "Emails" },
-    { key: "mobile", label: "Mobile" },
-    { key: "fuse_emp_id", label: "Fuse employee ID" },
-    { key: "person_nt_login", label: "NT login" },
-    { key: "person_csg_id", label: "CSG ID" },
-    { key: "active", label: "Status" },
-    { key: "person_notes", label: "Notes" },
-  ] as const;
-
-  const options = useMemo(
-    () => [
-      { value: "person" as const, label: "Person" },
-      { value: "org" as const, label: "Org" },
-      { value: "leadership" as const, label: "Leadership" },
-      { value: "assignment" as const, label: "Assignments" },
-      { value: "invite" as const, label: "Invite" },
-    ],
-    []
-  );
-
-
-  useEffect(() => {
-    if (!open) return;
-
-    // Reset module state when opening a new row
-    setTab("person");
-
-    // IMPORTANT: seed identity from the roster row so drafts never degrade to null
-    const seeded = ensurePersonIdentity(seedPersonFromRow(row as any), row as any);
-
-    setPerson(seeded?.person_id ? (seeded as any) : null);
-    setPersonBaseline(seeded?.person_id ? { ...(seeded as any) } : null);
-    setPersonDraft(seeded?.person_id ? { ...(seeded as any) } : null);
-
-    setPersonErr(null);
-    setLoadingPerson(false);
-    setEditingPerson(false);
-    setSavingPerson(false);
-
-    setMaster(null);
-    setMasterErr(null);
-    setLoadingMaster(false);
-
-    setDrilldown(null);
-    setDrillErr(null);
-    setLoadingDrill(false);
-    setOrgAssociationEndedAt(null);
-  }, [open, row]);
-
-
-  async function loadPerson() {
-    if (!personId) return;
-    setLoadingPerson(true);
-    setPersonErr(null);
-    try {
-      const data = await api.personGet(String(personId));
-      const merged = ensurePersonIdentity(data, row as any);
-      setPerson(merged);
-
-      // Derived display (company/contractor name) for co_ref_id/co_code
-      try {
-        const resolved = await api.resolveCoDisplay({
-          co_ref_id: (merged as any)?.co_ref_id ?? null,
-          co_code: (merged as any)?.co_code ?? null,
-        });
-        setCoResolved(resolved);
-      } catch {
-        setCoResolved(null);
-      }
-
-      // baseline drives dirty detection; draft is only for editing
-      setPersonBaseline(merged ? { ...(merged as any) } : null);
-      setPersonDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merged as any) } : null));
-
-    } catch (e: any) {
-      setPersonErr(e?.message ?? "Failed to load person");
-      setPerson(null);
-      setPersonBaseline(null);
-      setPersonDraft(null);
-    } finally {
-      setLoadingPerson(false);
-    }
-  }
-
-  async function loadMaster() {
-    setLoadingMaster(true);
-    setMasterErr(null);
-    try {
-      const data = await api.rosterMaster(pcOrgId);
-      setMaster(data ?? []);
-    } catch (e: any) {
-      setMasterErr(e?.message ?? "Failed to load roster master");
-      setMaster(null);
-    } finally {
-      setLoadingMaster(false);
-    }
-  }
-
-  async function loadDrilldown() {
-    setLoadingDrill(true);
-    setDrillErr(null);
-    try {
-      const data = await api.rosterDrilldown(pcOrgId);
-      setDrilldown(data ?? []);
-    } catch (e: any) {
-      setDrillErr(e?.message ?? "Failed to load roster drilldown");
-      setDrilldown(null);
-    } finally {
-      setLoadingDrill(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!open) return;
-
-    // Hydrate status pills immediately on open (even if user never visits these tabs)
-    void loadMaster();
-    void loadDrilldown();
-
-    // Lazy-by-tab: only fetch the person row when the Person tab is active
-    if (tab === "person") void loadPerson();
-
-    // Other tabs reuse the hydrated master/drilldown state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, tab, pcOrgId]);
-
-
-  function beginEditPerson() {
-    if (!person) return;
-    setEditingPerson(true);
-    const merged = ensurePersonIdentity(person, row as any);
-    setPersonBaseline({ ...(merged as any) });
-    setPersonDraft({ ...(merged as any) });
-  }
-
-  function cancelEditPerson() {
-    setEditingPerson(false);
-    setPersonDraft(personBaseline ? { ...personBaseline } : person ? { ...(person as any) } : null);
-  }
-
-  async function savePerson() {
-    if (!personId || !personBaseline || !personDraft) {
-      setEditingPerson(false);
-      return;
-    }
-
-    // Only these fields are editable inline; everything else is display-only.
-    const editableKeys = [
-      "full_name",
-      "emails",
-      "mobile",
-      "fuse_emp_id",
-      "person_notes",
-      "person_nt_login",
-      "person_csg_id",
-      "active",
-      // Affiliation + derived fields
-      "co_ref_id",
-      "co_code",
-      "role",
-    ] as const;
-
-    const patch: any = { person_id: String(personId) };
-
-    // Guardrails: ensure identity fields never degrade to null.
-    const fallbackName =
-      (personBaseline as any)?.full_name ?? (personDraft as any)?.full_name ?? rowFallbackFullName(row as any);
-
-    if (!fallbackName || String(fallbackName).trim() === "") {
-      setPersonErr("Full name is required.");
-      setEditingPerson(false);
-      return;
-    }
-
-    for (const k of editableKeys) {
-      const before = (personBaseline as any)[k];
-      const after = (personDraft as any)[k];
-
-      const isBool = k === "active";
-      const normBefore = isBool ? Boolean(before) : before === "" ? null : before ?? null;
-      const normAfter = isBool ? Boolean(after) : after === "" ? null : after ?? null;
-
-      if (normAfter !== normBefore) patch[k] = normAfter;
-    }
-
-    // No dirty fields
-    if (Object.keys(patch).length === 1) {
-      setEditingPerson(false);
-      return;
-    }
-
-    // Always send a non-null full_name whenever we write (prevents NOT NULL failures on insert-path upserts)
-    if (!("full_name" in patch) || patch.full_name == null || String(patch.full_name).trim() === "") {
-      const draftName = (personDraft as any)?.full_name ?? fallbackName;
-      if (!draftName || String(draftName).trim() === "") {
-        setPersonErr("Full name is required.");
-        return;
-      }
-      patch.full_name = String(draftName);
-    }
-
-    setSavingPerson(true);
-    setPersonErr(null);
-    try {
-      const updated = await api.personUpsertWithGrants(patch);
-      setEditingPerson(false);
-      if (updated) {
-        setPerson(updated);
-        setPersonBaseline({ ...(updated as any) });
-        setPersonDraft({ ...(updated as any) });
-
-        // Refresh derived display for Company/Contractor name + kind
-        try {
-          const resolved = await api.resolveCoDisplay({
-            co_ref_id: (updated as any)?.co_ref_id ?? null,
-            co_code: (updated as any)?.co_code ?? null,
-          });
-          setCoResolved(resolved);
-        } catch {
-          setCoResolved(null);
-        }
-      } else {
-        await loadPerson();
-      }
-    } catch (e: any) {
-      setPersonErr(e?.message ?? "Failed to save person");
-    } finally {
-      setSavingPerson(false);
-    }
-  }
-
-  const masterForPerson = useMemo(() => {
-    if (!master || !master.length || !personId) return null;
-
-    const pid = String(personId);
-    const aid = assignmentId ? String(assignmentId) : null;
-
-    const isActive = (r: any) => {
-      const end = String(r?.end_date ?? "").trim();
-      const active = r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true;
-      return !end && Boolean(active);
-    };
-
-    const activeMatches = (master as any[]).filter((r) => String(r.person_id) === pid).filter(isActive);
-    if (activeMatches.length > 0) return activeMatches[0] as any;
-
-    const byAssignment =
-      (aid ? (master as any[]).find((r) => String(r.assignment_id) === aid && isActive(r)) : null) ?? null;
-
-    return byAssignment ?? null;
-  }, [master, personId, assignmentId]);
-
-
-  useEffect(() => {
-    // Keep baseline/draft synced to the loaded record (but don't clobber while editing).
-    if (!masterForPerson) {
-      setAssignmentBaseline(null);
-      setAssignmentDraft(null);
-      setEditingAssignment(false);
-      return;
-    }
-    if (!editingAssignment) {
-      setAssignmentBaseline(masterForPerson);
-      setAssignmentDraft(masterForPerson);
-    }
-  }, [masterForPerson, editingAssignment]);
-
-  const assignmentDirty = useMemo(() => {
-    if (!assignmentBaseline || !assignmentDraft) return false;
-    const keys = ["position_title", "start_date", "end_date", "active", "tech_id"];
-    return keys.some((k) => {
-      const a = (assignmentBaseline as any)?.[k] ?? null;
-      const b = (assignmentDraft as any)?.[k] ?? null;
-      return String(a ?? "") !== String(b ?? "");
-    });
-  }, [assignmentBaseline, assignmentDraft]);
-
-  const assignmentValidation = useMemo(() => {
-    const start = (assignmentDraft as any)?.start_date ?? null;
-    const end = (assignmentDraft as any)?.end_date ?? null;
-
-    if (!start || String(start).trim() === "") return { ok: false, msg: "Start date is required." };
-
-    // YYYY-MM-DD lexical compare works for date ordering.
-    if (end && String(end).trim() !== "" && String(end) < String(start)) {
-      return { ok: false, msg: "End date must be on or after start date." };
-    }
-
-    return { ok: true as const, msg: "" };
-  }, [assignmentDraft]);
-
-  function beginEditAssignment() {
-    if (!masterForPerson) return;
-    setAssignmentErr(null);
-    setEditingAssignment(true);
-    setAssignmentBaseline(masterForPerson);
-    setAssignmentDraft(masterForPerson);
-  }
-
-  function cancelEditAssignment() {
-    setAssignmentErr(null);
-    setEditingAssignment(false);
-    setAssignmentDraft(assignmentBaseline ?? masterForPerson);
-  }
-
-  async function saveAssignment() {
-    if (!assignmentDraft) {
-      setEditingAssignment(false);
-      return;
-    }
-
-    const aid = String((assignmentDraft as any)?.assignment_id ?? assignmentId ?? "");
-    if (!aid) {
-      setAssignmentErr("No assignment_id to save.");
-      setEditingAssignment(false);
-      return;
-    }
-
-    if (!assignmentValidation.ok) {
-      setAssignmentErr(assignmentValidation.msg);
-      return;
-    }
-
-    // Build a minimal patch (only changed fields).
-    const editableKeys = ["position_title", "start_date", "end_date", "active", "tech_id"] as const;
-    const patch: any = { assignment_id: aid };
-
-    for (const k of editableKeys) {
-      const before = (assignmentBaseline as any)?.[k] ?? null;
-      let after: any = (assignmentDraft as any)?.[k] ?? null;
-
-      // Normalize empty strings => null for nullable columns (end_date, position_title, tech_id)
-      if (typeof after === "string" && after.trim() === "") after = null;
-
-      // start_date is NOT NULL in schema; keep it as string
-      if (k === "start_date" && after == null) {
-        setAssignmentErr("Start date is required.");
-        return;
-      }
-
-      if (String(before ?? "") !== String(after ?? "")) patch[k] = after;
-    }
-
-    if (Object.keys(patch).length <= 1) {
-      setEditingAssignment(false);
-      return;
-    }
-
-    setSavingAssignment(true);
-    setAssignmentErr(null);
-    try {
-      await api.assignmentUpdate(patch);
-      setEditingAssignment(false);
-
-      // Refetch master to confirm handshake end-to-end
-      await loadMaster();
-    } catch (e: any) {
-      setAssignmentErr(e?.message ?? "Failed to save assignment");
-    } finally {
-      setSavingAssignment(false);
-    }
-  }
-
-
-  const drillForPerson = useMemo(() => {
-    if (!drilldown || !drilldown.length) return [];
-    const pid = personId ? String(personId) : null;
-    const aid = assignmentId ? String(assignmentId) : null;
-
-    const isActiveRel = (r: any) => {
-      const end = String(
-        (
-          r?.reports_to_end_date ??
-          r?.assignment_reporting_end_date ??
-          r?.reporting_end_date ??
-          r?.end_date ??
-          ""
-        )
-      ).trim();
-      return !end;
-    };
-
-
-    return drilldown
-      .filter((r: any) => (pid && String(r.person_id) === pid) || (aid && String(r.assignment_id) === aid))
-      .filter(isActiveRel);
-  }, [drilldown, personId, assignmentId]);
-
-  // --- Derived "Set / Not set" signals (active-only, no hard blocks) ---
   const activeAssignmentCount = useMemo(() => {
+    const master = (assignment as any)?.master as any[] | null;
     if (!Array.isArray(master) || !personId) return 0;
-    return (master as any[])
+
+    return master
       .filter((r) => String(r?.person_id ?? "") === String(personId))
       .filter((r) => {
         const end = String(r?.end_date ?? "").trim();
         const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
         return active && !end;
       }).length;
-  }, [master, personId]);
+  }, [assignment, personId]);
 
   const activeLeadershipCount = useMemo(() => {
-    // Prefer source-of-truth for "current" reports-to (same as what Assignment tab displays)
-    const m: any = masterForPerson as any;
+    const m: any = (assignment as any)?.masterForPerson ?? null;
 
     const masterHasLeader =
       !!m?.reports_to_assignment_id || !!m?.reports_to_person_id || !!String(m?.reports_to_full_name ?? "").trim();
 
-    // masterForPerson is already active-only; still guard for safety
     const masterActive =
       m &&
       !String(m?.end_date ?? "").trim() &&
@@ -810,10 +143,10 @@ export function RosterRowModule({
 
     if (masterHasLeader && masterActive) return 1;
 
-    // Fallback to drilldown-derived view (history overlays)
+    const drillForPerson = ((leadership as any)?.drillForPerson ?? []) as any[];
     if (!Array.isArray(drillForPerson)) return 0;
 
-    return (drillForPerson as any[]).filter((r) => {
+    return drillForPerson.filter((r) => {
       const hasLeader =
         !!r?.reports_to_assignment_id ||
         !!r?.reports_to_person_id ||
@@ -828,381 +161,103 @@ export function RosterRowModule({
 
       return hasLeader && !end;
     }).length;
-  }, [masterForPerson, drillForPerson]);
+  }, [assignment, leadership]);
 
+  const endOrgBlocked = activeAssignmentCount > 0 && activeLeadershipCount > 0;
 
-  const leadershipContext = useMemo(() => {
-    const first = drillForPerson?.[0] ?? null;
+  const { refreshCurrent, refreshing } = useRosterRowModule({
+    tab,
+    loadPerson: (person as any).loadPerson,
+    loadMaster: (assignment as any).loadMaster,
+    loadDrilldown: (leadership as any).loadDrilldown,
+    loadingPerson: (person as any).loadingPerson,
+    loadingMaster: (assignment as any).loadingMaster,
+    loadingDrill: (leadership as any).loadingDrill,
+  });
 
-    return {
-      child_assignment_id: String(assignmentId ?? (row as any)?.assignment_id ?? ""),
-      pc_org_id: String(pcOrgId ?? ""),
-      reports_to_full_name:
-        (first as any)?.reports_to_full_name ?? (row as any)?.reports_to_full_name ?? null,
-      reports_to_assignment_id:
-        (first as any)?.reports_to_assignment_id ?? (row as any)?.reports_to_assignment_id ?? null,
+  const org = useOrgTab({
+    row,
+    pcOrgId,
+    pcOrgName: pcOrgName ?? null,
+    personId: personId ? String(personId) : null,
+    onClose,
+    refreshCurrent,
+    endOrgBlocked,
+  });
 
-      // These exist on roster_row_module_v / roster_current_full (if provided in row)
-      reports_to_reporting_id: (row as any)?.reports_to_reporting_id ?? null,
-      reports_to_start_date: (row as any)?.reports_to_start_date ?? null,
-      reports_to_end_date: (row as any)?.reports_to_end_date ?? null,
-    };
-  }, [drillForPerson, row, assignmentId, pcOrgId]);
+  const personEmails =
+    String((person as any)?.person?.emails ?? (row as any)?.emails ?? (row as any)?.email ?? "").trim() || null;
 
-  const toast = useToast();
+  const invite = useInviteTab({
+    open,
+    row,
+    assignmentId: assignmentId ? String(assignmentId) : null,
+    personEmails,
+  });
+
+  const inferredEmail = useMemo(() => {
+    const s = String((person as any)?.person?.emails ?? (row as any)?.emails ?? (row as any)?.email ?? "").trim();
+    if (!s) return "";
+    const first = s
+      .split(/[;,\n]+/)
+      .map((x) => x.trim())
+      .filter(Boolean)[0];
+    return first ?? "";
+  }, [person, row]);
+
+  // ---------------- Pills / record status ----------------
+
+  const personOk = !!String(((person as any).personDraft ?? (person as any).person ?? {})?.full_name ?? "").trim();
+
+  const ended =
+    (org as any)?.orgAssociationEndedAt ??
+    (org as any)?.ended ??
+    (row as any)?.person_pc_org_end_date ??
+    (row as any)?.pc_org_end_date ??
+    null;
+
+  const orgOk = !!String(pcOrgId ?? "").trim() && !String(ended ?? "").trim();
+  const assignmentOk = activeAssignmentCount > 0;
+  const leadershipOk = activeLeadershipCount > 0;
+
+  const options = useMemo(
+    () => [
+      { value: "person" as const, label: "Person" },
+      { value: "org" as const, label: "Org" },
+      { value: "leadership" as const, label: "Leadership" },
+      { value: "assignment" as const, label: "Assignments" },
+      { value: "invite" as const, label: "Invite" },
+    ],
+    []
+  );
 
   const orgStartDate =
+    (org as any)?.orgStartDate ??
     (row as any)?.pc_org_start_date ??
     (row as any)?.org_start_date ??
     (row as any)?.org_event_start_date ??
     (row as any)?.start_date ??
     null;
 
-  function Pill({ label, ok, title }: { label: string; ok: boolean; title: string }) {
-    return (
-      <span
-        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold"
-        style={
-          ok
-            ? { background: "rgba(34, 197, 94, 0.14)", color: "var(--to-status-success)" }
-            : { background: "rgba(249, 115, 22, 0.16)", color: "var(--to-status-warning)" }
-        }
-        title={title}
-        aria-label={title}
-      >
-        {String(label ?? "").slice(0, 1).toUpperCase()}
-      </span>
-    );
-  }
+  const endOrgBlockedTitle = endOrgBlocked
+    ? "Cannot end org association while an active Assignment AND Leadership relationship exist. End/close those first."
+    : "End Org association";
 
-
-
-  const recordStatus = useMemo(() => {
-    const personOk = !!String((personDraft ?? person ?? {})?.full_name ?? "").trim();
-
-
-
-    // "Org" is set when there is a current pcOrgId AND the association is not ended.
-    // We use a local "ended" flag to immediately flip pills after the action, without waiting for parent refresh.
-    const ended =
-      orgAssociationEndedAt ??
-      (row as any)?.person_pc_org_end_date ??
-      (row as any)?.pc_org_end_date ??
-      null;
-
-    const orgOk = !!String(pcOrgId ?? "").trim() && !String(ended ?? "").trim();
-    const assignmentOk = activeAssignmentCount > 0;
-    const leadershipOk = activeLeadershipCount > 0;
-
-    const missing: string[] = [];
-    if (!personOk) missing.push("Person");
-    if (!orgOk) missing.push("Org");
-    if (!assignmentOk) missing.push("Assignments");
-    if (!leadershipOk) missing.push("Leadership");
-
-    return { personOk, orgOk, assignmentOk, leadershipOk, missing, complete: missing.length === 0 };
-  }, [personDraft, person, pcOrgId, row, orgAssociationEndedAt, activeAssignmentCount, activeLeadershipCount]);
-  const endOrgBlocked = recordStatus.assignmentOk && recordStatus.leadershipOk;
-
-  async function endPcOrgCascade() {
-    // NOTE: This does NOT end the PC Org itself (dimension table).
-    // It ends THIS PERSON'S association to the current PC Org (person_pc_org).
-    const ok = window.confirm(
-      "End Org association for this person? This will set an end date (today) on the person ↔ org association so they return to the unassigned pool. Continue?"
-    );
-    if (!ok) return;
-
-    const today = new Date().toISOString().slice(0, 10);
-
-    try {
-      if (!personId || !pcOrgId) throw new Error("Missing personId or pcOrgId");
-
-      await api.personPcOrgEndAssociation({
-        person_id: String(personId),
-        pc_org_id: String(pcOrgId),
-        end_date: today,
-      });
-
-      toast.push({
-        title: "Org association ended",
-        message: "This person is now eligible for reassignment.",
-        variant: "success",
-        durationMs: 3200,
-      });
-
-      // Flip Org pill immediately in this overlay session
-      setOrgAssociationEndedAt(today);
-
-      await refreshCurrent();
-
-      // Close the overlay so the parent roster re-fetches and the person disappears from the list.
-      onClose();
-    } catch (e: any) {
-      toast.push({
-        title: "End org association failed",
-        message: String(e?.message ?? e),
-        variant: "danger",
-        durationMs: 4200,
-      });
-    }
-  }
-
-  useEffect(() => {
-    // Keep baseline/draft in sync while not editing.
-    if (!editingLeadership) {
-      setLeadershipBaseline(leadershipContext);
-      setLeadershipDraft({
-        reports_to_assignment_id: leadershipContext.reports_to_assignment_id ? String(leadershipContext.reports_to_assignment_id) : "",
-      });
-    }
-  }, [leadershipContext, editingLeadership]);
-
-  const managerOptions = useMemo(() => {
-    const rows: any[] = (master ?? []) as any[];
-    const childAssignmentId = String(assignmentId ?? "");
-    const childTitle = String((masterForPerson as any)?.position_title ?? (row as any)?.position_title ?? "");
-    const childAff = String(
-      (row as any)?.affiliation ??
-      (row as any)?.co_name ??
-      (row as any)?.company_name ??
-      (row as any)?.contractor_name ??
-      ""
-    );
-
-    const norm = (s: any) => String(s ?? "").toLowerCase().trim();
-
-    const isITG = (r: any) => {
-      const aff = norm(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
-      return aff.includes("integrated tech") || aff === "itg" || aff.includes("itg ");
-    };
-
-    const isBP = (r: any) => {
-      const aff = norm(r?.affiliation ?? r?.co_name ?? r?.company_name ?? "");
-      const title = norm(r?.position_title ?? r?.title ?? "");
-      return title.includes("bp") || aff.includes("bp");
-    };
-
-    const isContractorPerson = (affRaw: string) => {
-      const aff = norm(affRaw);
-      if (!aff) return false;
-      if (aff.includes("integrated tech") || aff.startsWith("itg")) return false;
-      if (aff.includes("bp")) return false;
-      return true;
-    };
-
-    const titleRankFallback = (titleRaw: string) => {
-      const t = norm(titleRaw);
-      if (t.includes("technician")) return 10;
-      if (t.includes("supervisor")) return 20;
-      if (t.includes("manager")) return 30;
-      if (t.includes("director")) return 40;
-      if (t.includes("vp") || t.includes("vice president")) return 50;
-      return 25;
-    };
-
-    const sortOrderByTitle = new Map<string, number>();
-    for (const pt of positionTitles ?? []) {
-      const key = String((pt as any)?.position_title ?? "").trim();
-      const so = Number((pt as any)?.sort_order ?? NaN);
-      if (key && Number.isFinite(so)) sortOrderByTitle.set(key, so);
-    }
-
-    // Determine whether sort_order increases with seniority (preferred) or decreases.
-    const techSo = sortOrderByTitle.get("Technician");
-    const supSo = sortOrderByTitle.get("Supervisor");
-    const sortIncreasesWithSeniority =
-      typeof techSo === "number" && typeof supSo === "number" ? techSo < supSo : true;
-
-    const getRank = (titleRaw: string) => {
-      const t = String(titleRaw ?? "").trim();
-      const so = sortOrderByTitle.get(t);
-      if (typeof so === "number") return so;
-      return titleRankFallback(t);
-    };
-
-    const childRank = getRank(childTitle);
-    const isHigherRank = (candidateTitle: string) => {
-      const candRank = getRank(candidateTitle);
-      return sortIncreasesWithSeniority ? candRank > childRank : candRank < childRank;
-    };
-
-    const childIsITG = isITG({ affiliation: childAff });
-    const childIsBP = norm(childTitle).includes("bp") || norm(childAff).includes("bp");
-    const childIsContractor = isContractorPerson(childAff);
-    const childIsTech = norm(childTitle).includes("technician");
-    const childIsSupervisor = norm(childTitle).includes("supervisor");
-
-    const candidatePassesAffiliationRules = (r: any) => {
-      // Always allow ITG leadership as available (still rank gated)
-      if (isITG(r)) return true;
-
-      // BP position titles should report to ITG (company POC)
-      if (childIsBP) return false;
-
-      // ITG/company reports to ITG/company
-      if (childIsITG) return false;
-
-      // Contractor logic
-      if (childIsContractor) {
-        const candAff = String(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
-        const sameContractor = norm(candAff) === norm(childAff);
-
-        // Contractor technicians can report to BP Supervisors when present + ITG fallback (handled above)
-        if (childIsTech) {
-          const candBP = isBP(r);
-          const candSupOrAbove = isHigherRank(String(r?.position_title ?? r?.title ?? "")) || norm(r?.position_title ?? "").includes("supervisor") || norm(r?.position_title ?? "").includes("manager") || norm(r?.position_title ?? "").includes("director");
-          if (candBP && candSupOrAbove) return true;
-          return sameContractor;
-        }
-
-        // Contractor supervisors/managers: same contractor (and ITG fallback already allowed)
-        return sameContractor;
-      }
-
-      // Default: keep same affiliation (company → company)
-      const candAff = String(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name ?? "");
-      return norm(candAff) === norm(childAff);
-    };
-
-    const candidates = rows.filter((r) => {
-      const aid = String(r?.assignment_id ?? "");
-      if (!aid) return false;
-      if (childAssignmentId && aid === childAssignmentId) return false;
-
-      const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
-      if (!active) return false;
-
-      const candTitle = String(r?.position_title ?? r?.title ?? "");
-      // Rank constraint: min next upward rank + all above
-      if (!isHigherRank(candTitle)) return false;
-
-      // Affiliation constraint
-      return candidatePassesAffiliationRules(r);
-    });
-
-    // Safety net: if filtering is too tight, relax progressively so user isn't blocked.
-    const relaxed = candidates.length
-      ? candidates
-      : rows.filter((r) => {
-        const aid = String(r?.assignment_id ?? "");
-        if (!aid) return false;
-        if (childAssignmentId && aid === childAssignmentId) return false;
-        const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
-        if (!active) return false;
-        const candTitle = String(r?.position_title ?? r?.title ?? "");
-        return isHigherRank(candTitle) && (isITG(r) || norm(String(r?.affiliation ?? r?.co_name ?? "")) === norm(childAff));
-      });
-
-    const finalList = relaxed.length ? relaxed : rows.filter((r) => Boolean(String(r?.assignment_id ?? "")));
-
-    return finalList
-      .map((r) => {
-        const aid = String(r?.assignment_id ?? "");
-        const name = (r?.full_name ?? r?.person_name ?? r?.name ?? r?.reports_to_full_name ?? "—") as string;
-        const title = (r?.position_title ?? r?.title ?? "") as string;
-        const aff = String(r?.affiliation ?? r?.co_name ?? "");
-        const label = title ? `${name} — ${title}${aff ? ` (${aff})` : ""}` : `${name}${aff ? ` (${aff})` : ""}`;
-        return { value: aid, label };
-      })
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [master, assignmentId, masterForPerson, row, positionTitles]);
-
-  function beginEditLeadership() {
-    setLeadershipErr(null);
-    setEditingLeadership(true);
-    setLeadershipBaseline(leadershipContext);
-    setLeadershipDraft({
-      reports_to_assignment_id: leadershipContext.reports_to_assignment_id ? String(leadershipContext.reports_to_assignment_id) : "",
-    });
-  }
-
-  function cancelEditLeadership() {
-    setLeadershipErr(null);
-    setEditingLeadership(false);
-    setLeadershipDraft({
-      reports_to_assignment_id: leadershipContext.reports_to_assignment_id ? String(leadershipContext.reports_to_assignment_id) : "",
-    });
-  }
-
-  async function saveLeadership() {
-    const childId = String(assignmentId ?? "");
-    if (!childId) {
-      setLeadershipErr("No assignment_id for this roster row.");
-      setEditingLeadership(false);
+  const setLeadershipDraftReportsToAssignmentId = (v: string) => {
+    const anyLead: any = leadership as any;
+    if (typeof anyLead.setLeadershipDraftReportsToAssignmentId === "function") {
+      anyLead.setLeadershipDraftReportsToAssignmentId(v);
       return;
     }
-
-    const selectedParent = String((leadershipDraft as any)?.reports_to_assignment_id ?? "").trim();
-    const baselineParent = String((leadershipContext as any)?.reports_to_assignment_id ?? "").trim();
-
-    if (selectedParent === childId) {
-      setLeadershipErr("An assignment cannot report to itself.");
+    if (typeof anyLead.setLeadershipDraft === "function") {
+      anyLead.setLeadershipDraft({ reports_to_assignment_id: v });
       return;
     }
-
-    // No change
-    if (selectedParent === baselineParent) {
-      setEditingLeadership(false);
+    if (typeof anyLead.setLeadershipDraftState === "function") {
+      anyLead.setLeadershipDraftState({ reports_to_assignment_id: v });
       return;
-    }
-
-    setSavingLeadership(true);
-    setLeadershipErr(null);
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-
-      const currentReportingId = (leadershipContext as any)?.reports_to_reporting_id
-        ? String((leadershipContext as any).reports_to_reporting_id)
-        : null;
-
-      const currentStartDate = String((leadershipContext as any)?.reports_to_start_date ?? "").trim();
-
-      // 1) End current relationship if one exists
-      if (currentReportingId) {
-        await api.assignmentReportingUpsert({
-          assignment_reporting_id: currentReportingId,
-          child_assignment_id: childId,
-          parent_assignment_id: baselineParent || (leadershipContext as any)?.reports_to_assignment_id,
-          start_date: currentStartDate || today,
-          end_date: today,
-        });
-      }
-
-      // 2) If user picked a new manager, start a NEW relationship row with start_date=today
-      //    (Do NOT reuse old start_date; unique grain is (child, parent, start_date) and start_date must differ for history.)
-      if (selectedParent) {
-        await api.assignmentReportingUpsert({
-          assignment_reporting_id: null,
-          child_assignment_id: childId,
-          parent_assignment_id: selectedParent,
-          start_date: today,
-          end_date: null,
-        });
-      }
-
-      setEditingLeadership(false);
-      await loadDrilldown();
-    } catch (e: any) {
-      setLeadershipErr(e?.message ?? "Failed to save reporting relationship");
-    } finally {
-      setSavingLeadership(false);
-    }
-  }
-
-
-
-  const refreshCurrent = async () => {
-    if (tab === "person") return loadPerson();
-    if (tab === "assignment") return loadMaster();
-    if (tab === "leadership") return loadDrilldown();
-    if (tab === "org") {
-      await loadMaster();
-      return loadDrilldown();
     }
   };
-
-  const refreshing =
-    (tab === "person" && loadingPerson) || (tab === "assignment" && loadingMaster) || (tab === "leadership" && loadingDrill) || (tab === "org" && (loadingMaster || loadingDrill));
 
   return (
     <Modal
@@ -1218,21 +273,18 @@ export function RosterRowModule({
           </div>
 
           <div className="mt-2 flex flex-wrap gap-2">
-            <Pill label="P" ok={recordStatus.personOk} title={recordStatus.personOk ? "Person: set" : "Person: not set"} />
-            <Pill label="O" ok={recordStatus.orgOk} title={recordStatus.orgOk ? "Org: set" : "Org: not set"} />
-            <Pill label="L" ok={recordStatus.leadershipOk} title={recordStatus.leadershipOk ? "Leadership: set" : "Leadership: not set"} />
-            <Pill label="A" ok={recordStatus.assignmentOk} title={recordStatus.assignmentOk ? "Assignments: set" : "Assignments: not set"} />
+            <Pill label="P" ok={personOk} title={personOk ? "Person: set" : "Person: not set"} />
+            <Pill label="O" ok={orgOk} title={orgOk ? "Org: set" : "Org: not set"} />
+            <Pill label="L" ok={leadershipOk} title={leadershipOk ? "Leadership: set" : "Leadership: not set"} />
+            <Pill label="A" ok={assignmentOk} title={assignmentOk ? "Assignments: set" : "Assignments: not set"} />
           </div>
-
         </div>
       }
       size="lg"
       footer={
-        <>
-          <Button variant="ghost" type="button" onClick={onClose}>
-            Close
-          </Button>
-        </>
+        <Button variant="ghost" type="button" onClick={onClose}>
+          Close
+        </Button>
       }
     >
       {!row ? (
@@ -1245,623 +297,104 @@ export function RosterRowModule({
               <Button variant="secondary" type="button" onClick={refreshCurrent} disabled={refreshing}>
                 {refreshing ? "Refreshing…" : "Refresh"}
               </Button>
-
             </div>
           </div>
 
           {tab === "person" ? (
-            <div className="space-y-3">
-              {personErr ? (
-                <Notice variant="danger" title="Could not load person">
-                  {personErr}
-                </Notice>
-              ) : null}
-
-              <Card>
-                <div className="mb-3 flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold">Person (api.person_get) — all fields (human readable)</div>
-                    <div className="text-xs text-[var(--to-ink-muted)]">This view is the source of truth. Edit inline to test hydration and write.</div>
-                  </div>
-
-                  {!editingPerson ? (
-                    <Button onClick={beginEditPerson} disabled={!person || loadingPerson}>
-                      Edit
-                    </Button>
-                  ) : (
-                    <div className="flex gap-2">
-                      <Button variant="ghost" onClick={cancelEditPerson} disabled={savingPerson}>
-                        Cancel
-                      </Button>
-                      <Button onClick={savePerson} disabled={savingPerson}>
-                        {savingPerson ? "Saving…" : "Save"}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                {!personId ? (
-                  <div className="text-sm text-[var(--to-ink-muted)]">No person_id on this roster row.</div>
-                ) : loadingPerson && !person ? (
-                  <div className="text-sm text-[var(--to-ink-muted)]">Loading person…</div>
-                ) : !person ? (
-                  <div className="text-sm text-[var(--to-ink-muted)]">No person record returned.</div>
-                ) : (
-                  <div className="space-y-2">
-                    {PERSON_FIELDS.map(({ key, label }) => {
-                      const displayPerson = (personHuman ?? person) as any;
-                      const src: any = (editingPerson ? personDraft : displayPerson) ?? {};
-                      const v = src[key as any];
-                      const editable = ["full_name", "emails", "mobile", "fuse_emp_id", "person_notes", "person_nt_login", "person_csg_id", "active"].includes(String(key));
-
-                      if (editingPerson && editable) {
-                        if (key === "person_notes") {
-                          return (
-                            <div key={String(key)} className="grid grid-cols-12 gap-2 text-sm">
-                              <div className="col-span-4 text-[var(--to-ink-muted)]">{label}</div>
-                              <div className="col-span-8">
-                                <textarea
-                                  className="to-input h-auto min-h-[96px] py-2"
-                                  value={(personDraft as any)?.[key] ?? ""}
-                                  onChange={(e) =>
-                                    setPersonDraft((p: any) => {
-                                      const next: any = ensurePersonIdentity(p, row as any);
-                                      next[key] = e.target.value;
-                                      if (!next.full_name || String(next.full_name).trim() === "") {
-                                        const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
-                                        if (fb) next.full_name = fb;
-                                      }
-                                      return next;
-                                    })
-                                  }
-                                />
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        if (key === "active") {
-                          return (
-                            <div key={String(key)} className="grid grid-cols-12 gap-2 text-sm">
-                              <div className="col-span-4 text-[var(--to-ink-muted)]">{label}</div>
-                              <div className="col-span-8">
-                                <SegmentedControl
-                                  value={String(Boolean((personDraft as any)?.active))}
-                                  onChange={(next) =>
-                                    setPersonDraft((p: any) => {
-                                      const n: any = ensurePersonIdentity(p, row as any);
-                                      n.active = next === "true";
-                                      if (!n.full_name || String(n.full_name).trim() === "") {
-                                        const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
-                                        if (fb) n.full_name = fb;
-                                      }
-                                      return n;
-                                    })
-                                  }
-                                  options={[
-                                    { value: "true", label: "Active" },
-                                    { value: "false", label: "Inactive" },
-                                  ]}
-                                />
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        return (
-                          <div key={String(key)} className="grid grid-cols-12 gap-2 text-sm">
-                            <div className="col-span-4 text-[var(--to-ink-muted)]">{label}</div>
-                            <div className="col-span-8">
-                              <TextInput
-                                value={(personDraft as any)?.[key] ?? ""}
-                                onChange={(e) =>
-                                  setPersonDraft((p: any) => {
-                                    const next: any = ensurePersonIdentity(p, row as any);
-                                    next[key] = e.target.value;
-                                    if (key !== "full_name" && (!next.full_name || String(next.full_name).trim() === "")) {
-                                      const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
-                                      if (fb) next.full_name = fb;
-                                    }
-                                    return next;
-                                  })
-                                }
-                              />
-                            </div>
-                          </div>
-                        );
-                      }
-
-                      const display = key === "active" ? (Boolean(v) ? "Active" : "Inactive") : v ?? "—";
-                      return <KVRow key={String(key)} label={label} value={display} />;
-                    })}
-                  </div>
-                )}
-              </Card>
-
-              {person ? (
-
-                <Card title="Company / Role">
-                  {editingPerson ? (
-                    <AffiliationSelector
-                      value={(() => {
-                        const src: any = (personDraft ?? person ?? {}) as any;
-                        const co_ref_id = String(src?.co_ref_id ?? "").trim();
-                        if (!co_ref_id) return null;
-
-                        const roleRaw = String(src?.role ?? "").toLowerCase();
-                        const kind: "company" | "contractor" =
-                          (coResolved?.kind as any) ??
-                          ((row as any)?.co_type === "contractor" || roleRaw.includes("contract") ? "contractor" : "company");
-
-                        return {
-                          kind,
-                          co_ref_id,
-                          co_code: src?.co_code ? String(src.co_code) : null,
-                          name: coResolved?.name ?? (src?.co_code ? String(src.co_code) : co_ref_id),
-                        } as AffiliationOption;
-                      })()}
-                      onChange={(next) =>
-                        setPersonDraft((p: any) => {
-                          const n: any = ensurePersonIdentity(p, row as any);
-
-                          if (!next) {
-                            n.co_ref_id = null;
-                            n.co_code = null;
-                            n.role = null;
-                          } else {
-                            n.co_ref_id = String(next.co_ref_id);
-                            n.co_code = next.co_code ? String(next.co_code) : null;
-
-                            // IMPORTANT: role drives co_type derivation in roster views (contractor vs company).
-                            n.role = next.kind === "contractor" ? "contractor" : null;
-                          }
-
-                          // Keep full_name safe for upsert writes
-                          if (!n.full_name || String(n.full_name).trim() === "") {
-                            const fb = (personBaseline as any)?.full_name ?? rowFallbackFullName(row as any);
-                            if (fb) n.full_name = fb;
-                          }
-
-                          return n;
-                        })
-                      }
-                      help="Set the person’s Organization. This writes co_ref_id/co_code and updates role so contractor/company type derives correctly."
-                    />
-                  ) : null}
-
-                  <div className="space-y-1">
-                    <KVRow
-                      label="Organization"
-                      value={coResolved?.name ?? (person as any)?.co_code ?? (person as any)?.co_ref_id ?? "—"}
-                    />
-                    <KVRow label="Type" value={coResolved?.kind ?? (row as any)?.co_type ?? "—"} />
-                    <KVRow label="Role" value={(person as any)?.role ?? (row as any)?.role ?? "—"} />
-                    <KVRow label="Code" value={(person as any)?.co_code ?? "—"} />
-                  </div>
-                </Card>
-              ) : null}
-
-            </div>
+            <PersonTab
+              row={row as any}
+              personId={personId ? String(personId) : null}
+              person={(person as any).person}
+              personHuman={(person as any).personHuman}
+              personErr={(person as any).personErr}
+              loadingPerson={(person as any).loadingPerson}
+              editingPerson={(person as any).editingPerson}
+              savingPerson={(person as any).savingPerson}
+              personBaseline={(person as any).personBaseline}
+              personDraft={(person as any).personDraft}
+              setPersonDraft={(person as any).setPersonDraft}
+              beginEditPerson={(person as any).beginEditPerson}
+              cancelEditPerson={(person as any).cancelEditPerson}
+              savePerson={(person as any).savePerson}
+              coResolved={(person as any).coResolved}
+              setCoResolved={(person as any).setCoResolved}
+            />
           ) : null}
 
-
-
           {tab === "invite" ? (
-            <div className="space-y-3">
-              <Card title="Invite to app">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="text-sm text-[var(--to-ink-muted)]">
-                      Sends a Supabase invite email to this person. (Owner-only for launch; managers+ later.)
-                    </div>
-                    <div className="text-xs text-[var(--to-ink-muted)]">
-                      Status:{" "}
-                      <span
-                        className={
-                          invitePill.tone === "success"
-                            ? "text-[var(--to-status-success)]"
-                            : invitePill.tone === "danger"
-                              ? "text-[var(--to-status-danger)]"
-                              : "text-[var(--to-ink-muted)]"
-                        }
-                      >
-                        {invitePill.label}
-                      </span>
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={sendInvite}
-                    disabled={inviteStatus === "sending" || !assignmentId || !String(inviteEmail ?? "").trim()}
-                  >
-                    {inviteStatus === "sending" ? "Sending…" : inviteStatus === "sent" ? "Resend invite" : "Send invite"}
-                  </Button>
-                </div>
-
-                {!assignmentId ? (
-                  <div className="mt-3 text-sm text-[var(--to-ink-muted)]">
-                    This roster row has no <code className="px-1">assignment_id</code>. Add an assignment before inviting.
-                  </div>
-                ) : null}
-
-                <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
-                  <div className="col-span-4 text-[var(--to-ink-muted)]">PC</div>
-                  <div className="col-span-8">{row?.pc_number ?? row?.pc_id ?? "—"}</div>
-
-                  <div className="col-span-4 text-[var(--to-ink-muted)]">MSO</div>
-                  <div className="col-span-8">{row?.mso_name ?? "—"}</div>
-
-                  <div className="col-span-4 text-[var(--to-ink-muted)]">Division</div>
-                  <div className="col-span-8">{row?.division_name ?? "—"}</div>
-
-                  <div className="col-span-4 text-[var(--to-ink-muted)]">Region</div>
-                  <div className="col-span-8">{row?.region_name ?? "—"}</div>
-
-                  <div className="col-span-4 text-[var(--to-ink-muted)]">Email</div>
-                  <div className="col-span-8">
-                    <TextInput value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder={inferredEmail || "name@company.com"} />
-                    <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-                      Prefilled from the person record. Edit before sending if needed.
-                    </div>
-                  </div>
-                </div>
-
-                {inviteErr ? (
-                  <div className="mt-3">
-                    <Notice variant="danger" title="Invite failed">
-                      {inviteErr}
-                    </Notice>
-                  </div>
-                ) : null}
-                {inviteOk ? (
-                  <div className="mt-3">
-                    <Notice variant="success" title="Invite sent">
-                      <pre className="whitespace-pre-wrap break-words text-xs">{inviteOk}</pre>
-                    </Notice>
-                  </div>
-                ) : null}
-
-              </Card>
-            </div>
+            <InviteTab
+              row={row}
+              assignmentId={assignmentId ? String(assignmentId) : null}
+              inferredEmail={inferredEmail}
+              inviteEmail={(invite as any).inviteEmail}
+              setInviteEmail={(invite as any).setInviteEmail}
+              inviteStatus={(invite as any).inviteStatus}
+              invitePill={(invite as any).invitePill}
+              inviteErr={(invite as any).inviteErr}
+              inviteOk={(invite as any).inviteOk}
+              sendInvite={(invite as any).sendInvite}
+            />
           ) : null}
 
           {tab === "org" ? (
-            <div className="space-y-3">
-              <Card title="Org">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="text-sm font-semibold">{pcOrgName ?? "Org"}</div>
-                    {orgStartDate ? (
-                      <div className="text-xs text-[var(--to-ink-muted)]">Start date: {String(orgStartDate).slice(0, 10)}</div>
-                    ) : null}
-                    <div className="text-xs text-[var(--to-ink-muted)]">
-                      Actions here affect this person’s org association (soft close; no deletes).
-                    </div>
-                  </div>
-
-                  <Button
-                    variant="secondary"
-                    onClick={endPcOrgCascade}
-                    disabled={endOrgBlocked}
-                    title={
-                      endOrgBlocked
-                        ? "Cannot end org association while an active Assignment AND Leadership relationship exist. End/close those first."
-                        : "End Org association"
-                    }
-                  >
-                    End Org association
-                  </Button>
-
-                </div>
-
-                <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
-                  <div className="col-span-4 text-[var(--to-ink-muted)]">PC</div>
-                  <div className="col-span-8">
-                    {(row as any)?.pc_name ??
-                      (row as any)?.pc_number ??
-                      ((row as any)?.pc_id ? String((row as any)?.pc_id) : "—")}
-                  </div>
-
-                  <div className="col-span-4 text-[var(--to-ink-muted)]">MSO</div>
-                  <div className="col-span-8">{(row as any)?.mso_name ?? "—"}</div>
-
-                  <div className="col-span-4 text-[var(--to-ink-muted)]">Division</div>
-                  <div className="col-span-8">{(row as any)?.division_name ?? "—"}</div>
-
-                  <div className="col-span-4 text-[var(--to-ink-muted)]">Region</div>
-                  <div className="col-span-8">{(row as any)?.region_name ?? "—"}</div>
-                </div>
-
-                <div className="mt-3 text-xs text-[var(--to-ink-muted)]">
-                  “End Org association” sets <code className="px-1">end_date</code> to today on the <code className="px-1">person_pc_org</code> row for this person. No rows are deleted.
-                </div>
-              </Card>
-            </div>
+            <OrgTab
+              row={row}
+              pcOrgName={pcOrgName}
+              orgStartDate={orgStartDate}
+              endOrgBlocked={endOrgBlocked}
+              endOrgBlockedTitle={endOrgBlockedTitle}
+              endPcOrgCascade={(org as any).endPcOrgCascade}
+            />
           ) : null}
 
           {tab === "assignment" ? (
-            <div className="space-y-3">
-              {masterErr ? (
-                <Notice variant="danger" title="Could not load roster master">
-                  {masterErr}
-                </Notice>
-              ) : null}
-
-              {assignmentErr ? (
-                <Notice variant="danger" title="Could not save assignment">
-                  {assignmentErr}
-                </Notice>
-              ) : null}
-
-              <Card title="Assignment">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="text-sm text-[var(--to-ink-muted)]">
-                      Assignment is the source of truth for position + dates. Edit inline to confirm hydration and write.
-                    </div>
-                    {!masterForPerson && !loadingMaster ? (
-                      <div className="text-sm text-[var(--to-ink-muted)]">No active assignment found (end date is set).</div>
-                    ) : null}
-                  </div>
-
-                  {!editingAssignment ? (
-                    <Button onClick={beginEditAssignment} disabled={!masterForPerson || loadingMaster}>
-                      Edit
-                    </Button>
-                  ) : (
-                    <div className="flex gap-2">
-                      <Button variant="ghost" onClick={cancelEditAssignment} disabled={savingAssignment}>
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={saveAssignment}
-                        disabled={savingAssignment || !assignmentDirty || !assignmentValidation.ok}
-                      >
-                        {savingAssignment ? "Saving…" : "Save"}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                {loadingMaster && !masterForPerson ? (
-                  <div className="mt-3 text-sm text-[var(--to-ink-muted)]">Loading roster master…</div>
-                ) : masterForPerson ? (
-                  <div className="mt-3 space-y-2">
-                    {/* Position title */}
-                    {editingAssignment ? (
-                      <div className="grid grid-cols-12 gap-2 text-sm">
-                        <div className="col-span-4 text-[var(--to-ink-muted)]">Position title</div>
-                        <div className="col-span-8">
-                          {positionTitlesError ? (
-                            <div className="mb-2">
-                              <Notice variant="danger" title="Could not load position titles">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-sm">{positionTitlesError}</div>
-                                  <Button variant="ghost" onClick={loadPositionTitles} disabled={positionTitlesLoading}>
-                                    Retry
-                                  </Button>
-                                </div>
-                              </Notice>
-                            </div>
-                          ) : null}
-
-                          <Select
-                            value={(assignmentDraft as any)?.position_title ?? ""}
-                            onChange={(e) =>
-                              setAssignmentDraft((a: any) => ({
-                                ...(a ?? {}),
-                                position_title: e.target.value,
-                              }))
-                            }
-                            disabled={positionTitlesLoading}
-                          >
-                            <option value="">
-                              {positionTitlesLoading ? "Loading titles…" : "Select a title…"}
-                            </option>
-                            {positionTitleOptions.map((t) => (
-                              <option key={t.position_title} value={t.position_title}>
-                                {t.position_title}
-                              </option>
-                            ))}
-                          </Select>
-                          <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-                            (This references <code className="px-1">position_title</code> lookup; save will fail if invalid.)
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <KVRow label="Position title" value={(masterForPerson as any)?.position_title ?? "—"} />
-                    )}
-
-                    {/* Tech ID (optional) */}
-                    {editingAssignment ? (
-                      <div className="grid grid-cols-12 gap-2 text-sm">
-                        <div className="col-span-4 text-[var(--to-ink-muted)]">Tech ID</div>
-                        <div className="col-span-8">
-                          <TextInput
-                            value={(assignmentDraft as any)?.tech_id ?? ""}
-                            onChange={(e) =>
-                              setAssignmentDraft((a: any) => ({
-                                ...(a ?? {}),
-                                tech_id: e.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <KVRow label="Tech ID" value={(masterForPerson as any)?.tech_id ?? (row as any)?.tech_id ?? "—"} />
-                    )}
-
-                    {/* Start date (required) */}
-                    {editingAssignment ? (
-                      <div className="grid grid-cols-12 gap-2 text-sm">
-                        <div className="col-span-4 text-[var(--to-ink-muted)]">Start date</div>
-                        <div className="col-span-8">
-                          <input
-                            className="to-input"
-                            type="date"
-                            value={(assignmentDraft as any)?.start_date ?? ""}
-                            onChange={(e) =>
-                              setAssignmentDraft((a: any) => ({
-                                ...(a ?? {}),
-                                start_date: e.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <KVRow label="Start date" value={(masterForPerson as any)?.start_date ?? "—"} />
-                    )}
-
-                    {/* End date (optional) */}
-                    {editingAssignment ? (
-                      <div className="grid grid-cols-12 gap-2 text-sm">
-                        <div className="col-span-4 text-[var(--to-ink-muted)]">End date</div>
-                        <div className="col-span-8">
-                          <input
-                            className="to-input"
-                            type="date"
-                            value={(assignmentDraft as any)?.end_date ?? ""}
-                            onChange={(e) =>
-                              setAssignmentDraft((a: any) => ({
-                                ...(a ?? {}),
-                                end_date: e.target.value,
-                              }))
-                            }
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <KVRow label="End date" value={(masterForPerson as any)?.end_date ?? "—"} />
-                    )}
-
-                    {/* Active */}
-                    {editingAssignment ? (
-                      <div className="grid grid-cols-12 gap-2 text-sm">
-                        <div className="col-span-4 text-[var(--to-ink-muted)]">Status</div>
-                        <div className="col-span-8">
-                          <SegmentedControl
-                            value={String(
-                              Boolean(
-                                (assignmentDraft as any)?.active ?? (assignmentDraft as any)?.assignment_active
-                              )
-                            )}
-                            onChange={(next) =>
-                              setAssignmentDraft((a: any) => ({
-                                ...(a ?? {}),
-                                active: next === "true",
-                              }))
-                            }
-                            options={[
-                              { value: "true", label: "Active" },
-                              { value: "false", label: "Inactive" },
-                            ]}
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <KVRow
-                        label="Status"
-                        value={
-                          Boolean((masterForPerson as any)?.active ?? (masterForPerson as any)?.assignment_active)
-                            ? "Active"
-                            : "Inactive"
-                        }
-                      />
-                    )}
-
-                    {/* Reporting (read-only) */}
-                    <KVRow label="Reports to" value={(masterForPerson as any)?.reports_to_full_name ?? "—"} />
-                  </div>
-                ) : null}
-
-                {editingAssignment && !assignmentValidation.ok ? (
-                  <div className="mt-3 text-sm text-[var(--to-status-danger)]">{assignmentValidation.msg}</div>
-                ) : null}
-              </Card>
-            </div>
+            <AssignmentTab
+              masterErr={(assignment as any).masterErr}
+              assignmentErr={(assignment as any).assignmentErr}
+              loadingMaster={(assignment as any).loadingMaster}
+              masterForPerson={(assignment as any).masterForPerson}
+              row={row as any}
+              editingAssignment={(assignment as any).editingAssignment}
+              savingAssignment={(assignment as any).savingAssignment}
+              assignmentDraft={(assignment as any).assignmentDraft}
+              assignmentDirty={(assignment as any).assignmentDirty}
+              assignmentValidation={(assignment as any).assignmentValidation}
+              positionTitlesError={(assignment as any).positionTitlesError}
+              positionTitlesLoading={(assignment as any).positionTitlesLoading}
+              positionTitleOptions={(assignment as any).positionTitleOptions}
+              loadPositionTitles={(assignment as any).loadPositionTitles}
+              beginEditAssignment={(assignment as any).beginEditAssignment}
+              cancelEditAssignment={(assignment as any).cancelEditAssignment}
+              saveAssignment={(assignment as any).saveAssignment}
+              setAssignmentDraft={(assignment as any).setAssignmentDraft}
+            />
           ) : null}
 
           {tab === "leadership" ? (
-            <div className="space-y-3">
-              {drillErr ? (
-                <Notice variant="danger" title="Could not load roster drilldown">
-                  {drillErr}
-                </Notice>
-              ) : null}
-
-              {leadershipErr ? (
-                <Notice variant="danger" title="Could not save leadership">
-                  {leadershipErr}
-                </Notice>
-              ) : null}
-
-              <Card title="Leadership">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="text-sm text-[var(--to-ink-muted)]">
-                      Reporting relationship is stored in <code className="px-1">Assignment</code>. Edit ends current and starts new.
-                    </div>
-                    {loadingDrill && !drillForPerson.length ? (
-                      <div className="text-sm text-[var(--to-ink-muted)]">Loading leadership…</div>
-                    ) : null}
-                  </div>
-
-                  {!editingLeadership ? (
-                    <Button onClick={beginEditLeadership} disabled={!assignmentId || loadingDrill}>
-                      Edit
-                    </Button>
-                  ) : (
-                    <div className="flex gap-2">
-                      <Button variant="ghost" onClick={cancelEditLeadership} disabled={savingLeadership}>
-                        Cancel
-                      </Button>
-                      <Button onClick={saveLeadership} disabled={savingLeadership}>
-                        {savingLeadership ? "Saving…" : "Save"}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-3 space-y-2">
-                  {!editingLeadership ? (
-                    <>
-                      <KVRow label="Reports to" value={leadershipContext.reports_to_full_name ?? "—"} />
-                      <KVRow label="Manager assignment_id" value={leadershipContext.reports_to_assignment_id ?? "—"} />
-                    </>
-                  ) : (
-                    <div className="grid grid-cols-12 gap-2 text-sm">
-                      <div className="col-span-4 text-[var(--to-ink-muted)]">Reports to</div>
-                      <div className="col-span-8 space-y-2">
-                        <select
-                          className="to-input"
-                          value={(leadershipDraft as any)?.reports_to_assignment_id ?? ""}
-                          onChange={(e) =>
-                            setLeadershipDraft({
-                              reports_to_assignment_id: e.target.value,
-                            })
-                          }
-                        >
-                          <option value="">— No manager (end current relationship) —</option>
-                          {managerOptions.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="text-xs text-[var(--to-ink-muted)]">
-                          If you don’t see the right manager here, ensure they have an active assignment in this org.
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Card>
-
-              {/* Keep scaffolding until handshake is verified */}
-            </div>
+            <LeadershipTab
+              row={row}
+              drillErr={(leadership as any).drillErr}
+              leadershipErr={(leadership as any).leadershipErr}
+              loadingDrill={(leadership as any).loadingDrill}
+              drillForPersonLen={(((leadership as any).drillForPerson ?? []) as any[]).length}
+              editingLeadership={(leadership as any).editingLeadership}
+              savingLeadership={(leadership as any).savingLeadership}
+              assignmentId={assignmentId ? String(assignmentId) : null}
+              leadershipContext={{
+                reports_to_full_name: (leadership as any)?.leadershipContext?.reports_to_full_name ?? null,
+                reports_to_assignment_id: (leadership as any)?.leadershipContext?.reports_to_assignment_id
+                  ? String((leadership as any).leadershipContext.reports_to_assignment_id)
+                  : null,
+              }}
+              leadershipDraftReportsToAssignmentId={String(
+                (leadership as any)?.leadershipDraft?.reports_to_assignment_id ?? ""
+              )}
+              managerOptions={(leadership as any).managerOptions}
+              beginEditLeadership={(leadership as any).beginEditLeadership}
+              cancelEditLeadership={(leadership as any).cancelEditLeadership}
+              saveLeadership={(leadership as any).saveLeadership}
+              setLeadershipDraftReportsToAssignmentId={setLeadershipDraftReportsToAssignmentId}
+            />
           ) : null}
         </div>
       )}

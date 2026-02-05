@@ -13,7 +13,7 @@ import { Select } from "@/components/ui/Select";
 import { AffiliationSelector, type AffiliationOption } from "@/components/affiliation/AffiliationSelector";
 import { Notice } from "@/components/ui/Notice";
 import { useToast } from "@/components/ui/Toast";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/shared/data/supabase/client";
 
 
 type TabKey = "person" | "org" | "assignment" | "leadership" | "invite";

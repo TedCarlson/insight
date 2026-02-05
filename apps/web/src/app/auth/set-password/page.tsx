@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import SetPasswordClient from "./SetPasswordClient";
+import SetPasswordClient from "@/features/auth/components/SetPasswordClient";
 
 export default function SetPasswordPage() {
   return (

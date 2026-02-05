@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { normalizeNext } from "@/lib/navigation/next";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/shared/data/supabase/client";
 
 function hardNavigate(to: string) {
   window.location.assign(to);

@@ -9,7 +9,7 @@ import { unstable_noStore as noStore } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 
-import { ScheduleGridClient } from "./ScheduleGridClient";
+import { ScheduleGridClient } from "@/features/route-lock/schedule/ScheduleGridClient";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

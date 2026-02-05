@@ -5,7 +5,7 @@ import type { CSSProperties } from "react";
 import type { RosterRow } from "@/lib/api";
 import { DataTable, DataTableHeader, DataTableBody, DataTableRow } from "@/components/ui/DataTable";
 import { useSession } from "@/state/session";
-import { useRosterManageAccess } from "@/hooks/useRosterManageAccess";
+import { useRosterManageAccess } from "@/features/roster/hooks/useRosterManageAccess";
 
 const rosterGridStyle: CSSProperties = {
   // Short/id columns use fixed-ish widths; the three text-heavy columns share remaining space evenly.

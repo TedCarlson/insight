@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/shared/data/supabase/client";
 import { normalizeNext } from "@/lib/navigation/next";
 
 function hardNavigate(to: string) {

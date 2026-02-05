@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/shared/data/supabase/client";
 import { OrgSelector } from "@/components/OrgSelector";
 import { useOrg } from "@/state/org";
 

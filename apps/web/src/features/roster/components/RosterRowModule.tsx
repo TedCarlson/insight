@@ -16,17 +16,17 @@ import { useToast } from "@/components/ui/Toast";
 import { createClient } from "@/shared/data/supabase/client";
 
 import {
-  AllFieldsCard,
-  CollapsibleJson,
-  KVRow,
   type TabKey,
-  buildTitle,
-  ensurePersonIdentity,
   formatJson,
   hasOwn,
+  KVRow,
+  CollapsibleJson,
+  AllFieldsCard,
+  buildTitle,
   rowFallbackFullName,
   seedPersonFromRow,
-} from "@/features/roster/components/rosterRowModule.helpers";
+  ensurePersonIdentity,
+} from "./rosterRowModule.helpers";
 
 export function RosterRowModule({
   open,

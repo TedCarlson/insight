@@ -1,7 +1,5 @@
-"use client";
-
-import { useMemo } from "react";
 import { Card } from "@/components/ui/Card";
+import { useMemo } from "react";
 
 export type TabKey = "person" | "org" | "assignment" | "leadership" | "invite";
 
@@ -67,7 +65,7 @@ export function AllFieldsCard({ title, obj, emptyHint }: { title: string; obj: a
   );
 }
 
-export function buildTitle(row: any) {
+export function buildTitle(row: any | null) {
   if (!row) return "Roster Row";
 
   const name =

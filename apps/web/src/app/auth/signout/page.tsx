@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/shared/data/supabase/client";
 
 export default function SignOutPage() {
   useEffect(() => {

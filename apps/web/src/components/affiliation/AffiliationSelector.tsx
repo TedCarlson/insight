@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/shared/data/supabase/client";
 
 import { Card } from "@/components/ui/Card";
 import { Field } from "@/components/ui/Field";

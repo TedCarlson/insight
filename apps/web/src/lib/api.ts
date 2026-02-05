@@ -1,6 +1,6 @@
 // apps/web/src/lib/api.ts
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/shared/data/supabase/client";
 
 type ApiError = {
   message: string;

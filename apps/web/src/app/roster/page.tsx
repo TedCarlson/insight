@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { api, type RosterRow } from "@/lib/api";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/shared/data/supabase/client";
 import { fetchActiveRosterPersonIdSet } from "@/lib/activeRoster";
 import { useOrg } from "@/state/org";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";

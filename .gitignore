@@ -9,3 +9,7 @@ ui-journal-*.zip
 
 # TypeScript incremental build info
 **/tsconfig.tsbuildinfo
+
+# local snapshots / zips
+snapshots/
+*.zip

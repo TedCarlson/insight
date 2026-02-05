@@ -10,8 +10,8 @@ import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.serv
 import { supabaseServer } from "@/lib/supabase/server";
 
 import { UploadShiftValidationCard } from "./UploadShiftValidationCard";
-import { ImportedRowsCardClient, type ImportRow } from "./ImportedRowsCardClient";
-import { RollupsCardClient } from "./RollupsCardClient";
+import { ImportedRowsCardClient, type ImportRow } from "@/features/route-lock/shift-validation/ImportedRowsCardClient";
+import { RollupsCardClient } from "@/features/route-lock/shift-validation/RollupsCardClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Toolbar } from "@/components/ui/Toolbar";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 
-import RoutesAdminClient from "./RoutesAdminClient";
+import RoutesAdminClient from "@/features/route-lock/routes/RoutesAdminClient";
 
 export default async function RouteLockRoutesPage() {
   const scope = await requireSelectedPcOrgServer();

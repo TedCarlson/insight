@@ -1,8 +1,7 @@
-// apps/web/src/features/roster/components/row-module/useRosterRowModule.ts
 "use client";
 
 import { useMemo } from "react";
-import type { TabKey } from "../rosterRowModule.helpers";
+import type { TabKey } from "../../components/rosterRowModule.helpers";
 
 export function useRosterRowModule(args: {
   tab: TabKey;

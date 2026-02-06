@@ -1,7 +1,7 @@
 // apps/web/src/app/api/locate/state-resource/update/route.ts
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 type Body = {
   state_code: string;
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "missing_service_env" }, { status: 500 });
   }
 
-  const admin = createClient(supabaseUrl, service, { auth: { persistSession: false } });
+  const admin = supabaseAdmin();
 
   const { error } = await admin
     .from("locate_state_resource")

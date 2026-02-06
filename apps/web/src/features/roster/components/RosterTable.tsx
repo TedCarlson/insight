@@ -1,8 +1,8 @@
-//apps/web/src/components/roster/RosterTable.tsx
+// apps/web/src/features/roster/components/RosterTable.tsx
 "use client";
 
 import type { CSSProperties } from "react";
-import type { RosterRow } from "@/lib/api";
+import type { RosterRow } from "@/shared/lib/api";
 import { DataTable, DataTableHeader, DataTableBody, DataTableRow } from "@/components/ui/DataTable";
 import { useSession } from "@/state/session";
 import { useRosterManageAccess } from "@/features/roster/hooks/useRosterManageAccess";

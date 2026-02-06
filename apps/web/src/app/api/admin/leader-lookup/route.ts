@@ -1,6 +1,10 @@
+// apps/web/src/app/api/admin/leader-lookup/route.ts
+
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
+
+export const runtime = "nodejs";
 
 type LookupType = "user" | "person";
 
@@ -9,33 +13,38 @@ function cleanQuery(q: unknown) {
   return s.slice(0, 80);
 }
 
+function cleanType(v: unknown): LookupType {
+  return v === "person" ? "person" : "user";
+}
+
+function cleanLimit(v: unknown): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 12;
+  return Math.max(1, Math.min(25, Math.floor(n)));
+}
+
 export async function POST(req: Request) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !anon) return NextResponse.json({ ok: false, error: "missing env" }, { status: 500 });
-  if (!service) return NextResponse.json({ ok: false, error: "missing service role key" }, { status: 500 });
-
-  const supabase = await supabaseServer();
+  // Session-aware server client (cookie auth)
+  const sb = await supabaseServer();
 
   const {
     data: { user },
     error: userErr,
-  } = await supabase.auth.getUser();
+  } = await sb.auth.getUser();
 
-  if (!user || userErr) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  if (!user || userErr) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
 
   const body = await req.json().catch(() => ({}));
-  const type = (body?.type ?? "user") as LookupType;
+  const type = cleanType(body?.type);
   const q = cleanQuery(body?.q);
-  const limitRaw = Number(body?.limit ?? 12);
-  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(25, limitRaw)) : 12;
+  const limit = cleanLimit(body?.limit ?? 12);
 
-  if (!q) return NextResponse.json({ ok: true, items: [] });
+  if (!q) return NextResponse.json({ ok: true, items: [] }, { status: 200 });
 
   // Server-authoritative org scope
-  const { data: profile, error: profileErr } = await supabase
+  const { data: profile, error: profileErr } = await sb
     .from("user_profile")
     .select("selected_pc_org_id")
     .eq("auth_user_id", user.id)
@@ -46,9 +55,9 @@ export async function POST(req: Request) {
   const pc_org_id = (profile?.selected_pc_org_id as string | null) ?? null;
   if (!pc_org_id) return NextResponse.json({ ok: false, error: "no selected org" }, { status: 409 });
 
-  // Permission gate: leadership_manage in selected org (owners pass too)
+  // Permission gate: leadership_manage in selected org
   try {
-    const apiClient: any = (supabase as any).schema ? (supabase as any).schema("api") : supabase;
+    const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
     const { data: allowed, error: permErr } = await apiClient.rpc("has_pc_org_permission", {
       p_pc_org_id: pc_org_id,
       p_permission_key: "leadership_manage",
@@ -59,13 +68,19 @@ export async function POST(req: Request) {
   }
 
   // Service role for lookups (auth.users not readable to anon)
-  const admin = createClient(url, service, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  let admin: any;
+  try {
+    admin = supabaseAdmin();
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, error: "service_client_unavailable", details: e?.message ?? String(e) },
+      { status: 500 }
+    );
+  }
 
   if (type === "user") {
     // Global email search (auth.users)
-    const { data, error } = await (admin as any)
+    const { data, error } = await admin
       .schema("auth")
       .from("users")
       .select("id,email")
@@ -111,7 +126,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // ✅ USE nameByUserId when building labels
     const items = (data ?? []).map((r: any) => {
       const id = String(r.id);
       const email = String(r.email ?? "(no email)");
@@ -124,14 +138,14 @@ export async function POST(req: Request) {
       };
     });
 
-    return NextResponse.json({ ok: true, items });
+    return NextResponse.json({ ok: true, items }, { status: 200 });
   }
 
-  // Person search (global): name/email-ish
-  // If emails isn't a text column in your schema, OR() may error; we fallback to name-only.
+  // Person search (global): name/email-ish.
+  // If emails isn't a text column, OR() can error; fallback to name-only.
   const base = admin.from("person").select("person_id, full_name, emails").limit(limit);
 
-  const { data, error } = await (base as any).or(`full_name.ilike.%${q}%,emails.ilike.%${q}%`);
+  const { data, error } = await base.or(`full_name.ilike.%${q}%,emails.ilike.%${q}%`);
 
   if (error) {
     const fallback = await admin
@@ -144,22 +158,22 @@ export async function POST(req: Request) {
 
     const items = (fallback.data ?? []).map((r: any) => ({
       type: "person" as const,
-      id: r.person_id as string,
+      id: String(r.person_id),
       label: String(r.full_name ?? "(no name)"),
-      sublabel: r.person_id as string,
+      sublabel: String(r.person_id),
       extra: r.emails ?? null,
     }));
 
-    return NextResponse.json({ ok: true, items });
+    return NextResponse.json({ ok: true, items }, { status: 200 });
   }
 
   const items = (data ?? []).map((r: any) => ({
     type: "person" as const,
-    id: r.person_id as string,
+    id: String(r.person_id),
     label: String(r.full_name ?? "(no name)"),
-    sublabel: r.person_id as string,
+    sublabel: String(r.person_id),
     extra: r.emails ?? null,
   }));
 
-  return NextResponse.json({ ok: true, items });
+  return NextResponse.json({ ok: true, items }, { status: 200 });
 }

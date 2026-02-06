@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 export async function GET() {
   const sb = await supabaseServer();
@@ -27,7 +27,7 @@ export async function GET() {
   }
 
   // Service role bypasses RLS (owner-gated route, OK for phase 1)
-  const admin = createClient(supabaseUrl, service, { auth: { persistSession: false } });
+  const admin = supabaseAdmin();
 
   const { data, error } = await admin
     .from("locate_state_resource")

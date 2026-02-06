@@ -3,7 +3,7 @@
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Notice } from "@/components/ui/Notice";
-import type { RosterRow } from "@/lib/api";
+import type { RosterRow } from "@/shared/lib/api";
 import { KVRow } from "../rosterRowModule.helpers";
 
 export function LeadershipTab(props: {

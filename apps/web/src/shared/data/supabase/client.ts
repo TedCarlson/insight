@@ -1,4 +1,4 @@
-// apps/web/src/lib/supabase/client.ts
+// apps/web/src/shared/data/supabase/client.ts
 import { createBrowserClient } from "@supabase/ssr";
 import type { CookieOptions } from "@supabase/ssr";
 

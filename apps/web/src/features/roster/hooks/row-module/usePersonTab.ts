@@ -1,13 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { api, type PersonRow } from "@/lib/api";
+import { useEffect, useState, useMemo } from "react";
+import { api, type PersonRow } from "@/shared/lib/api";
 
 import {
   seedPersonFromRow,
   ensurePersonIdentity,
   rowFallbackFullName,
 } from "../../components/rosterRowModule.helpers";
+
+type CoResolved = {
+  kind: "company" | "contractor";
+  name: string;
+  matched_on: "id" | "code";
+} | null;
 
 export function usePersonTab(args: {
   open: boolean;
@@ -17,31 +23,59 @@ export function usePersonTab(args: {
 }) {
   const { open, tab, row, personId } = args;
 
-  const [person, setPerson] = useState<PersonRow | null>(null);
+  // NOTE:
+  // This hook is designed to be used under a parent that remounts the row-module
+  // when `open`/`row` changes. That removes the need for "reset state in effects"
+  // (which triggers the React lint rule you're seeing).
+
+  function seed(): PersonRow | null {
+    if (!open) return null;
+    const seeded = ensurePersonIdentity(seedPersonFromRow(row), row);
+    return seeded?.person_id ? seeded : null;
+  }
+
+  const [person, setPerson] = useState<PersonRow | null>(() => seed());
   const [personErr, setPersonErr] = useState<string | null>(null);
   const [loadingPerson, setLoadingPerson] = useState(false);
 
   const [editingPerson, setEditingPerson] = useState(false);
   const [savingPerson, setSavingPerson] = useState(false);
-  const [personBaseline, setPersonBaseline] = useState<any | null>(null);
-  const [personDraft, setPersonDraft] = useState<any | null>(null);
 
-  const [coResolved, setCoResolved] = useState<{
-    kind: "company" | "contractor";
-    name: string;
-    matched_on: "id" | "code";
-  } | null>(null);
+  const [personBaseline, setPersonBaseline] = useState<any | null>(() => {
+    const s = seed();
+    return s ? { ...(s as any) } : null;
+  });
+
+  const [personDraft, setPersonDraft] = useState<any | null>(() => {
+    const s = seed();
+    return s ? { ...(s as any) } : null;
+  });
+
+  const [coResolved, setCoResolved] = useState<CoResolved>(null);
 
   const personHuman = useMemo(() => {
     if (!person) return null;
     const base: any = { ...(person as any) };
 
     if (coResolved?.name) {
+      // UI display only (your code uses this field as a display slot)
       base.co_ref_id = coResolved.name;
     }
 
     return base;
   }, [person, coResolved]);
+
+  async function resolveCoDisplay(from: any) {
+    try {
+      const resolved = await api.resolveCoDisplay({
+        co_ref_id: from?.co_ref_id ?? null,
+        co_code: from?.co_code ?? null,
+      });
+      setCoResolved(resolved);
+    } catch {
+      setCoResolved(null);
+    }
+  }
 
   async function loadPerson() {
     if (!personId) return;
@@ -57,15 +91,7 @@ export function usePersonTab(args: {
       setPersonBaseline({ ...(merged as any) });
       setPersonDraft({ ...(merged as any) });
 
-      try {
-        const resolved = await api.resolveCoDisplay({
-          co_ref_id: (merged as any)?.co_ref_id ?? null,
-          co_code: (merged as any)?.co_code ?? null,
-        });
-        setCoResolved(resolved);
-      } catch {
-        setCoResolved(null);
-      }
+      await resolveCoDisplay(merged);
     } catch (e: any) {
       setPersonErr(e?.message ?? "Failed to load person");
     } finally {
@@ -149,17 +175,9 @@ export function usePersonTab(args: {
         setPerson(updated);
         setPersonBaseline({ ...(updated as any) });
         setPersonDraft({ ...(updated as any) });
-
-        try {
-          const resolved = await api.resolveCoDisplay({
-            co_ref_id: (updated as any)?.co_ref_id ?? null,
-            co_code: (updated as any)?.co_code ?? null,
-          });
-          setCoResolved(resolved);
-        } catch {
-          setCoResolved(null);
-        }
+        await resolveCoDisplay(updated);
       } else {
+        // Fallback: re-fetch if RPC didn't return the updated row
         await loadPerson();
       }
     } catch (e: any) {
@@ -169,28 +187,23 @@ export function usePersonTab(args: {
     }
   }
 
-  // Seed/reset on open
+  /**
+   * Lazy-load when the tab becomes active.
+   * IMPORTANT: Avoid calling setState synchronously inside the effect body.
+   * We schedule the load on a 0ms timeout so state updates occur outside the effect callback.
+   */
   useEffect(() => {
     if (!open) return;
+    if (tab !== "person") return;
+    if (!personId) return;
 
-    const seeded = ensurePersonIdentity(seedPersonFromRow(row), row);
+    const t = window.setTimeout(() => {
+      void loadPerson();
+    }, 0);
 
-    setPerson(seeded?.person_id ? seeded : null);
-    setPersonBaseline(seeded?.person_id ? { ...(seeded as any) } : null);
-    setPersonDraft(seeded?.person_id ? { ...(seeded as any) } : null);
-
-    setPersonErr(null);
-    setLoadingPerson(false);
-    setEditingPerson(false);
-    setSavingPerson(false);
-  }, [open, row]);
-
-  // Lazy load
-  useEffect(() => {
-    if (!open) return;
-    if (tab === "person") void loadPerson();
+    return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, tab]);
+  }, [open, tab, personId]);
 
   return {
     person,

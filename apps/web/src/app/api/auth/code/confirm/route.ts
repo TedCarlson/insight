@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import crypto from "crypto";
 
 type Body = {
@@ -41,9 +41,10 @@ export async function POST(req: NextRequest) {
   const pw = String(body.new_password ?? "");
 
   if (!email || !code) return NextResponse.json({ error: "Missing email or code" }, { status: 400 });
-  if (!isStrongEnough(pw)) return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 });
+  if (!isStrongEnough(pw))
+    return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 });
 
-  const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+  const admin = supabaseAdmin();
 
   // Find the unused code row for this email
   const rowRes = await admin

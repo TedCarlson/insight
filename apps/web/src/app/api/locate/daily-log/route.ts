@@ -1,7 +1,7 @@
 // apps/web/src/app/api/locate/daily-log/route.ts
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 type Frame = "AM" | "PM";
 
@@ -50,15 +50,6 @@ async function requireOwnerOrAdmin(sb: Awaited<ReturnType<typeof supabaseServer>
   return { ok: true as const, status: 200 as const, user, error: null };
 }
 
-function getServiceAdminClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !service) return null;
-
-  return createClient(supabaseUrl, service, { auth: { persistSession: false } });
-}
-
 /**
  * Policy:
  * - signed-in AND (owner OR admin) can use Locate endpoints
@@ -77,10 +68,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_date" }, { status: 400 });
   }
 
-  const admin = getServiceAdminClient();
-  if (!admin) {
-    return NextResponse.json({ ok: false, error: "missing_service_env" }, { status: 500 });
-  }
+  const admin = supabaseAdmin();
 
   const { data, error } = await admin
     .from("locate_daily_call_log_v")
@@ -116,10 +104,7 @@ export async function POST(req: NextRequest) {
   if (!isISODate(log_date)) return NextResponse.json({ ok: false, error: "invalid_date" }, { status: 400 });
   if (frame !== "AM" && frame !== "PM") return NextResponse.json({ ok: false, error: "invalid_frame" }, { status: 400 });
 
-  const admin = getServiceAdminClient();
-  if (!admin) {
-    return NextResponse.json({ ok: false, error: "missing_service_env" }, { status: 500 });
-  }
+  const admin = supabaseAdmin();
 
   const rows = Array.isArray(body.rows) ? body.rows : [];
   if (!rows.length) return NextResponse.json({ ok: false, error: "no_rows" }, { status: 400 });

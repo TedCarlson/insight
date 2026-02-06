@@ -1,7 +1,7 @@
 // apps/web/src/lib/auth/bootstrapProfile.server.ts
 import "server-only";
-import { supabaseServer } from "@/lib/supabase/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 type BootstrapResult = {
   ok: boolean;

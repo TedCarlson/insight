@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
 import LeadershipEditor from "@/components/admin/LeadershipEditor";
 
 export default async function AdminLeadershipPage() {

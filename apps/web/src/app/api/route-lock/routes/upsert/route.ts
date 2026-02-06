@@ -1,7 +1,7 @@
 // apps/web/src/app/api/route-lock/routes/upsert/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
+import { supabaseServer } from "@/shared/data/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -64,9 +64,7 @@ export async function POST(req: Request) {
 
   if (!route_name) return NextResponse.json({ ok: false, error: "route_name is required" }, { status: 400 });
 
-  const admin = createClient(url, service, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const admin = supabaseAdmin();
 
   // If editing: make sure it belongs to this org
   if (route_id) {
@@ -78,7 +76,7 @@ export async function POST(req: Request) {
 
     if (exErr) return NextResponse.json({ ok: false, error: exErr.message }, { status: 500 });
     if (!existing) return NextResponse.json({ ok: false, error: "route not found" }, { status: 404 });
-    if (String(existing.pc_org_id) !== String(guard.pc_org_id)) {
+    if (String((existing as any).pc_org_id) !== String(guard.pc_org_id)) {
       return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
     }
 

@@ -1,15 +1,9 @@
 // apps/web/src/app/api/org/assignment/route.ts
 
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
+import { supabaseServer } from "@/shared/data/supabase/server";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
-
-function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient(url, serviceKey, { auth: { persistSession: false } });
-}
 
 function pickPcOrgId(sel: any): string | null {
   const raw =
@@ -36,10 +30,7 @@ export async function POST(req: Request) {
     const pc_org_id = pickPcOrgId(sel);
 
     if (!pc_org_id) {
-      return NextResponse.json(
-        { ok: false, error: "No scoped org selected" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "No scoped org selected" }, { status: 400 });
     }
 
     const body = await req.json().catch(() => ({}));
@@ -72,14 +63,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: rosterErr.message }, { status: 400 });
     }
 
-    // Create assignment using service role (if you need elevated perms)
-    const service = getServiceClient();
+    // Create assignment using service role (elevated perms)
+    const service = supabaseAdmin();
     const { data: assignment, error: assignErr } = await service
       .from("pc_assignment")
       .insert({
         pc_org_id,
         member_user_id,
-        roster_id: rosterRow.id,
+        roster_id: (rosterRow as any).id,
         status: "active",
       })
       .select("*")
@@ -97,10 +88,7 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json(
-      { ok: true, assignment_id: assignment.id, roster_row: rosterRow },
-      { status: 200 }
-    );
+    return NextResponse.json({ ok: true, assignment_id: (assignment as any).id, roster_row: rosterRow }, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
   }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 export const runtime = "nodejs";
 
@@ -60,10 +60,9 @@ async function resolveLeader(admin: any, row: any | null): Promise<{ id: string 
 }
 
 export async function POST() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !service) return NextResponse.json({ ok: false, error: "missing env" }, { status: 500 });
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  return NextResponse.json({ ok: false, error: "missing env" }, { status: 500 });
+}
 
   const supabase = await supabaseServer();
   const {
@@ -94,7 +93,7 @@ export async function POST() {
     return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
   }
 
-  const admin = createClient(url, service, { auth: { persistSession: false, autoRefreshToken: false } });
+  const admin = supabaseAdmin();
 
   // Find region/division from pc_org
   const { data: po, error: poErr } = await admin

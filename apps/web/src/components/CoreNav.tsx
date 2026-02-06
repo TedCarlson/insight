@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session } from "@/shared/data/supabase/types";
 import { createClient } from "@/shared/data/supabase/client";
 import { OrgSelector } from "@/components/OrgSelector";
 import { useOrg } from "@/state/org";

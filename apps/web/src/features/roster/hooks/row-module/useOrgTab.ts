@@ -1,8 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { RosterRow } from "@/lib/api";
-import { api } from "@/lib/api";
+import { api, type RosterRow } from "@/shared/lib/api";
 import { useToast } from "@/components/ui/Toast";
 
 export function useOrgTab(args: {

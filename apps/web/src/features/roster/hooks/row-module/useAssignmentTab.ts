@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { RosterMasterRow } from "@/lib/api";
-import { api } from "@/lib/api";
+import { api, type RosterMasterRow } from "@/shared/lib/api";
 import { loadMasterAction, loadPositionTitlesAction } from "../rosterRowModule.actions";
 
 type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
@@ -53,19 +52,12 @@ export function useAssignmentTab(args: {
     });
   };
 
-  // only fetch titles when needed
-  useEffect(() => {
-    if (!open) return;
-    if (tab !== "assignment" && tab !== "leadership") return;
-    void loadPositionTitles();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, tab]);
-
   const positionTitleOptions = useMemo(() => {
     const list = [...(positionTitles ?? [])];
     list.sort(
       (a, b) =>
-        Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || a.position_title.localeCompare(b.position_title)
+        Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) ||
+        a.position_title.localeCompare(b.position_title)
     );
     return list;
   }, [positionTitles]);
@@ -90,7 +82,10 @@ export function useAssignmentTab(args: {
       return !end && Boolean(active);
     };
 
-    const activeMatches = (master as any[]).filter((r) => String(r.person_id) === pid).filter(isActive);
+    const activeMatches = (master as any[])
+      .filter((r) => String(r.person_id) === pid)
+      .filter(isActive);
+
     if (activeMatches.length > 0) return activeMatches[0] as any;
 
     const byAssignment =
@@ -99,33 +94,39 @@ export function useAssignmentTab(args: {
     return byAssignment ?? null;
   }, [master, personId, assignmentId]);
 
-  // keep baseline/draft synced while not editing
-  useEffect(() => {
-    if (!masterForPerson) {
-      setAssignmentBaseline(null);
-      setAssignmentDraft(null);
-      setEditingAssignment(false);
-      return;
-    }
-    if (!editingAssignment) {
-      setAssignmentBaseline(masterForPerson);
-      setAssignmentDraft(masterForPerson);
-    }
-  }, [masterForPerson, editingAssignment]);
+  /**
+   * Begin edit: snapshot baseline/draft from current master row.
+   * Also apply a default position title (only if empty), without using effects.
+   */
+  function beginEditAssignment() {
+    if (!masterForPerson) return;
 
-  // default title while editing (only if nothing set)
-  useEffect(() => {
-    if (!editingAssignment) return;
-    if ((assignmentDraft as any)?.position_title) return;
-    if (!defaultPositionTitle) return;
+    setAssignmentErr(null);
+    setEditingAssignment(true);
 
-    setAssignmentDraft((a: any) => ({ ...(a ?? {}), position_title: defaultPositionTitle }));
-  }, [editingAssignment, assignmentDraft, defaultPositionTitle]);
+    const base = masterForPerson;
+    const draft = { ...(base as any) };
+
+    if (!draft.position_title && defaultPositionTitle) {
+      draft.position_title = defaultPositionTitle;
+    }
+
+    setAssignmentBaseline(base);
+    setAssignmentDraft(draft);
+  }
+
+  function cancelEditAssignment() {
+    setAssignmentErr(null);
+    setEditingAssignment(false);
+    setAssignmentDraft(assignmentBaseline ?? masterForPerson);
+  }
 
   const assignmentDirty = useMemo(() => {
     if (!assignmentBaseline || !assignmentDraft) return false;
     const keys = ["position_title", "start_date", "end_date", "active", "tech_id"];
-    return keys.some((k) => String((assignmentBaseline as any)?.[k] ?? "") !== String((assignmentDraft as any)?.[k] ?? ""));
+    return keys.some(
+      (k) => String((assignmentBaseline as any)?.[k] ?? "") !== String((assignmentDraft as any)?.[k] ?? "")
+    );
   }, [assignmentBaseline, assignmentDraft]);
 
   const assignmentValidation = useMemo(() => {
@@ -138,20 +139,6 @@ export function useAssignmentTab(args: {
     }
     return { ok: true as const, msg: "" };
   }, [assignmentDraft]);
-
-  function beginEditAssignment() {
-    if (!masterForPerson) return;
-    setAssignmentErr(null);
-    setEditingAssignment(true);
-    setAssignmentBaseline(masterForPerson);
-    setAssignmentDraft(masterForPerson);
-  }
-
-  function cancelEditAssignment() {
-    setAssignmentErr(null);
-    setEditingAssignment(false);
-    setAssignmentDraft(assignmentBaseline ?? masterForPerson);
-  }
 
   async function saveAssignment() {
     if (!assignmentDraft) {
@@ -197,6 +184,9 @@ export function useAssignmentTab(args: {
     try {
       await api.assignmentUpdate(patch);
       setEditingAssignment(false);
+
+      // Refresh master; draft/baseline are no longer auto-synced via effects.
+      // The UI should reflect the updated master row after reload.
       await loadMaster();
     } catch (e: any) {
       setAssignmentErr(e?.message ?? "Failed to save assignment");
@@ -205,10 +195,34 @@ export function useAssignmentTab(args: {
     }
   }
 
-  // lifecycle: load master on open (you also do it at module level; this keeps hook self-sufficient)
+  /**
+   * Lazy-load titles only when needed.
+   * Schedule to avoid "setState inside effect" rule.
+   */
   useEffect(() => {
     if (!open) return;
-    void loadMaster();
+    if (tab !== "assignment" && tab !== "leadership") return;
+
+    const t = window.setTimeout(() => {
+      void loadPositionTitles();
+    }, 0);
+
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, tab, pcOrgId]);
+
+  /**
+   * Load master on open (hook is self-sufficient).
+   * Schedule to avoid strict lint about state updates inside effect callstack.
+   */
+  useEffect(() => {
+    if (!open) return;
+
+    const t = window.setTimeout(() => {
+      void loadMaster();
+    }, 0);
+
+    return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pcOrgId]);
 

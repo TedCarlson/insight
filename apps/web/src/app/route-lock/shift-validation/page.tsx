@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { Toolbar } from "@/components/ui/Toolbar";
 
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
 
 import { UploadShiftValidationCard } from "./UploadShiftValidationCard";
 import { ImportedRowsCardClient, type ImportRow } from "@/features/route-lock/shift-validation/ImportedRowsCardClient";

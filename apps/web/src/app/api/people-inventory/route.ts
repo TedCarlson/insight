@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 type InviteStatus = "not_invited" | "invited_pending" | "active";
 

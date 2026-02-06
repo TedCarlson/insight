@@ -6,7 +6,7 @@
  *
  * All callers should scope by pc_org_id.
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@/shared/data/supabase/types";
 
 export type ActiveRosterRow = {
   pc_org_id: string;

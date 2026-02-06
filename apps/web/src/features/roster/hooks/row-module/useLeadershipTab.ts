@@ -31,6 +31,7 @@ export function useLeadershipTab(args: {
   const [savingLeadership, setSavingLeadership] = useState(false);
   const [leadershipErr, setLeadershipErr] = useState<string | null>(null);
 
+  // Treat draft as "edit-only" state. No syncing effects.
   const [leadershipDraft, setLeadershipDraft] = useState<{ reports_to_assignment_id: string }>({
     reports_to_assignment_id: "",
   });
@@ -44,9 +45,15 @@ export function useLeadershipTab(args: {
     });
   };
 
+  // Load drilldown on open (self-sufficient hook)
   useEffect(() => {
     if (!open) return;
-    void loadDrilldown();
+
+    const t = window.setTimeout(() => {
+      void loadDrilldown();
+    }, 0);
+
+    return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pcOrgId]);
 
@@ -86,26 +93,16 @@ export function useLeadershipTab(args: {
     };
   }, [drillForPerson, row]);
 
-  // keep draft synced while not editing
-  useEffect(() => {
-    if (editingLeadership) return;
-    setLeadershipDraft({
-      reports_to_assignment_id: leadershipContext.reports_to_assignment_id
-        ? String(leadershipContext.reports_to_assignment_id)
-        : "",
-    });
-  }, [leadershipContext, editingLeadership]);
-
   const managerOptions = useMemo(() => {
     const rows: any[] = (master ?? []) as any[];
     const childAssignmentId = String(assignmentId ?? "");
     const childTitle = String((masterForPerson as any)?.position_title ?? (row as any)?.position_title ?? "");
     const childAff = String(
       (row as any)?.affiliation ??
-      (row as any)?.co_name ??
-      (row as any)?.company_name ??
-      (row as any)?.contractor_name ??
-      ""
+        (row as any)?.co_name ??
+        (row as any)?.company_name ??
+        (row as any)?.contractor_name ??
+        ""
     );
 
     const norm = (s: any) => String(s ?? "").toLowerCase().trim();
@@ -148,7 +145,8 @@ export function useLeadershipTab(args: {
 
     const techSo = sortOrderByTitle.get("Technician");
     const supSo = sortOrderByTitle.get("Supervisor");
-    const sortIncreasesWithSeniority = typeof techSo === "number" && typeof supSo === "number" ? techSo < supSo : true;
+    const sortIncreasesWithSeniority =
+      typeof techSo === "number" && typeof supSo === "number" ? techSo < supSo : true;
 
     const getRank = (titleRaw: string) => {
       const t = String(titleRaw ?? "").trim();
@@ -213,14 +211,17 @@ export function useLeadershipTab(args: {
     const relaxed = candidates.length
       ? candidates
       : rows.filter((r) => {
-        const aid = String(r?.assignment_id ?? "");
-        if (!aid) return false;
-        if (childAssignmentId && aid === childAssignmentId) return false;
-        const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
-        if (!active) return false;
-        const candTitle = String(r?.position_title ?? r?.title ?? "");
-        return isHigherRank(candTitle) && (isITG(r) || norm(String(r?.affiliation ?? r?.co_name ?? "")) === norm(childAff));
-      });
+          const aid = String(r?.assignment_id ?? "");
+          if (!aid) return false;
+          if (childAssignmentId && aid === childAssignmentId) return false;
+          const active = Boolean(r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true);
+          if (!active) return false;
+          const candTitle = String(r?.position_title ?? r?.title ?? "");
+          return (
+            isHigherRank(candTitle) &&
+            (isITG(r) || norm(String(r?.affiliation ?? r?.co_name ?? "")) === norm(childAff))
+          );
+        });
 
     const finalList = relaxed.length ? relaxed : rows.filter((r) => Boolean(String(r?.assignment_id ?? "")));
 
@@ -236,24 +237,20 @@ export function useLeadershipTab(args: {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [master, assignmentId, masterForPerson, row, positionTitles]);
 
+  function baselineParentId(): string {
+    return leadershipContext.reports_to_assignment_id ? String(leadershipContext.reports_to_assignment_id) : "";
+  }
+
   function beginEditLeadership() {
     setLeadershipErr(null);
     setEditingLeadership(true);
-    setLeadershipDraft({
-      reports_to_assignment_id: leadershipContext.reports_to_assignment_id
-        ? String(leadershipContext.reports_to_assignment_id)
-        : "",
-    });
+    setLeadershipDraft({ reports_to_assignment_id: baselineParentId() });
   }
 
   function cancelEditLeadership() {
     setLeadershipErr(null);
     setEditingLeadership(false);
-    setLeadershipDraft({
-      reports_to_assignment_id: leadershipContext.reports_to_assignment_id
-        ? String(leadershipContext.reports_to_assignment_id)
-        : "",
-    });
+    setLeadershipDraft({ reports_to_assignment_id: baselineParentId() });
   }
 
   async function saveLeadership() {
@@ -310,6 +307,7 @@ export function useLeadershipTab(args: {
       }
 
       setEditingLeadership(false);
+      setLeadershipDraft({ reports_to_assignment_id: "" });
       await loadDrilldown();
     } catch (e: any) {
       setLeadershipErr(e?.message ?? "Failed to save reporting relationship");

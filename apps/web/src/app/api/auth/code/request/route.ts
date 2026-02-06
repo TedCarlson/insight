@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import crypto from "crypto";
 import { Resend } from "resend";
 
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true }, { status: 200 });
     }
 
-    const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const admin = supabaseAdmin();
 
     // Invalidate any existing unused code for this email (prevents unique-index conflict)
     await admin
@@ -98,7 +98,10 @@ export async function POST(req: NextRequest) {
 
     // Even if send fails, do not leak info. But in non-prod, you may want to see it.
     if ((send as any)?.error && process.env.NODE_ENV !== "production") {
-      return NextResponse.json({ ok: true, dev_note: "email_send_failed", details: (send as any).error }, { status: 200 });
+      return NextResponse.json(
+        { ok: true, dev_note: "email_send_failed", details: (send as any).error },
+        { status: 200 }
+      );
     }
 
     return NextResponse.json({ ok: true }, { status: 200 });

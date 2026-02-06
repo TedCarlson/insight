@@ -1,6 +1,7 @@
-// apps/web/src/lib/supabase/server.ts
+// apps/web/src/shared/data/supabase/server.ts
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 
 /**
  * Server-side Supabase client for Server Components / Route Handlers.
@@ -29,4 +30,18 @@ export async function supabaseServer() {
     },
   });
 }
-    
+/**
+ * Server-side anon Supabase client (no cookies, no session persistence).
+ * Use for server endpoints that need anon-key auth methods like resetPasswordForEmail().
+ */
+export function supabaseAnon() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  if (!url || !anon) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  }
+
+  return createClient(url, anon, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+}

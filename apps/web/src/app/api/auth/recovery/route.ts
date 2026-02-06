@@ -1,8 +1,9 @@
 // apps/web/src/app/api/auth/recovery/route.ts
 
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { normalizeNext } from "@/lib/navigation/next";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
+import { supabaseAnon } from "@/shared/data/supabase/server";
 
 type Body = {
   email: string;
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
     callbackUrl.searchParams.set("next", postPasswordNext);
     const redirectTo = callbackUrl.toString();
 
-    const client = createClient(url, anon, { auth: { persistSession: false } });
+    const client = supabaseAnon();
 
     // This triggers Supabase to email the password reset link (the correct UX for "Forgot password")
     const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
@@ -108,7 +109,7 @@ export async function POST(req: NextRequest) {
     const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (service) {
       try {
-        const admin = createClient(url, service, { auth: { persistSession: false } });
+        const admin = supabaseAdmin();
         const linkRes = await admin.auth.admin.generateLink({
           type: "recovery",
           email,

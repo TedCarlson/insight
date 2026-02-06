@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
 import { bootstrapProfileServer } from "@/lib/auth/bootstrapProfile.server";
 
 export default async function AccessPage() {

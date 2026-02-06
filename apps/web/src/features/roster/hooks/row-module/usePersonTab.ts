@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { api, type PersonRow } from "@/lib/api";
+import { api, type PersonRow } from "@/shared/lib/api";
 
 import {
   seedPersonFromRow,

@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
-import { api, type PersonRow } from "@/lib/api";
+import { api, type PersonRow } from "@/shared/lib/api";
 import { createClient } from "@/shared/data/supabase/client";
 import { useOrg } from "@/state/org";
 

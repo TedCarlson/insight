@@ -1,6 +1,6 @@
 // apps/web/src/app/api/session/status/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
 
 export async function GET() {
   const sb = await supabaseServer();

@@ -1,7 +1,7 @@
 // apps/web/src/app/api/route-lock/routes/list/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
+import { supabaseServer } from "@/shared/data/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -46,9 +46,7 @@ async function handler() {
   const guard = await guardSelectedOrgRosterManage();
   if (!guard.ok) return NextResponse.json({ ok: false, error: guard.error }, { status: guard.status });
 
-  const admin = createClient(url, service, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const admin = supabaseAdmin();
 
   // Count from base table
   const { count: routeCount, error: countErr } = await admin

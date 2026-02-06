@@ -2,7 +2,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { type RosterRow } from "@/lib/api";
+import { type RosterRow } from "@/shared/lib/api";
 
 import { Modal } from "@/components/ui/Modal";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";

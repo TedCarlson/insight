@@ -1,7 +1,7 @@
 // apps/web/src/app/page.tsx
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
 
 export default async function Page() {
   const supabase = await supabaseServer();

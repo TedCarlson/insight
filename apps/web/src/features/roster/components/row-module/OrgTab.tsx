@@ -2,7 +2,7 @@
 
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import type { RosterRow } from "@/lib/api";
+import type { RosterRow } from "@/shared/lib/api";
 
 export function OrgTab(props: {
   row: RosterRow | null;

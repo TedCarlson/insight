@@ -6,7 +6,7 @@ import { PageShell } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
 import { Toolbar } from "@/components/ui/Toolbar";
 import { unstable_noStore as noStore } from "next/cache";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 
 import { ScheduleGridClient } from "@/features/route-lock/schedule/ScheduleGridClient";

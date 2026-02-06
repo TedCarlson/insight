@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { TextInput } from "@/components/ui/TextInput";
 import { Notice } from "@/components/ui/Notice";
-import type { RosterRow } from "@/lib/api";
+import type { RosterRow } from "@/shared/lib/api";
 
 export function InviteTab(props: {
   row: RosterRow | null;

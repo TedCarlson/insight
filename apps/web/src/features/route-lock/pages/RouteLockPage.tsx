@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");

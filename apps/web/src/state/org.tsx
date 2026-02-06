@@ -2,7 +2,7 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { api, type PcOrgChoice } from "@/lib/api";
+import { api, type PcOrgChoice } from "@/shared/lib/api";
 import { useSession } from "@/state/session";
 
 type OrgState = {

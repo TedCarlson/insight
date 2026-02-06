@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 export const runtime = "nodejs";
 
@@ -138,9 +138,7 @@ export async function POST(req: Request) {
   }
 
   // Service role client for joins + Auth Admin API resolution
-  const admin = createClient(url, service, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const admin = supabaseAdmin();
 
   // 1) Org meta from pc_org + mso/division/region
   const { data: po, error: poErr } = await admin

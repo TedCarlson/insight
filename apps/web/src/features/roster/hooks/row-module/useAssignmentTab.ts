@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { RosterMasterRow } from "@/lib/api";
-import { api } from "@/lib/api";
+import { api, type RosterMasterRow } from "@/shared/lib/api";
 import { loadMasterAction, loadPositionTitlesAction } from "../rosterRowModule.actions";
 
 type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };

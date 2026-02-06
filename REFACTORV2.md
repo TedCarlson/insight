@@ -11,7 +11,7 @@
 - [x] 1.1 Add top-level docs/ (or keep apps/web/docs but standardize)
 - [x] 1.2 Add tooling/ folders (scripts, generators)
 - [x] 1.3 Add packages/ shared libs folder (for shared code)
-- [ ] 1.4 Add apps/ boundaries check (web stays isolated)
+- [x] 1.4 Add apps/ boundaries check (web stays isolated)
 
 ## Phase 2 — Move Code Into Stable “Domains”
 - [ ] 2.1 Extract Supabase access into a single data layer package
@@ -19,7 +19,7 @@
 - [x] 2.3 Move feature modules into feature folders (metrics, roster, org, auth)
 
 ## Phase 3 — Route + Screen Hygiene (stop “stirring the pot”)
-- [x] 3.1 Make routes thin (compose feature modules, no logic)
+- [ ] 3.1 Make routes thin (compose feature modules, no logic)
 - [ ] 3.2 Add server/client split conventions
 - [ ] 3.3 Add loading/error boundaries per route group
 

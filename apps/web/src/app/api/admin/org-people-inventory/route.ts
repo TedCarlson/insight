@@ -1,7 +1,7 @@
 // apps/web/src/app/api/admin/org-people-inventory/route.ts
 import { NextResponse } from "next/server";
-import { supabaseServer } from "@/lib/supabase/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 /**
  * Org-scoped "people inventory" for Org Users console:

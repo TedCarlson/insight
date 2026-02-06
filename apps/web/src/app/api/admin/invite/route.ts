@@ -1,10 +1,11 @@
 // apps/web/src/app/api/admin/invite/route.ts
 
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import { normalizeNext } from "@/lib/navigation/next";
+
+export const runtime = "nodejs";
 
 type InviteBody = {
   email: string;
@@ -34,46 +35,21 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const cookieStore = await cookies();
-
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
     // Prefer explicit site URL; otherwise use request origin (works in previews)
     const origin = new URL(req.url).origin;
     const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || origin).replace(/\/+$/, "");
 
-    if (!url || !anon) {
-      return NextResponse.json(
-        { error: "Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY" },
-        { status: 500 }
-      );
-    }
-    if (!service) {
-      return NextResponse.json({ error: "Missing SUPABASE_SERVICE_ROLE_KEY" }, { status: 500 });
-    }
-
-    // Session-aware client (cookie auth)
-    const supabase = createServerClient(url, anon, {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll() {
-          /* noop */
-        },
-      },
-    });
+    // Session-aware server client (cookie auth)
+    const sb = await supabaseServer();
 
     // AuthZ: must be signed in and be owner
-    const { data: userData, error: userErr } = await supabase.auth.getUser();
+    const { data: userData, error: userErr } = await sb.auth.getUser();
     const user = userData?.user ?? null;
     if (!user || userErr) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     let isOwner = false;
     try {
-      const { data } = await supabase.rpc("is_owner");
+      const { data } = await sb.rpc("is_owner");
       isOwner = !!data;
     } catch {
       isOwner = false;
@@ -99,14 +75,9 @@ export async function POST(req: Request) {
     const postPasswordNext = normalizeNext(body.next ?? "/home");
 
     /**
-     * IMPORTANT (fix):
+     * IMPORTANT:
      * ALL emailed auth links (invite, magiclink fallback) should land on /auth/callback first.
-     * - callback can exchange/verify and set cookies server-side when possible
-     * - callback has an HTML fallback that preserves #access_token fragments
-     * - callback then routes to /auth/set-password for invite/recovery/magiclink types
-     *
-     * Direct-to /auth/set-password is less deterministic on mobile (easy to lose session/fragment),
-     * which can produce "No active session found" on the set-password page.
+     * callback then routes to /auth/set-password for invite/recovery/magiclink types.
      */
     const inviteCb = new URL("/auth/callback", siteUrl);
     inviteCb.searchParams.set("type", "invite");
@@ -118,8 +89,8 @@ export async function POST(req: Request) {
     magicCb.searchParams.set("next", postPasswordNext);
     const magicLinkRedirectTo = magicCb.toString();
 
-    // Validate prerequisites via assignment_admin_v
-    const prereq = await supabase
+    // Validate prerequisites via assignment_admin_v (user-scoped read; keep as-is)
+    const prereq = await sb
       .from("assignment_admin_v")
       .select("assignment_id, person_id, position_title, pc_org_id, pc_org_name")
       .eq("assignment_id", assignment_id)
@@ -156,8 +127,16 @@ export async function POST(req: Request) {
       );
     }
 
-    // Service-role client (admin)
-    const admin = createClient(url, service, { auth: { persistSession: false } });
+    // Service-role admin client
+    let admin;
+    try {
+      admin = supabaseAdmin();
+    } catch (e: any) {
+      return NextResponse.json(
+        { error: "Service client unavailable", details: e?.message ?? String(e) },
+        { status: 500 }
+      );
+    }
 
     // Stamp metadata for bootstrap
     const meta = { assignment_id, person_id, position_title, pc_org_id, pc_org_name };
@@ -173,11 +152,11 @@ export async function POST(req: Request) {
 
       // Existing user: invites won't email; send magic link instead.
       if (code === "email_exists") {
-        const { error: otpErr } = await supabase.auth.signInWithOtp({
+        const { error: otpErr } = await sb.auth.signInWithOtp({
           email,
           options: {
             shouldCreateUser: false,
-            emailRedirectTo: magicLinkRedirectTo, // ✅ must be /auth/callback (not bare siteUrl)
+            emailRedirectTo: magicLinkRedirectTo, // ✅ must be /auth/callback
           },
         });
 

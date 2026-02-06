@@ -1,4 +1,4 @@
-import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow, type RosterRow } from "@/lib/api";
+import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow, type RosterRow } from "@/shared/lib/api";
 import { createClient } from "@/shared/data/supabase/client";
 
 // These are parameter bags so the component can pass state setters + ids cleanly.

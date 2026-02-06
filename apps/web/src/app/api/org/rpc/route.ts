@@ -1,12 +1,12 @@
 // apps/web/src/app/api/org/rpc/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
+import { supabaseUserClient } from "@/shared/data/supabase/user";
 
 export const runtime = "nodejs";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 // Onboard reads that must be "global visible" for roster managers
 const ONBOARD_GLOBAL_READS = new Set<string>([
@@ -16,7 +16,6 @@ const ONBOARD_GLOBAL_READS = new Set<string>([
   "person_picker",
   "person_get",
 ]);
-
 
 // Actively tied to UI events – do not remove
 const RPC_ALLOWLIST = new Set<string>([
@@ -87,10 +86,11 @@ function parseCookies(cookieHeader: string) {
 }
 
 function makeServiceClient() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return null;
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  try {
+    return supabaseAdmin();
+  } catch {
+    return null;
+  }
 }
 
 async function getSelectedPcOrgIdService(auth_user_id: string): Promise<string | null> {
@@ -151,15 +151,8 @@ export async function POST(req: NextRequest) {
 
     const authHeader = req.headers.get("authorization") || "";
 
-    // Run RPCs "as user" (so auth.uid() exists in DB) via bearer header if present.
-    // If no header, it will still work for same-origin cookie flows where your middleware injects auth.
-    const gatewayHeaders: Record<string, string> = { "x-rpc-gateway": "1" };
-    if (authHeader) gatewayHeaders["Authorization"] = authHeader;
-
-    const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: gatewayHeaders },
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
+    // Create "user" client (anon key) but with Authorization header forwarded (if present)
+    const supabaseUser = supabaseUserClient({ authorization: authHeader });
 
     const { data: userRes, error: userErr } = await supabaseUser.auth.getUser();
     const user = userRes?.user;
@@ -255,9 +248,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Extract org id from args (covers both api/public patterns)
-    const pcOrgFromArgs = String(
-      (args?.pc_org_id ?? args?.p_pc_org_id ?? args?.pcOrgId ?? args?.pc_org) ?? ""
-    ).trim();
+    const pcOrgFromArgs = String((args?.pc_org_id ?? args?.p_pc_org_id ?? args?.pcOrgId ?? args?.pc_org) ?? "").trim();
 
     // ✅ For elevated users acting cross-org: still require baseline access to target org
     if (pcOrgFromArgs && elevated) {
@@ -302,16 +293,12 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      if (!SUPABASE_SERVICE_ROLE_KEY) {
-        return json(500, { ok: false, request_id: rid, error: "Missing service role key", code: "missing_service_key" });
-      }
-
-      const supabaseAdmin = makeServiceClient();
-      if (!supabaseAdmin) {
+      const admin = makeServiceClient();
+      if (!admin) {
         return json(500, { ok: false, request_id: rid, error: "Service client unavailable", code: "missing_service_key" });
       }
 
-      const { data: updatedRows, error: updateErr } = await supabaseAdmin
+      const { data: updatedRows, error: updateErr } = await admin
         .from("person_pc_org")
         .update({ end_date, status: "inactive", updated_at: new Date().toISOString() })
         .eq("person_id", person_id)
@@ -361,7 +348,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ✅ IMPORTANT: Wizard must match DB gate (roster_manage), not onboard_manage.
+    // ✅ Wizard must match DB gate (roster_manage)
     if (fn === "wizard_process_to_roster") {
       const scope = ensureOrgScope(pcOrgFromArgs);
       if (!scope.ok) return json(scope.status, scope.body);
@@ -379,15 +366,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-        // ✅ If the user is allowed to see global onboard reads, execute them via service role
-    // (This is what actually bypasses RLS while keeping access locked behind roster_manage.)
+    // ✅ Global onboard reads execute via service role (permission-gated above)
     if (ONBOARD_GLOBAL_READS.has(fn)) {
-      const supabaseAdmin = makeServiceClient();
-      if (!supabaseAdmin) {
+      const admin = makeServiceClient();
+      if (!admin) {
         return json(500, { ok: false, request_id: rid, error: "Service client unavailable", code: "missing_service_key" });
       }
 
-      const adminRpcClient: any = schema === "api" ? (supabaseAdmin as any).schema("api") : supabaseAdmin;
+      const adminRpcClient: any = schema === "api" ? (admin as any).schema("api") : admin;
       const { data, error } = args ? await adminRpcClient.rpc(fn, args) : await adminRpcClient.rpc(fn);
 
       if (error) {
@@ -412,7 +398,9 @@ export async function POST(req: NextRequest) {
         data,
       });
     }
-        if (fn === "person_upsert") {
+
+    // person_upsert: service role execution but still roster_manage gated
+    if (fn === "person_upsert") {
       if (!selectedPcOrgId && !elevated) {
         return json(409, { ok: false, request_id: rid, error: "No selected org", code: "no_selected_pc_org" });
       }
@@ -421,16 +409,29 @@ export async function POST(req: NextRequest) {
         if (!allowed) return json(403, { ok: false, request_id: rid, error: "Forbidden", code: "forbidden" });
       }
 
-      const supabaseAdmin = makeServiceClient();
-      if (!supabaseAdmin) return json(500, { ok: false, request_id: rid, error: "Service client unavailable", code: "missing_service_key" });
+      const admin = makeServiceClient();
+      if (!admin) {
+        return json(500, { ok: false, request_id: rid, error: "Service client unavailable", code: "missing_service_key" });
+      }
 
-      const adminRpcClient: any = schema === "api" ? (supabaseAdmin as any).schema("api") : supabaseAdmin;
+      const adminRpcClient: any = schema === "api" ? (admin as any).schema("api") : admin;
       const { data, error } = args ? await adminRpcClient.rpc(fn, args) : await adminRpcClient.rpc(fn);
 
-      if (error) return json(500, { ok: false, request_id: rid, error: error.message, code: (error as any)?.code ?? "rpc_failed" });
+      if (error) {
+        return json(500, {
+          ok: false,
+          request_id: rid,
+          error: error.message,
+          code: (error as any)?.code ?? "rpc_failed",
+          fn,
+          schema,
+        });
+      }
+
       return json(200, { ok: true, request_id: rid, fn, schema, data });
     }
-    // Execute RPC as the real user (auth.uid() present)
+
+    // Default: execute RPC as the real user (auth.uid() present)
     const rpcClient: any = schema === "api" ? (supabaseUser as any).schema("api") : supabaseUser;
     const { data, error } = args ? await rpcClient.rpc(fn, args) : await rpcClient.rpc(fn);
 
@@ -448,13 +449,13 @@ export async function POST(req: NextRequest) {
     }
 
     return json(200, {
-  ok: true,
-  request_id: rid,
-  build: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.VERCEL_GIT_COMMIT_REF ?? "local",
-  fn,
-  schema,
-  data,
-});
+      ok: true,
+      request_id: rid,
+      build: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.VERCEL_GIT_COMMIT_REF ?? "local",
+      fn,
+      schema,
+      data,
+    });
   } catch (e: any) {
     return json(500, { ok: false, request_id: rid, error: e?.message ?? "Unknown error", code: "exception" });
   }

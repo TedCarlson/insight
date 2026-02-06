@@ -1,13 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { supabaseServer } from "@/lib/supabase/server";
-
-function getServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  if (!url || !serviceKey) throw new Error("Missing SUPABASE service env");
-  return createClient(url, serviceKey, { auth: { persistSession: false } });
-}
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
+import { supabaseServer } from "@/shared/data/supabase/server";
 
 export async function GET() {
   // Auth gate: must be signed in (pre-RLS but not publicly open)
@@ -17,7 +10,7 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const svc = getServiceClient();
+  const svc = supabaseAdmin();
 
   const { data, error } = await svc
     .from("position_title")

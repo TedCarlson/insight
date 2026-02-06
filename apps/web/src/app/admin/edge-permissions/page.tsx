@@ -10,7 +10,7 @@ import {
   type PermissionDefRow,
   type PcOrgChoice,
   type PcOrgEligibilityRow,
-} from "@/lib/api";
+} from "@/shared/lib/api";
 
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";

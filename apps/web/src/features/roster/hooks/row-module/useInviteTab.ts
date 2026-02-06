@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { RosterRow } from "@/lib/api";
+import type { RosterRow } from "@/shared/lib/api";
 import { sendInviteAction } from "../rosterRowModule.actions";
 
 type InviteStatus = "idle" | "sending" | "sent" | "error";

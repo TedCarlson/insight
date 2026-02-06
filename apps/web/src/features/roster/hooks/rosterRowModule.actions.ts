@@ -1,4 +1,4 @@
-import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow } from "@/lib/api";
+import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow } from "@/shared/lib/api";
 
 export type PositionTitleRow = {
   position_title: string;

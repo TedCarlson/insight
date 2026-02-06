@@ -1,12 +1,12 @@
-// apps/web/src/app/roster/page.tsx
+// apps/web/src/features/roster/pages/RosterPage.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
-import { api, type RosterRow } from "@/lib/api";
+import { api, type RosterRow } from "@/shared/lib/api";
 import { createClient } from "@/shared/data/supabase/client";
-import { fetchActiveRosterPersonIdSet } from "@/lib/activeRoster";
+import { fetchActiveRosterPersonIdSet } from "@/shared/lib/activeRoster";
 import { useOrg } from "@/state/org";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useToast } from "@/components/ui/Toast";

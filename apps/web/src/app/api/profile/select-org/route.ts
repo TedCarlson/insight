@@ -1,6 +1,8 @@
+// apps/web/src/app/api/profile/select-org/route.ts
+
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 export const runtime = "nodejs";
 
@@ -18,26 +20,25 @@ async function getIsOwner(supabase: any): Promise<boolean> {
 }
 
 export async function GET() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !service) {
-    return NextResponse.json({ ok: false, error: "missing env" }, { status: 500 });
-  }
-
-  const supabase = await supabaseServer();
+  const sb = await supabaseServer();
   const {
     data: { user },
     error: userErr,
-  } = await supabase.auth.getUser();
+  } = await sb.auth.getUser();
 
   if (userErr || !user) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  const admin = createClient(url, service, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  let admin: any;
+  try {
+    admin = supabaseAdmin();
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, error: "service_client_unavailable", details: e?.message ?? String(e) },
+      { status: 500 }
+    );
+  }
 
   const { data, error } = await admin
     .from("user_profile")
@@ -57,18 +58,11 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !service) {
-    return NextResponse.json({ ok: false, error: "missing env" }, { status: 500 });
-  }
-
-  const supabase = await supabaseServer();
+  const sb = await supabaseServer();
   const {
     data: { user },
     error: userErr,
-  } = await supabase.auth.getUser();
+  } = await sb.auth.getUser();
 
   if (userErr || !user) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
@@ -84,12 +78,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "invalid selected_pc_org_id" }, { status: 400 });
   }
 
-  const isOwner = await getIsOwner(supabase);
+  const isOwner = await getIsOwner(sb);
 
   // If non-owner and setting an org, ensure the user can actually access it (prevents privilege escalation)
   if (!isOwner && selected_pc_org_id) {
     try {
-      const apiClient: any = (supabase as any).schema ? (supabase as any).schema("api") : supabase;
+      const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
       const { data: choices, error: choicesErr } = await apiClient.rpc("pc_org_choices");
       if (choicesErr) {
         return NextResponse.json({ ok: false, error: choicesErr.message }, { status: 500 });
@@ -104,11 +98,17 @@ export async function POST(req: Request) {
     }
   }
 
-  // Service role upsert prevents RLS + duplicate-key drift
-  const admin = createClient(url, service, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  let admin: any;
+  try {
+    admin = supabaseAdmin();
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, error: "service_client_unavailable", details: e?.message ?? String(e) },
+      { status: 500 }
+    );
+  }
 
+  // Service role upsert prevents RLS + duplicate-key drift
   const { data, error } = await admin
     .from("user_profile")
     .upsert(

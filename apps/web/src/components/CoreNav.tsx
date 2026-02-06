@@ -104,6 +104,17 @@ export default function CoreNav() {
               Home
             </Link>
 
+            <Link
+              href="/roster"
+              className={
+                pathname === "/roster" || pathname.startsWith("/roster/")
+                  ? "rounded-md px-2 py-1 text-sm font-medium text-foreground"
+                  : "rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
+              }
+            >
+              Roster
+            </Link>
+
             {canSeeLocate && (
               <Link
                 href="/locate"

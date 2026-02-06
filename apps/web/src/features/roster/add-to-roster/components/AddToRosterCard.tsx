@@ -8,7 +8,7 @@ import { useToast } from "@/components/ui/Toast";
 
 import { AddToRosterDrawer } from "@/features/roster/add-to-roster/components/AddToRosterDrawer";
 
-type Props = {
+export type AddToRosterCardProps = {
   pcOrgId: string | null;
   pcOrgName?: string | null;
 
@@ -16,7 +16,6 @@ type Props = {
   disabled?: boolean;
   onAdded?: () => void;
 
-  // optional: if you have a set of person_ids already active in the roster
   excludePersonIds?: Set<string>;
 };
 
@@ -24,12 +23,15 @@ export function AddToRosterCard({
   pcOrgId,
   pcOrgName,
   canEdit,
-  disabled = false, // ✅ FIX: define it
+  disabled = false,
   onAdded,
   excludePersonIds,
-}: Props) {
+}: AddToRosterCardProps) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
+
+  // increments each time we open, used to reset search/draft state downstream
+  const [resetKey, setResetKey] = useState(0);
 
   const enabled = useMemo(() => Boolean(pcOrgId) && canEdit && !disabled, [pcOrgId, canEdit, disabled]);
 
@@ -61,6 +63,7 @@ export function AddToRosterCard({
 
               if (disabled) return;
 
+              setResetKey((n) => n + 1);
               setOpen(true);
             }}
           >
@@ -74,8 +77,10 @@ export function AddToRosterCard({
         </div>
       </Card>
 
-      {pcOrgId ? (
+      {/* ✅ mount only when open — nothing should “begin rendering” before user clicks Add */}
+      {pcOrgId && open ? (
         <AddToRosterDrawer
+          key={`add-to-roster-${pcOrgId}-${resetKey}`} // forces clean mount each open
           open={open}
           onClose={() => setOpen(false)}
           pcOrgId={pcOrgId}
@@ -88,3 +93,5 @@ export function AddToRosterCard({
     </>
   );
 }
+
+export default AddToRosterCard;

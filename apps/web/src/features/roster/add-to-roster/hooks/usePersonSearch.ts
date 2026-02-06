@@ -1,92 +1,166 @@
 // apps/web/src/features/roster/add-to-roster/hooks/usePersonSearch.ts
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { PersonSearchRow } from "@/features/roster/add-to-roster/lib/personSearchFormat";
+import { useMemo, useRef, useState, useCallback } from "react";
+import { createClient } from "@/shared/data/supabase/client";
 
-type UsePersonSearchOpts = {
-  initialQuery?: string;
-  limit?: number;
+export type PersonHit = {
+  person_id: string;
+  full_name: string | null;
+  emails: string | null;
+  mobile: string | null;
+  fuse_emp_id: string | null;
+  person_nt_login: string | null;
+  person_csg_id: string | null;
+  person_notes: string | null;
+
+  active: boolean | null;
+
+  // affiliation keys (label is derived in UI using coOptions)
+  co_ref_id: string | null;
+  co_code: string | null;
 };
 
-type PersonSearchState = {
-  q: string;
-  setQ: (v: string) => void;
+export type UsePersonSearchOpts = {
+  excludePersonIds?: Set<string>;
+  minChars?: number; // default 2
+  limit?: number; // default 25
+  debounceMs?: number; // default 250
+};
 
+type State = {
+  query: string;
   loading: boolean;
   error: string | null;
-
-  results: PersonSearchRow[];
-  refresh: () => Promise<void>;
-  clear: () => void;
+  results: PersonHit[];
 };
 
-export function usePersonSearch(opts: UsePersonSearchOpts = {}): PersonSearchState {
+export function usePersonSearch(opts: UsePersonSearchOpts = {}) {
+  const supabase = useMemo(() => createClient(), []);
+  const exclude = opts.excludePersonIds;
+  const minChars = opts.minChars ?? 2;
   const limit = opts.limit ?? 25;
+  const debounceMs = opts.debounceMs ?? 250;
 
-  const [q, setQ] = useState(opts.initialQuery ?? "");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [results, setResults] = useState<PersonSearchRow[]>([]);
+  const [state, setState] = useState<State>({
+    query: "",
+    loading: false,
+    error: null,
+    results: [],
+  });
 
-  const abortRef = useRef<AbortController | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const lastReqRef = useRef<number>(0);
 
-  const payload = useMemo(() => {
-    const query = q.trim();
-    return { query, limit };
-  }, [q, limit]);
+  const runSearch = useCallback(
+    async (q: string) => {
+      const query = String(q ?? "").trim();
+      const reqId = Date.now();
+      lastReqRef.current = reqId;
 
-  async function refresh() {
-    const query = payload.query;
-    if (!query) {
-      setResults([]);
-      setError(null);
-      return;
-    }
+      // Empty/short => stale state, no fetch
+      if (!query || query.length < minChars) {
+        setState((s) => ({ ...s, query, loading: false, error: null, results: [] }));
+        return;
+      }
 
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
+      setState((s) => ({ ...s, query, loading: true, error: null }));
 
-    setLoading(true);
-    setError(null);
+      try {
+        const like = `%${query}%`;
 
-    try {
-      // NOTE: If your API differs, change only this fetch block.
-      const res = await fetch("/api/people-inventory", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ q: query, limit }),
-        signal: ac.signal,
-        cache: "no-store",
-      });
+        // ✅ ONLY columns that exist on public.person (per your schema)
+        const { data, error } = await supabase
+          .from("person")
+          .select(
+            [
+              "person_id",
+              "full_name",
+              "emails",
+              "mobile",
+              "fuse_emp_id",
+              "person_nt_login",
+              "person_csg_id",
+              "person_notes",
+              "active",
+              "co_ref_id",
+              "co_code",
+            ].join(",")
+          )
+          // ✅ Search across multiple fields (NOT one field)
+          .or(
+            [
+              `full_name.ilike.${like}`,
+              `emails.ilike.${like}`,
+              `mobile.ilike.${like}`,
+              `fuse_emp_id.ilike.${like}`,
+              `person_nt_login.ilike.${like}`,
+              `person_csg_id.ilike.${like}`,
+            ].join(",")
+          )
+          .order("full_name", { ascending: true })
+          .limit(limit);
 
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error ?? "Search failed");
+        if (lastReqRef.current !== reqId) return; // stale response
+        if (error) throw error;
 
-      const rows = (json?.data ?? json ?? []) as PersonSearchRow[];
-      setResults(Array.isArray(rows) ? rows : []);
-    } catch (e: any) {
-      if (e?.name === "AbortError") return;
-      setError(e?.message ?? "Search failed");
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  }
+        const rows = (data ?? []) as any[];
 
-  function clear() {
-    setQ("");
-    setResults([]);
-    setError(null);
-  }
+        const filtered: PersonHit[] = rows
+          .map((r) => ({
+            person_id: String(r.person_id),
+            full_name: r.full_name ?? null,
+            emails: r.emails ?? null,
+            mobile: r.mobile ?? null,
+            fuse_emp_id: r.fuse_emp_id ?? null,
+            person_nt_login: r.person_nt_login ?? null,
+            person_csg_id: r.person_csg_id ?? null,
+            person_notes: r.person_notes ?? null,
+            active: typeof r.active === "boolean" ? r.active : null,
+            co_ref_id: r.co_ref_id ?? null,
+            co_code: r.co_code ?? null,
+          }))
+          .filter((p) => (exclude ? !exclude.has(p.person_id) : true));
 
-  // light debounce
-  useEffect(() => {
-    const t = setTimeout(() => void refresh(), 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payload.query, payload.limit]);
+        setState((s) => ({ ...s, loading: false, results: filtered, error: null }));
+      } catch (e: any) {
+        if (lastReqRef.current !== reqId) return;
+        setState((s) => ({
+          ...s,
+          loading: false,
+          results: [],
+          error: e?.message ?? "Search failed",
+        }));
+      }
+    },
+    [supabase, exclude, minChars, limit]
+  );
 
-  return { q, setQ, loading, error, results, refresh, clear };
+  const onQueryChange = useCallback(
+    (q: string) => {
+      const next = String(q ?? "");
+      setState((s) => ({ ...s, query: next }));
+
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+      timerRef.current = window.setTimeout(() => {
+        void runSearch(next);
+      }, debounceMs);
+    },
+    [runSearch, debounceMs]
+  );
+
+  const clear = useCallback(() => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    setState({ query: "", loading: false, error: null, results: [] });
+  }, []);
+
+  return {
+    query: state.query,
+    loading: state.loading,
+    error: state.error,
+    results: state.results,
+    onQueryChange,
+    searchNow: runSearch,
+    clear,
+  };
 }

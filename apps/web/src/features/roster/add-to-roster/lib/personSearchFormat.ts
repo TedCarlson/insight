@@ -1,49 +1,45 @@
 // apps/web/src/features/roster/add-to-roster/lib/personSearchFormat.ts
 
-export type PersonSearchRow = {
-  person_id: string;
-  full_name?: string | null;
-  name?: string | null;
-  email?: string | null;
-  mobile?: string | null;
-  tech_id?: string | null;
-  person_nt_login?: string | null;
-  person_csg_id?: string | null;
-  co_name?: string | null;
-  co_type?: string | null;
-};
+import type { PersonHit } from "@/features/roster/add-to-roster/hooks/usePersonSearch";
 
-export function formatPersonName(p: PersonSearchRow): string {
-  const name = String(p.full_name ?? p.name ?? "").trim();
-  return name || "—";
+export function formatPersonTitle(p: PersonHit): string {
+  const name = String(p.full_name ?? "").trim();
+  const email = String(p.emails ?? "").split(",")[0]?.trim();
+  if (name) return name;
+  if (email) return email;
+  return "Unnamed person";
 }
 
-export function formatPersonSubtitle(p: PersonSearchRow): string {
-  const bits: string[] = [];
+export function formatPersonSubtitle(p: PersonHit): string {
+  const parts: string[] = [];
 
-  const tech = String(p.tech_id ?? "").trim();
-  if (tech) bits.push(`Tech ${tech}`);
-
-  const email = String(p.email ?? "").trim();
-  if (email) bits.push(email);
-
+  const emails = String(p.emails ?? "").trim();
   const mobile = String(p.mobile ?? "").trim();
-  if (mobile) bits.push(mobile);
-
   const nt = String(p.person_nt_login ?? "").trim();
-  if (nt) bits.push(`NT ${nt}`);
-
   const csg = String(p.person_csg_id ?? "").trim();
-  if (csg) bits.push(`CSG ${csg}`);
+  const fuse = String(p.fuse_emp_id ?? "").trim();
 
-  const co = String(p.co_name ?? "").trim();
-  if (co) bits.push(co);
+  if (emails) parts.push(emails);
+  if (mobile) parts.push(mobile);
+  if (nt) parts.push(`NT: ${nt}`);
+  if (csg) parts.push(`CSG: ${csg}`);
+  if (fuse) parts.push(`Fuse: ${fuse}`);
 
-  return bits.join(" • ");
+  return parts.join(" • ");
 }
 
-export function formatPersonOptionLabel(p: PersonSearchRow): string {
-  const name = formatPersonName(p);
-  const sub = formatPersonSubtitle(p);
-  return sub ? `${name} — ${sub}` : name;
+export function markMatches(text: string, q: string): Array<{ text: string; hit: boolean }> {
+  const query = String(q ?? "").trim().toLowerCase();
+  const src = String(text ?? "");
+  if (!query || query.length < 2) return [{ text: src, hit: false }];
+
+  const lower = src.toLowerCase();
+  const idx = lower.indexOf(query);
+  if (idx < 0) return [{ text: src, hit: false }];
+
+  return [
+    { text: src.slice(0, idx), hit: false },
+    { text: src.slice(idx, idx + query.length), hit: true },
+    { text: src.slice(idx + query.length), hit: false },
+  ];
 }

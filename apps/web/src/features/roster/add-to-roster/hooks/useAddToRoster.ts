@@ -1,60 +1,198 @@
 // apps/web/src/features/roster/add-to-roster/hooks/useAddToRoster.ts
 "use client";
 
-import { useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { createClient } from "@/shared/data/supabase/client";
 
-export type AddToRosterInput = {
-  pcOrgId: string;
-  personId: string;
-
-  positionTitle: string;
-
-  reportsToPersonId?: string | null;
-  startDate?: string | null; // YYYY-MM-DD
-  notes?: string | null;
+export type CoOption = {
+  co_ref_id: string;
+  co_name: string;
+  co_code: string | null;
+  co_type: "company" | "contractor";
 };
 
-export type UseAddToRosterState = {
-  loading: boolean;
-  error: string | null;
-  add: (input: AddToRosterInput) => Promise<any>;
+export type OnboardPersonDraft = {
+  person_id: string | null;
+
+  full_name?: string | null;
+  emails?: string | null;
+  mobile?: string | null;
+  fuse_emp_id?: string | null;
+  person_notes?: string | null;
+  person_nt_login?: string | null;
+  person_csg_id?: string | null;
+
+  active?: boolean | null;
+  role?: string | null;
+
+  co_ref_id?: string | null;
+  co_code?: string | null;
+  co_name?: string | null;
+  co_type?: string | null;
 };
 
-export function useAddToRoster(): UseAddToRosterState {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
-  async function add(input: AddToRosterInput) {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const res = await fetch("/api/org/assignment", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({
-          pc_org_id: input.pcOrgId,
-          person_id: input.personId,
-          position_title: input.positionTitle,
-          reports_to_person_id: input.reportsToPersonId ?? null,
-          start_date: input.startDate ?? null,
-          notes: input.notes ?? null,
-        }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error ?? "Add to roster failed");
-
-      return json?.data ?? json;
-    } catch (e: any) {
-      const msg = e?.message ?? "Add to roster failed";
-      setError(msg);
-      throw new Error(msg);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return { loading, error, add };
+function todayISODate(): string {
+  const d = new Date();
+  const yyyy = String(d.getFullYear());
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
+
+async function callRpc(fn: string, args: Record<string, any>): Promise<any> {
+  const res = await fetch("/api/org/rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ fn, args }),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error ?? `RPC failed: ${fn}`);
+  return json?.data ?? null;
+}
+
+export function useAddToRoster() {
+  const supabase = useMemo(() => createClient(), []);
+
+  const [saving, setSaving] = useState(false);
+
+  const [coLoading, setCoLoading] = useState(false);
+  const [coOptions, setCoOptions] = useState<CoOption[]>([]);
+
+  // Prevent duplicate loads + prevent render loops.
+  const loadPromiseRef = useRef<Promise<CoOption[]> | null>(null);
+
+  const ensureCoOptions = useCallback(async (): Promise<CoOption[]> => {
+    // already loaded
+    if (coOptions.length) return coOptions;
+
+    // already loading
+    if (loadPromiseRef.current) return loadPromiseRef.current;
+
+    const p = (async () => {
+      setCoLoading(true);
+      try {
+        const [{ data: companies, error: cErr }, { data: contractors, error: kErr }] = await Promise.all([
+          supabase.from("company").select("company_id, company_name, company_code").order("company_name").limit(500),
+          supabase
+            .from("contractor")
+            .select("contractor_id, contractor_name, contractor_code")
+            .order("contractor_name")
+            .limit(500),
+        ]);
+
+        if (cErr) throw cErr;
+        if (kErr) throw kErr;
+
+        const out: CoOption[] = [
+          ...(companies ?? []).map((r: any) => ({
+            co_ref_id: String(r.company_id),
+            co_name: String(r.company_name),
+            co_code: r.company_code ? String(r.company_code) : null,
+            co_type: "company" as const,
+          })),
+          ...(contractors ?? []).map((r: any) => ({
+            co_ref_id: String(r.contractor_id),
+            co_name: String(r.contractor_name),
+            co_code: r.contractor_code ? String(r.contractor_code) : null,
+            co_type: "contractor" as const,
+          })),
+        ];
+
+        // stable ordering: companies first, then contractors; alphabetical
+        out.sort((a, b) => {
+          const aType = a.co_type === "company" ? 0 : 1;
+          const bType = b.co_type === "company" ? 0 : 1;
+          if (aType !== bType) return aType - bType;
+          return a.co_name.localeCompare(b.co_name, undefined, { sensitivity: "base" });
+        });
+
+        setCoOptions(out);
+        return out;
+      } finally {
+        setCoLoading(false);
+        loadPromiseRef.current = null;
+      }
+    })();
+
+    loadPromiseRef.current = p;
+    return p;
+  }, [coOptions, supabase]);
+
+  const upsertAndAddMembership = useCallback(
+    async (input: { pcOrgId: string; positionTitle: string; draft: OnboardPersonDraft }): Promise<Result<true>> => {
+      const { pcOrgId, positionTitle, draft } = input;
+
+      const full_name = String(draft.full_name ?? "").trim();
+      const emails = String(draft.emails ?? "").trim();
+      const co_ref_id = draft.co_ref_id ? String(draft.co_ref_id).trim() : "";
+
+      if (!full_name) return { ok: false, error: "Full name is required." };
+      if (!emails) return { ok: false, error: "Emails is required." };
+      if (!co_ref_id) return { ok: false, error: "Affiliation is required." };
+
+      setSaving(true);
+      try {
+        let co_code = draft.co_code ? String(draft.co_code) : null;
+
+        if (!co_code) {
+          const opts = await ensureCoOptions();
+          const hit = opts.find((o) => String(o.co_ref_id) === co_ref_id) ?? null;
+          co_code = hit?.co_code ?? null;
+        }
+
+        // 1) Upsert person
+        const personRow = await callRpc("person_upsert", {
+          p_person_id: draft.person_id, // null = insert
+          p_full_name: full_name,
+          p_emails: emails,
+          p_mobile: String(draft.mobile ?? "").trim() || null,
+          p_fuse_emp_id: String(draft.fuse_emp_id ?? "").trim() || null,
+          p_person_notes: String(draft.person_notes ?? "").trim() || null,
+          p_person_nt_login: String(draft.person_nt_login ?? "").trim() || null,
+          p_person_csg_id: String(draft.person_csg_id ?? "").trim() || null,
+
+          // safe default
+          p_active: typeof draft.active === "boolean" ? draft.active : true,
+
+          // derived/hidden
+          p_role: null,
+          p_co_ref_id: co_ref_id,
+          p_co_code: co_code,
+        });
+
+        const personId = String(personRow?.person_id ?? personRow?.id ?? draft.person_id ?? "").trim() || null;
+        if (!personId) return { ok: false, error: "Upsert succeeded but no person_id was returned." };
+
+        // 2) Add membership for scoped PC org
+        await callRpc("org_assign_person", {
+          p_pc_org_id: pcOrgId,
+          p_person_id: personId,
+          p_position_title: positionTitle,
+          p_start_date: todayISODate(),
+          p_reason_code: "add_to_roster",
+          p_notes: null,
+        });
+
+        return { ok: true, data: true };
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? "Add failed" };
+      } finally {
+        setSaving(false);
+      }
+    },
+    [ensureCoOptions]
+  );
+
+  return {
+    saving,
+    coLoading,
+    coOptions,
+    ensureCoOptions,
+    upsertAndAddMembership,
+  };
+}
+
+export type UseAddToRosterState = ReturnType<typeof useAddToRoster>;

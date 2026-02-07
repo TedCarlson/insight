@@ -3,36 +3,38 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+
 import type { AuthChangeEvent, Session } from "@/shared/data/supabase/types";
 import { createClient } from "@/shared/data/supabase/client";
 import { OrgSelector } from "@/components/OrgSelector";
 import { useOrg } from "@/state/org";
 
+type CoreNavProps = {
+  lob: "FULFILLMENT" | "LOCATE";
+};
+
+type SessionStatus = {
+  signedIn: boolean;
+  active: boolean;
+  isOwner?: boolean;
+};
+
 const HIDE_ON_PREFIXES = ["/login", "/access", "/auth"];
 
-type SessionStatus = { signedIn: boolean; active: boolean; isOwner?: boolean };
-
-export default function CoreNav() {
+export default function CoreNav({ lob }: CoreNavProps) {
   const pathname = usePathname();
   const supabase = useMemo(() => createClient(), []);
-  const { orgs, selectedOrgId } = useOrg();
-
-  const selectedOrgName = useMemo(() => {
-    const row = orgs.find((o: any) => String(o?.pc_org_id ?? "") === String(selectedOrgId ?? ""));
-    const name = String(row?.pc_org_name ?? row?.org_name ?? row?.name ?? "").trim();
-    return name || null;
-  }, [orgs, selectedOrgId]);
-
-  const isLocateOrg = useMemo(() => {
-    return (selectedOrgName ?? "").toLowerCase().includes("locate");
-  }, [selectedOrgName]);
+  const { selectedOrgId } = useOrg();
 
   const [email, setEmail] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<SessionStatus | null>(null);
 
-  const shouldHideForRoute = HIDE_ON_PREFIXES.some((p) => pathname.startsWith(p));
+  const shouldHideForRoute = HIDE_ON_PREFIXES.some((p) =>
+    pathname.startsWith(p)
+  );
 
+  // --- Auth/session sync (unchanged behavior, just cleaned) ---
   useEffect(() => {
     let alive = true;
 
@@ -56,16 +58,17 @@ export default function CoreNav() {
         setStatus(j);
       } catch {
         if (!alive) return;
-        // safest: if we can't confirm active, hide nav
         setStatus({ signedIn: true, active: false });
       }
     }
 
     refresh();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, _session: Session | null) => {
-      refresh();
-    });
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, _session: Session | null) => {
+        refresh();
+      }
+    );
 
     return () => {
       alive = false;
@@ -73,20 +76,23 @@ export default function CoreNav() {
     };
   }, [supabase]);
 
+  // --- Guards ---
   if (shouldHideForRoute) return null;
   if (!ready || !email) return null;
   if (!status?.active) return null;
 
-  const canSeeLocate = Boolean(status?.isOwner) || isLocateOrg;
+  // --- LOB truth comes ONLY from props ---
+  const isLocate = lob === "LOCATE";
+  const canSeeLocate = Boolean(status?.isOwner) || isLocate;
 
   function onSignOut() {
-    // Single source of truth: this page handles localStorage + server cookie signout.
     window.location.assign("/auth/signout");
   }
 
   return (
     <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur">
       <div className="flex w-full items-center justify-between px-6 py-3">
+        {/* Left */}
         <div className="flex items-center gap-4">
           <Link href="/" className="text-sm font-semibold">
             TeamOptix
@@ -130,13 +136,21 @@ export default function CoreNav() {
           </nav>
         </div>
 
+        {/* Right */}
         <div className="flex items-center gap-3">
           <div className="hidden sm:block">
             <OrgSelector label="PC" />
           </div>
 
-          <span className="hidden text-xs text-muted-foreground sm:inline">{email}</span>
-          <button type="button" onClick={onSignOut} className="rounded-md border px-3 py-2 text-sm hover:bg-muted">
+          <span className="hidden text-xs text-muted-foreground sm:inline">
+            {email}
+          </span>
+
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
+          >
             Sign out
           </button>
         </div>

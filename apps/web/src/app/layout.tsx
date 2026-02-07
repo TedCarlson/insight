@@ -36,21 +36,23 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
 
   const { mso_lob } = ctx[0];
 
-  return (
-    <html lang="en" data-theme="glass">
-      <body className="min-h-screen bg-[var(--to-surface-soft)] text-[var(--to-ink)]">
-        <ToastProvider>
-          <SessionProvider>
-            <OrgProvider>
-              <div className="min-h-screen flex flex-col">
-                (props: CoreNavProps) = ReactElement
-                <main className="flex-1 px-6 py-6">{children}</main>
-                <FooterHelp />
-              </div>
-            </OrgProvider>
-          </SessionProvider>
-        </ToastProvider>
-      </body>
-    </html>
-  );
+  // inside RootLayout, after resolving mso_lob
+
+return (
+  <html lang="en" data-theme="glass">
+    <body className="min-h-screen bg-[var(--to-surface-soft)] text-[var(--to-ink)]">
+      <ToastProvider>
+        <SessionProvider>
+          <OrgProvider>
+            {mso_lob === "FULFILLMENT" ? (
+              <div id="lob-root">{children}</div>
+            ) : (
+              <div id="lob-root">{children}</div>
+            )}
+          </OrgProvider>
+        </SessionProvider>
+      </ToastProvider>
+    </body>
+  </html>
+);
 }

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createServerClient } from "@supabase/ssr";
 
@@ -48,13 +48,20 @@ export default async function AdminLayout({ children }: { children: ReactNode })
     // swallow
   }
 
+  // route-aware layout tweak (catalogue wants wide console layout)
+  const h = await headers();
+  const path = h.get("next-url") ?? "";
+  const isCatalogue = path.startsWith("/admin/catalogue");
+
   return (
     <ToastProvider>
       <SessionProvider>
         <OrgProvider lob={lob}>
           <div className="min-h-screen flex flex-col">
             <CoreNav lob={lob} />
-            <main className="flex-1 px-6 py-6">{children}</main>
+            <main className={isCatalogue ? "flex-1 px-2 py-4" : "flex-1 px-6 py-6"}>
+              {children}
+            </main>
             <FooterHelp />
           </div>
         </OrgProvider>

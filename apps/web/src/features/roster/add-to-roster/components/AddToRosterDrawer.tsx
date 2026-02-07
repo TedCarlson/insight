@@ -2,6 +2,7 @@
 "use client";
 
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { usePathname } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -23,6 +24,10 @@ import {
   formatPersonSubtitle,
   markMatches,
 } from "@/features/roster/add-to-roster/lib/personSearchFormat";
+
+import { createClient } from "@/shared/data/supabase/client";
+import { fetchActiveMembershipOrgByPersonIds } from "@/shared/lib/activeRoster";
+import { resolveActiveLob, lobLabel, type Lob } from "@/shared/lob"; // if no index.ts: "@/shared/lob/lob"
 
 type Props = {
   open: boolean;
@@ -56,14 +61,13 @@ function emptyDraft(): OnboardPersonDraft {
   };
 }
 
-function buildLooksLikeQuery(d: OnboardPersonDraft): string {
+function buildLooksLikeQuery(d: OnboardPersonDraft, lob: Lob): string {
   const parts = [
     d.full_name,
     d.emails,
     d.mobile,
     d.fuse_emp_id,
-    d.person_nt_login,
-    d.person_csg_id,
+    ...(lob === "LOCATE" ? [] : [d.person_nt_login, d.person_csg_id]),
   ]
     .map((x) => String(x ?? "").trim())
     .filter(Boolean);
@@ -88,14 +92,25 @@ export function AddToRosterDrawer({
   excludePersonIds,
 }: Props) {
   const toast = useToast();
+  const pathname = usePathname();
+  const lob = resolveActiveLob(pathname);
+
+  const supabase = useMemo(() => createClient(), []);
 
   // ✅ hooks always called (no early return above these)
   const { saving, coLoading, coOptions, ensureCoOptions, upsertAndAddMembership } = useAddToRoster();
-  const pickSearch = usePersonSearch({ excludePersonIds });
-  const looksLikeSearch = usePersonSearch({ excludePersonIds });
+
+  // ✅ LOB-aware search (Locate excludes NT/CSG in search dims)
+  const pickSearch = usePersonSearch({ excludePersonIds, lob });
+  const looksLikeSearch = usePersonSearch({ excludePersonIds, lob });
 
   const [mode, setMode] = useState<"pick" | "new">("pick");
   const [draft, setDraft] = useState<OnboardPersonDraft>(() => emptyDraft());
+
+  // ✅ Active membership lookup (person_id -> active pc org name)
+  const [activeOrgNameByPersonId, setActiveOrgNameByPersonId] = useState<Map<string, string>>(
+    () => new Map()
+  );
 
   const didEnsureCoOptionsRef = useRef(false);
 
@@ -103,7 +118,7 @@ export function AddToRosterDrawer({
   const locked = !canEdit;
   const disabled = saving || locked;
 
- // Affiliation load: run once per "open session" (prevents render side-effects / loops)
+  // Affiliation load: run once per "open session" (prevents render side-effects / loops)
   useEffect(() => {
     if (!open) return;
 
@@ -116,27 +131,24 @@ export function AddToRosterDrawer({
   useEffect(() => {
     if (!open) didEnsureCoOptionsRef.current = false;
   }, [open]);
-  
 
   const fullName = String(draft.full_name ?? "").trim();
   const emails = String(draft.emails ?? "").trim();
   const coKey = draft.co_ref_id ? String(draft.co_ref_id) : "none";
   const canSubmitNew = !disabled && Boolean(fullName) && Boolean(emails) && Boolean(draft.co_ref_id);
 
-  const onPickAffiliation = useCallback(
-    (newCoRefId: string) => {
-      const opt = coOptions.find((o) => String(o.co_ref_id) === String(newCoRefId)) ?? null;
+  // 🚫 No useCallback here (avoids React Compiler preserve-memo lint)
+  const onPickAffiliation = (newCoRefId: string) => {
+    const opt = coOptions.find((o) => String(o.co_ref_id) === String(newCoRefId)) ?? null;
 
-      setDraft((d) => ({
-        ...d,
-        co_ref_id: opt?.co_ref_id ?? null,
-        co_code: opt?.co_code ?? null,
-        co_name: opt?.co_name ?? null,
-        co_type: opt?.co_type ?? null,
-      }));
-    },
-    [coOptions]
-  );
+    setDraft((d) => ({
+      ...d,
+      co_ref_id: opt?.co_ref_id ?? null,
+      co_code: opt?.co_code ?? null,
+      co_name: opt?.co_name ?? null,
+      co_type: opt?.co_type ?? null,
+    }));
+  };
 
   const instantAddExisting = useCallback(
     async (p: PersonHit) => {
@@ -165,6 +177,7 @@ export function AddToRosterDrawer({
           emails: p.emails ?? "",
           mobile: p.mobile ?? "",
           fuse_emp_id: p.fuse_emp_id ?? "",
+          // even if Locate UI hides these fields, we preserve values if they exist
           person_nt_login: p.person_nt_login ?? "",
           person_csg_id: p.person_csg_id ?? "",
           person_notes: p.person_notes ?? "",
@@ -216,7 +229,78 @@ export function AddToRosterDrawer({
     onClose();
   }, [open, canSubmitNew, draft, fullName, onAdded, onClose, pcOrgId, toast, upsertAndAddMembership]);
 
-  const looksLikeQ = buildLooksLikeQuery(draft);
+  const looksLikeQ = buildLooksLikeQuery(draft, lob);
+
+  // Unified display vars
+  const displayedResults = mode === "pick" ? pickSearch.results : looksLikeSearch.results;
+
+  const displayedPersonIds = useMemo(() => {
+    return (displayedResults ?? [])
+      .map((r) => String(r?.person_id ?? "").trim())
+      .filter(Boolean);
+  }, [displayedResults]);
+
+  const displayedPersonIdsKey = useMemo(() => displayedPersonIds.join("|"), [displayedPersonIds]);
+
+  const displayedQuery = mode === "pick" ? pickSearch.query : looksLikeQ;
+  const displayedLoading = mode === "pick" ? pickSearch.loading : looksLikeSearch.loading;
+  const displayedError = mode === "pick" ? pickSearch.error : looksLikeSearch.error;
+
+  // ✅ Hydrate active membership: person_id -> pc_org_name (for disabling Add + label)
+  useEffect(() => {
+    if (!open) return;
+
+    if (displayedPersonIds.length === 0) {
+      setActiveOrgNameByPersonId(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        // person_id -> pc_org_id (current membership anywhere)
+        const orgByPerson = await fetchActiveMembershipOrgByPersonIds(supabase, displayedPersonIds);
+
+        const orgIds = Array.from(new Set(Array.from(orgByPerson.values()).filter(Boolean)));
+        if (orgIds.length === 0) {
+          if (!cancelled) setActiveOrgNameByPersonId(new Map());
+          return;
+        }
+
+        // pc_org_id -> pc_org_name
+        const { data, error } = await supabase
+          .from("pc_org")
+          .select("pc_org_id, pc_org_name")
+          .in("pc_org_id", orgIds);
+
+        if (error) throw error;
+
+        const nameByOrgId = new Map<string, string>();
+        for (const r of data ?? []) {
+          const oid = String((r as any)?.pc_org_id ?? "").trim();
+          const oname = String((r as any)?.pc_org_name ?? "").trim();
+          if (oid) nameByOrgId.set(oid, oname || oid);
+        }
+
+        // person_id -> pc_org_name
+        const out = new Map<string, string>();
+        for (const [pid, oid] of orgByPerson.entries()) {
+          const name = nameByOrgId.get(oid) ?? oid;
+          if (pid && name) out.set(pid, name);
+        }
+
+        if (!cancelled) setActiveOrgNameByPersonId(out);
+      } catch {
+        // Fail open (do not block add) if this read fails
+        if (!cancelled) setActiveOrgNameByPersonId(new Map());
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, supabase, displayedPersonIdsKey, displayedPersonIds]);
 
   // ✅ early return AFTER hooks
   if (!open) return null;
@@ -233,6 +317,8 @@ export function AddToRosterDrawer({
               <div className="text-sm font-semibold">Add to roster</div>
               <div className="text-xs text-[var(--to-ink-muted)]">
                 PC: <span className="text-[var(--to-ink)]">{title}</span>
+                <span className="px-2">•</span>
+                LOB: <span className="text-[var(--to-ink)]">{lobLabel(lob)}</span>
               </div>
             </div>
 
@@ -297,7 +383,7 @@ export function AddToRosterDrawer({
                       onChange={(e) => {
                         const v = e.target.value;
                         setDraft((d) => ({ ...d, full_name: v }));
-                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, full_name: v }));
+                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, full_name: v }, lob));
                       }}
                       placeholder="Full name"
                       className="h-10"
@@ -308,7 +394,7 @@ export function AddToRosterDrawer({
                       onChange={(e) => {
                         const v = e.target.value;
                         setDraft((d) => ({ ...d, emails: v }));
-                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, emails: v }));
+                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, emails: v }, lob));
                       }}
                       placeholder="Emails (comma-separated ok)"
                       className="h-10"
@@ -322,7 +408,7 @@ export function AddToRosterDrawer({
                       onChange={(e) => {
                         const v = e.target.value;
                         setDraft((d) => ({ ...d, mobile: v }));
-                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, mobile: v }));
+                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, mobile: v }, lob));
                       }}
                       placeholder="Mobile"
                       className="h-10"
@@ -333,7 +419,7 @@ export function AddToRosterDrawer({
                       onChange={(e) => {
                         const v = e.target.value;
                         setDraft((d) => ({ ...d, fuse_emp_id: v }));
-                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, fuse_emp_id: v }));
+                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, fuse_emp_id: v }, lob));
                       }}
                       placeholder="Fuse Emp ID"
                       className="h-10"
@@ -341,30 +427,33 @@ export function AddToRosterDrawer({
                     />
                   </div>
 
-                  <div className="grid sm:grid-cols-2 gap-3">
-                    <TextInput
-                      value={draft.person_nt_login ?? ""}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setDraft((d) => ({ ...d, person_nt_login: v }));
-                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, person_nt_login: v }));
-                      }}
-                      placeholder="NT Login"
-                      className="h-10"
-                      disabled={disabled}
-                    />
-                    <TextInput
-                      value={draft.person_csg_id ?? ""}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setDraft((d) => ({ ...d, person_csg_id: v }));
-                        looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, person_csg_id: v }));
-                      }}
-                      placeholder="CSG ID"
-                      className="h-10"
-                      disabled={disabled}
-                    />
-                  </div>
+                  {/* LOCATE: hide NT Login + CSG ID */}
+                  {lob !== "LOCATE" ? (
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <TextInput
+                        value={draft.person_nt_login ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setDraft((d) => ({ ...d, person_nt_login: v }));
+                          looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, person_nt_login: v }, lob));
+                        }}
+                        placeholder="NT Login"
+                        className="h-10"
+                        disabled={disabled}
+                      />
+                      <TextInput
+                        value={draft.person_csg_id ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setDraft((d) => ({ ...d, person_csg_id: v }));
+                          looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, person_csg_id: v }, lob));
+                        }}
+                        placeholder="CSG ID"
+                        className="h-10"
+                        disabled={disabled}
+                      />
+                    </div>
+                  ) : null}
 
                   <TextInput
                     value={draft.person_notes ?? ""}
@@ -416,13 +505,14 @@ export function AddToRosterDrawer({
               </div>
 
               <CandidatesList
-                query={mode === "pick" ? pickSearch.query : looksLikeQ}
-                loading={mode === "pick" ? pickSearch.loading : looksLikeSearch.loading}
-                error={mode === "pick" ? pickSearch.error : looksLikeSearch.error}
-                results={mode === "pick" ? pickSearch.results : looksLikeSearch.results}
+                query={displayedQuery}
+                loading={displayedLoading}
+                error={displayedError}
+                results={displayedResults}
                 coOptions={coOptions}
                 onAdd={instantAddExisting}
                 disabled={disabled}
+                activeOrgNameByPersonId={activeOrgNameByPersonId}
               />
             </div>
           </div>
@@ -440,11 +530,14 @@ function CandidatesList(props: {
   coOptions: CoOption[];
   onAdd: (p: PersonHit) => void;
   disabled: boolean;
+  activeOrgNameByPersonId: Map<string, string>;
 }) {
-  const { query, loading, error, results, coOptions, onAdd, disabled } = props;
+  const { query, loading, error, results, coOptions, onAdd, disabled, activeOrgNameByPersonId } = props;
   const q = String(query ?? "").trim();
 
-  if (!q || q.length < 2) return <div className="text-xs text-[var(--to-ink-muted)]">Type 2+ characters to see candidates.</div>;
+  if (!q || q.length < 2) {
+    return <div className="text-xs text-[var(--to-ink-muted)]">Type 2+ characters to see candidates.</div>;
+  }
   if (loading) return <div className="text-xs text-[var(--to-ink-muted)]">Searching…</div>;
   if (error) return <div className="text-xs text-[var(--to-status-warning)]">{error}</div>;
   if (!results.length) return <div className="text-xs text-[var(--to-ink-muted)]">No matches.</div>;
@@ -459,20 +552,39 @@ function CandidatesList(props: {
         const titleParts = markMatches(title, q);
         const subParts = markMatches(sub, q);
 
+        const lobText = lobLabel(p.lob);
+
+        const alreadyInOrgName = String(activeOrgNameByPersonId.get(String(p.person_id)) ?? "").trim();
+        const alreadyAssigned = Boolean(alreadyInOrgName);
+
         return (
           <div key={p.person_id} className="rounded border border-[var(--to-border)] p-2">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">
-                  {titleParts.map((part, idx) =>
-                    part.hit ? (
-                      <mark key={idx} className="rounded px-0.5">
-                        {part.text}
-                      </mark>
-                    ) : (
-                      <span key={idx}>{part.text}</span>
-                    )
-                  )}
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="text-sm font-semibold truncate">
+                    {titleParts.map((part, idx) =>
+                      part.hit ? (
+                        <mark key={idx} className="rounded px-0.5">
+                          {part.text}
+                        </mark>
+                      ) : (
+                        <span key={idx}>{part.text}</span>
+                      )
+                    )}
+                  </div>
+
+                  <span
+                    className="shrink-0 rounded-full px-2 py-0.5 text-[11px] border"
+                    style={{
+                      borderColor: "var(--to-border)",
+                      color: "var(--to-ink-muted)",
+                      background: "var(--to-surface-2)",
+                    }}
+                    title="Line of Business"
+                  >
+                    {lobText}
+                  </span>
                 </div>
 
                 <div className="text-xs text-[var(--to-ink-muted)]">
@@ -501,10 +613,11 @@ function CandidatesList(props: {
                 type="button"
                 variant="secondary"
                 className="h-8 px-3 text-xs whitespace-nowrap"
-                disabled={disabled}
+                disabled={disabled || alreadyAssigned}
                 onClick={() => void onAdd(p)}
+                title={alreadyAssigned ? `Already active in ${alreadyInOrgName}` : undefined}
               >
-                Add
+                {alreadyAssigned ? alreadyInOrgName : "Add"}
               </Button>
             </div>
           </div>

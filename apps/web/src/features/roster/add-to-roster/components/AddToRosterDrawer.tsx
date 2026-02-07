@@ -1,7 +1,7 @@
 // apps/web/src/features/roster/add-to-roster/components/AddToRosterDrawer.tsx
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -97,15 +97,26 @@ export function AddToRosterDrawer({
   const [mode, setMode] = useState<"pick" | "new">("pick");
   const [draft, setDraft] = useState<OnboardPersonDraft>(() => emptyDraft());
 
+  const didEnsureCoOptionsRef = useRef(false);
+
   const title = useMemo(() => pcOrgName ?? pcOrgId, [pcOrgName, pcOrgId]);
   const locked = !canEdit;
   const disabled = saving || locked;
 
-  // Affiliation load is guarded; safe to call on render
-  // ensureCoOptions prevents duplicate loads internally
-  if (open) {
+ // Affiliation load: run once per "open session" (prevents render side-effects / loops)
+  useEffect(() => {
+    if (!open) return;
+
+    if (didEnsureCoOptionsRef.current) return;
+    didEnsureCoOptionsRef.current = true;
+
     void ensureCoOptions().catch(() => {});
-  }
+  }, [open, ensureCoOptions]);
+
+  useEffect(() => {
+    if (!open) didEnsureCoOptionsRef.current = false;
+  }, [open]);
+  
 
   const fullName = String(draft.full_name ?? "").trim();
   const emails = String(draft.emails ?? "").trim();

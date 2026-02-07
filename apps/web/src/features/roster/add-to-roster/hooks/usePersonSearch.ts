@@ -19,10 +19,18 @@ export type PersonHit = {
   // affiliation keys (label is derived in UI using coOptions)
   co_ref_id: string | null;
   co_code: string | null;
+
+  // derived from current UI context (used for badge display + future scoping)
+  lob: "FULFILLMENT" | "LOCATE" | null;
+
+  // ✅ membership-aware fields (null until your search source provides them)
+  active_pc_org_id: string | null;
+  active_pc_org_name: string | null;
 };
 
 export type UsePersonSearchOpts = {
   excludePersonIds?: Set<string>;
+  lob?: "FULFILLMENT" | "LOCATE"; // if omitted, defaults to FULFILLMENT
   minChars?: number; // default 2
   limit?: number; // default 25
   debounceMs?: number; // default 250
@@ -38,6 +46,7 @@ type State = {
 export function usePersonSearch(opts: UsePersonSearchOpts = {}) {
   const supabase = useMemo(() => createClient(), []);
   const exclude = opts.excludePersonIds;
+  const lob = opts.lob ?? "FULFILLMENT";
   const minChars = opts.minChars ?? 2;
   const limit = opts.limit ?? 25;
   const debounceMs = opts.debounceMs ?? 250;
@@ -69,7 +78,9 @@ export function usePersonSearch(opts: UsePersonSearchOpts = {}) {
       try {
         const like = `%${query}%`;
 
-        // ✅ ONLY columns that exist on public.person (per your schema)
+        // NOTE: this currently queries public.person only.
+        // Your next step (membership-aware) will replace this with an RPC/view that returns
+        // active_pc_org_id / active_pc_org_name (and optionally true lob per person).
         const { data, error } = await supabase
           .from("person")
           .select(
@@ -87,15 +98,16 @@ export function usePersonSearch(opts: UsePersonSearchOpts = {}) {
               "co_code",
             ].join(",")
           )
-          // ✅ Search across multiple fields (NOT one field)
+          // Search across multiple fields; LOCATE excludes NT/CSG
           .or(
             [
               `full_name.ilike.${like}`,
               `emails.ilike.${like}`,
               `mobile.ilike.${like}`,
               `fuse_emp_id.ilike.${like}`,
-              `person_nt_login.ilike.${like}`,
-              `person_csg_id.ilike.${like}`,
+              ...(lob === "LOCATE"
+                ? []
+                : [`person_nt_login.ilike.${like}`, `person_csg_id.ilike.${like}`]),
             ].join(",")
           )
           .order("full_name", { ascending: true })
@@ -119,6 +131,11 @@ export function usePersonSearch(opts: UsePersonSearchOpts = {}) {
             active: typeof r.active === "boolean" ? r.active : null,
             co_ref_id: r.co_ref_id ?? null,
             co_code: r.co_code ?? null,
+            lob,
+
+            // ✅ default until membership-aware search is wired
+            active_pc_org_id: null,
+            active_pc_org_name: null,
           }))
           .filter((p) => (exclude ? !exclude.has(p.person_id) : true));
 
@@ -133,7 +150,7 @@ export function usePersonSearch(opts: UsePersonSearchOpts = {}) {
         }));
       }
     },
-    [supabase, exclude, minChars, limit]
+    [supabase, exclude, minChars, limit, lob]
   );
 
   const onQueryChange = useCallback(

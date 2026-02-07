@@ -2,38 +2,75 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
 import type { AuthChangeEvent, Session } from "@/shared/data/supabase/types";
 import { createClient } from "@/shared/data/supabase/client";
 import { OrgSelector } from "@/components/OrgSelector";
-import { useOrg } from "@/state/org";
+
+type CoreNavProps = {
+  lob: "FULFILLMENT" | "LOCATE";
+};
+
+type SessionStatus = {
+  signedIn: boolean;
+  active: boolean;
+  isOwner?: boolean;
+};
 
 const HIDE_ON_PREFIXES = ["/login", "/access", "/auth"];
 
-type SessionStatus = { signedIn: boolean; active: boolean; isOwner?: boolean };
-
-export default function CoreNav() {
+export default function CoreNav({ lob }: CoreNavProps) {
   const pathname = usePathname();
   const supabase = useMemo(() => createClient(), []);
-  const { orgs, selectedOrgId } = useOrg();
-
-  const selectedOrgName = useMemo(() => {
-    const row = orgs.find((o: any) => String(o?.pc_org_id ?? "") === String(selectedOrgId ?? ""));
-    const name = String(row?.pc_org_name ?? row?.org_name ?? row?.name ?? "").trim();
-    return name || null;
-  }, [orgs, selectedOrgId]);
-
-  const isLocateOrg = useMemo(() => {
-    return (selectedOrgName ?? "").toLowerCase().includes("locate");
-  }, [selectedOrgName]);
 
   const [email, setEmail] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<SessionStatus | null>(null);
+  const [switching, setSwitching] = useState(false);
 
   const shouldHideForRoute = HIDE_ON_PREFIXES.some((p) => pathname.startsWith(p));
 
+  const isOwner = Boolean(status?.isOwner);
+
+  const homeHref = lob === "LOCATE" ? "/locate" : "/fulfillment";
+  const homeActive =
+    (lob === "LOCATE" && (pathname === "/locate" || pathname.startsWith("/locate/"))) ||
+    (lob === "FULFILLMENT" && (pathname === "/fulfillment" || pathname.startsWith("/fulfillment/")));
+
+  const onSignOut = useCallback(() => {
+    window.location.assign("/auth/signout");
+  }, []);
+
+  const switchLob = useCallback(
+    async (next: "FULFILLMENT" | "LOCATE") => {
+      if (!isOwner) return;
+      if (switching) return;
+
+      const nextHref = next === "LOCATE" ? "/locate" : "/fulfillment";
+      if (pathname === nextHref || pathname.startsWith(nextHref + "/")) return;
+
+      setSwitching(true);
+      try {
+        // Clear org selection server-side first so we don't bleed scope across LOB
+        await fetch("/api/profile/select-org", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ selected_pc_org_id: null }),
+        });
+      } catch {
+        // best-effort; OrgProvider will also clear on lob change
+      } finally {
+        window.location.assign(nextHref);
+      }
+    },
+    [isOwner, pathname, switching]
+  );
+
   useEffect(() => {
+    // Critical: do not call Supabase auth/session endpoints on login/auth/access routes
+    if (shouldHideForRoute) return;
+
     let alive = true;
 
     async function refresh() {
@@ -56,7 +93,6 @@ export default function CoreNav() {
         setStatus(j);
       } catch {
         if (!alive) return;
-        // safest: if we can't confirm active, hide nav
         setStatus({ signedIn: true, active: false });
       }
     }
@@ -71,32 +107,26 @@ export default function CoreNav() {
       alive = false;
       sub.subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [supabase, shouldHideForRoute]);
 
+  // Render guards (after all hooks)
   if (shouldHideForRoute) return null;
   if (!ready || !email) return null;
   if (!status?.active) return null;
-
-  const canSeeLocate = Boolean(status?.isOwner) || isLocateOrg;
-
-  function onSignOut() {
-    // Single source of truth: this page handles localStorage + server cookie signout.
-    window.location.assign("/auth/signout");
-  }
 
   return (
     <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur">
       <div className="flex w-full items-center justify-between px-6 py-3">
         <div className="flex items-center gap-4">
-          <Link href="/" className="text-sm font-semibold">
+          <Link href={homeHref} className="text-sm font-semibold">
             TeamOptix
           </Link>
 
           <nav className="flex items-center gap-2">
             <Link
-              href="/"
+              href={homeHref}
               className={
-                pathname === "/"
+                homeActive
                   ? "rounded-md px-2 py-1 text-sm font-medium text-foreground"
                   : "rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
               }
@@ -104,28 +134,38 @@ export default function CoreNav() {
               Home
             </Link>
 
-            <Link
-              href="/roster"
-              className={
-                pathname === "/roster" || pathname.startsWith("/roster/")
-                  ? "rounded-md px-2 py-1 text-sm font-medium text-foreground"
-                  : "rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
-              }
-            >
-              Roster
-            </Link>
+            {isOwner && (
+              <div className="ml-2 flex items-center gap-2">
+                <span className="hidden sm:inline text-xs text-muted-foreground">LOB</span>
 
-            {canSeeLocate && (
-              <Link
-                href="/locate"
-                className={
-                  pathname === "/locate" || pathname.startsWith("/locate/")
-                    ? "rounded-md px-2 py-1 text-sm font-medium text-foreground"
-                    : "rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
-                }
-              >
-                Locate
-              </Link>
+                <button
+                  type="button"
+                  onClick={() => switchLob("FULFILLMENT")}
+                  disabled={switching}
+                  className={
+                    pathname === "/fulfillment" || pathname.startsWith("/fulfillment/")
+                      ? "rounded-md px-2 py-1 text-sm font-medium text-foreground"
+                      : "rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
+                  }
+                  aria-label="Switch to Fulfillment"
+                >
+                  Fulfillment
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => switchLob("LOCATE")}
+                  disabled={switching}
+                  className={
+                    pathname === "/locate" || pathname.startsWith("/locate/")
+                      ? "rounded-md px-2 py-1 text-sm font-medium text-foreground"
+                      : "rounded-md px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
+                  }
+                  aria-label="Switch to Locate"
+                >
+                  Locate
+                </button>
+              </div>
             )}
           </nav>
         </div>
@@ -135,8 +175,13 @@ export default function CoreNav() {
             <OrgSelector label="PC" />
           </div>
 
-          <span className="hidden text-xs text-muted-foreground sm:inline">{email}</span>
-          <button type="button" onClick={onSignOut} className="rounded-md border px-3 py-2 text-sm hover:bg-muted">
+          <span className="hidden sm:inline text-xs text-muted-foreground">{email}</span>
+
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
+          >
             Sign out
           </button>
         </div>

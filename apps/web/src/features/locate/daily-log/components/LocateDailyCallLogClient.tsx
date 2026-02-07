@@ -1,124 +1,27 @@
-// apps/web/src/app/locate/LocateDailyCallLogClient.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { DataTable, DataTableBody, DataTableHeader, DataTableRow } from "@/components/ui/DataTable";
 
+import type { DailyRowFromApi, Frame, GridRow, StateResource, TicketInputs } from "../types";
+import { detectFrameLocal, todayISODateLocal } from "@/features/locate/daily-log/lib/date";
+import {
+  estimatedSlaPctAM,
+  paceFlag,
+  safeAvg,
+  slaPillStyle,
+  TARGET_TICKETS_PER_TECH,
+  toNum,
+  utilizationPct,
+} from "@/features/locate/daily-log/lib/math";
 
-type Frame = "AM" | "PM";
-
-type StateResource = {
-  state_code: string;
-  state_name: string;
-  default_manpower: number;
-  backlog_seed: number;
-  is_active?: boolean;
-};
-
-type TicketInputs = {
-  manpower_count: number | "";
-  tickets_received_am: number | "";
-  tickets_closed_pm: number | "";
-  project_tickets: number | "";
-  emergency_tickets: number | "";
-};
-
-type GridRow = {
-  state_name: string;
-  state_code: string;
-  inputs: TicketInputs;
-};
-
-type DailyRowFromApi = {
-  log_date: string; // YYYY-MM-DD
-  state_code: string;
-  state_name: string;
-
-  manpower_count: number;
-  tickets_received_am: number;
-  tickets_closed_pm: number;
-  project_tickets: number;
-  emergency_tickets: number;
-
-  backlog_start: number;
-  backlog_end: number;
-
-  avg_received_per_tech: number;
-  avg_closed_per_tech: number;
-
-  updated_at?: string;
-};
-
-function todayISODateLocal(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function detectFrameLocal(): Frame {
-  const h = new Date().getHours();
-  return h < 12 ? "AM" : "PM";
-}
-
-function toNum(v: number | ""): number {
-  return v === "" ? 0 : Number(v);
-}
-
-function safeAvg(totalTickets: number, manpower: number): number {
-  if (!manpower || manpower <= 0) return 0;
-  return Math.round((totalTickets / manpower) * 100) / 100;
-}
-
-const TARGET_TICKETS_PER_TECH = 20; // your planning target
-const SLA_OK_THRESHOLD_PCT = 95; // green if >= 95%
-
-function estimatedSlaPctAM(ticketsReceivedAM: number, manpower: number): number | null {
-  if (!manpower || manpower <= 0) return null;
-  if (!ticketsReceivedAM || ticketsReceivedAM <= 0) return null;
-
-  const capacity = manpower * TARGET_TICKETS_PER_TECH;
-  const pct = (capacity / ticketsReceivedAM) * 100;
-
-  // cap at 100 so it reads like “coverage”
-  const capped = Math.min(100, pct);
-  return Math.round(capped);
-}
-
-function slaPillStyle(pct: number) {
-  const ok = pct >= SLA_OK_THRESHOLD_PCT;
-
-  // green for ok, orange for risk
-  return ok
-    ? { bg: "rgba(16,185,129,0.14)", fg: "rgb(16,185,129)" }
-    : { bg: "rgba(249,115,22,0.14)", fg: "rgb(249,115,22)" };
-}
-
-function paceFlag(avg: number): "NONE" | "LOW" | "OK" | "HIGH" {
-  if (!Number.isFinite(avg) || avg <= 0) return "NONE";
-  if (avg < 15) return "LOW";
-  if (avg > 25) return "HIGH";
-  return "OK";
-}
-
-// Utilization = working today / baseline total
-function utilizationPct(workingToday: number, baselineTotal: number): number {
-  if (!baselineTotal || baselineTotal <= 0) return 0;
-  return Math.max(0, Math.round((workingToday / baselineTotal) * 100));
-}
-
-// SLA proxy = closed / received
-function closurePct(received: number, closed: number): number {
-  if (!received || received <= 0) return 0;
-  return Math.max(0, Math.round((closed / received) * 100));
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
 }
 
 function makeInputs(_defaultManpower: number): TicketInputs {
-  // Working (manpower_count) is DAILY entry and should start blank.
-  // Baseline manpower is shown in its own column from the seed table.
   return {
     manpower_count: "",
     tickets_received_am: "",
@@ -126,16 +29,6 @@ function makeInputs(_defaultManpower: number): TicketInputs {
     project_tickets: "",
     emergency_tickets: "",
   };
-}
-
-function selectAllOnFocus(e: React.FocusEvent<HTMLInputElement>) {
-  // Highlight everything for quick overwrite
-  e.currentTarget.select();
-}
-
-function keepSelectionOnMouseUp(e: React.MouseEvent<HTMLInputElement>) {
-  // Prevent mouseup from clearing the selection
-  e.preventDefault();
 }
 
 export default function LocateDailyCallLogClient() {
@@ -156,10 +49,12 @@ export default function LocateDailyCallLogClient() {
   const [out, setOut] = useState<string>("");
 
   // Baseline editor modal
-  const [editing, setEditing] = useState<null | { state_code: string; state_name: string; default_manpower: number; backlog_seed: number }>(null);
+  const [editing, setEditing] = useState<
+    null | { state_code: string; state_name: string; default_manpower: number; backlog_seed: number }
+  >(null);
   const [savingBaseline, setSavingBaseline] = useState(false);
 
-    const historyRows = useMemo(() => {
+  const historyRows = useMemo(() => {
     const all = Object.values(serverRows).sort((a, b) => a.state_name.localeCompare(b.state_name));
     const q = historyFilter.trim().toLowerCase();
 
@@ -217,8 +112,7 @@ export default function LocateDailyCallLogClient() {
 
   function projectedBacklogEnd(state_code: string, inputs: TicketInputs): number {
     const start = getBacklogStart(state_code);
-    const received =
-      frame === "AM" ? toNum(inputs.tickets_received_am) : serverRows[state_code]?.tickets_received_am ?? 0;
+    const received = frame === "AM" ? toNum(inputs.tickets_received_am) : serverRows[state_code]?.tickets_received_am ?? 0;
     const closed = frame === "PM" ? toNum(inputs.tickets_closed_pm) : serverRows[state_code]?.tickets_closed_pm ?? 0;
     return start + received - closed;
   }
@@ -244,48 +138,38 @@ export default function LocateDailyCallLogClient() {
       if (total < 0) errs.push(`${r.state_name}: ticket total cannot be negative`);
       if (proj < 0) errs.push(`${r.state_name}: project tickets cannot be negative`);
       if (emer < 0) errs.push(`${r.state_name}: emergency tickets cannot be negative`);
-
-      // IMPORTANT: B) independent counts — no proj+emer<=total constraint
     }
     return errs;
   }
 
-  async function loadStatesAndDay(date: string) {
+  const loadStatesAndDay = useCallback(async (date: string) => {
     setLoading(true);
     setOut("");
+
     try {
       const st = await fetch("/api/locate/state-resource", { cache: "no-store" });
-
-      let stJson: any = null;
-      try {
-        stJson = await st.json();
-      } catch {
-        const txt = await st.text().catch(() => "");
-        setOut(`state-resource returned non-JSON (${st.status}). ${txt.slice(0, 200)}`);
-        return;
-      }
+      const stJson = await st.json().catch(() => null);
 
       if (!st.ok || !stJson?.ok) {
         setOut(`Failed to load states: ${stJson?.error ?? st.status}`);
         return;
       }
 
-      const s: StateResource[] = Array.isArray(stJson.states) ? (stJson.states as StateResource[]) : [];
+      const s: StateResource[] = Array.isArray(stJson.states)
+        ? (stJson.states as StateResource[])
+        : [];
 
       const sMap: Record<string, StateResource> = {};
-      for (const x of s) sMap[String(x.state_code).toUpperCase()] = x;
+      for (const x of s) {
+        sMap[String(x.state_code).toUpperCase()] = x;
+      }
       setStateByCode(sMap);
 
-      const dl = await fetch(`/api/locate/daily-log?date=${encodeURIComponent(date)}`, { cache: "no-store" });
-
-      let dlJson: any = null;
-      try {
-        dlJson = await dl.json();
-      } catch {
-        const txt = await dl.text().catch(() => "");
-        setOut(`daily-log returned non-JSON (${dl.status}). ${txt.slice(0, 200)}`);
-        return;
-      }
+      const dl = await fetch(
+        `/api/locate/daily-log?date=${encodeURIComponent(date)}`,
+        { cache: "no-store" }
+      );
+      const dlJson = await dl.json().catch(() => null);
 
       const map: Record<string, DailyRowFromApi> = {};
       if (dl.ok && dlJson?.ok) {
@@ -302,45 +186,43 @@ export default function LocateDailyCallLogClient() {
         const inputs = makeInputs(Number(x.default_manpower ?? 0));
 
         if (existing) {
-        // If saved manpower is 0, treat it as "unset" for UX (show blank).
-        const savedManpower = Number(existing.manpower_count ?? 0);
-        inputs.manpower_count = savedManpower > 0 ? savedManpower : "";
+          const savedManpower = Number(existing.manpower_count ?? 0);
+          inputs.manpower_count = savedManpower > 0 ? savedManpower : "";
 
-        if (frame === "AM") {
-          const v = Number(existing.tickets_received_am ?? 0);
-          inputs.tickets_received_am = v > 0 ? v : "";
+          if (frame === "AM") {
+            const v = Number(existing.tickets_received_am ?? 0);
+            inputs.tickets_received_am = v > 0 ? v : "";
+          }
+
+          if (frame === "PM") {
+            const v = Number(existing.tickets_closed_pm ?? 0);
+            inputs.tickets_closed_pm = v > 0 ? v : "";
+          }
+
+          const proj = Number(existing.project_tickets ?? 0);
+          inputs.project_tickets = proj > 0 ? proj : "";
+
+          const emer = Number(existing.emergency_tickets ?? 0);
+          inputs.emergency_tickets = emer > 0 ? emer : "";
         }
 
-        if (frame === "PM") {
-          const v = Number(existing.tickets_closed_pm ?? 0);
-          inputs.tickets_closed_pm = v > 0 ? v : "";
-        }
-
-        const proj = Number(existing.project_tickets ?? 0);
-        inputs.project_tickets = proj > 0 ? proj : "";
-
-        const emer = Number(existing.emergency_tickets ?? 0);
-        inputs.emergency_tickets = emer > 0 ? emer : "";
-      }
-
-        return { state_name: x.state_name, state_code: code, inputs };
+        return {
+          state_name: x.state_name,
+          state_code: code,
+          inputs,
+        };
       });
 
       setRows(grid);
     } finally {
       setLoading(false);
     }
-  }
+  }, [frame]);
 
+  // reload when date/frame changes
   useEffect(() => {
-    void loadStatesAndDay(logDate);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    void loadStatesAndDay(logDate);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logDate, frame]);
+  void loadStatesAndDay(logDate);
+}, [loadStatesAndDay, logDate]);
 
   async function onSubmitBatch() {
     setOut("");
@@ -391,7 +273,7 @@ export default function LocateDailyCallLogClient() {
         body: JSON.stringify({ log_date: logDate, frame, rows: payloadRows }),
       });
 
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
         setOut(`Submit failed: ${json?.error ?? res.status}`);
         return;
@@ -428,7 +310,7 @@ export default function LocateDailyCallLogClient() {
         }),
       });
 
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) {
         setOut(`Baseline update failed: ${json?.error ?? res.status}`);
         return;
@@ -443,17 +325,12 @@ export default function LocateDailyCallLogClient() {
 
   const ticketsLabel = frame === "AM" ? "Tickets received (AM)" : "Tickets closed (PM)";
 
-  // Tight first column + new Baseline/Util/SLA columns
   const gridStyle = useMemo(
     () => ({
-      gridTemplateColumns:
-        // State | Baseline | Working | Tickets | Project | Emergency | Backlog start | Backlog | Avg | Util | SLA
-        "140px 110px 140px 140px 140px 140px 120px 120px 110px 90px 90px",
+      gridTemplateColumns: "140px 110px 140px 140px 140px 140px 120px 120px 110px 90px 90px",
     }),
     []
   );
-
-  
 
   return (
     <div className="grid gap-4">
@@ -545,20 +422,15 @@ export default function LocateDailyCallLogClient() {
                   const working = toNum(r.inputs.manpower_count);
 
                   const avg = safeAvg(total, working);
-                  const pace = paceFlag(avg);
-
                   const util = utilizationPct(working, baseline);
 
                   const ticketsReceivedAM =
-                    serverRows[r.state_code]?.tickets_received_am ??
-                    toNum(r.inputs.tickets_received_am);
+                    serverRows[r.state_code]?.tickets_received_am ?? toNum(r.inputs.tickets_received_am);
 
-                  // Estimated SLA is only meaningful on AM rows (lead measure)
                   const estSla = frame === "AM" ? estimatedSlaPctAM(ticketsReceivedAM, working) : null;
 
                   const backlogStart = getBacklogStart(r.state_code);
                   const backlogEnd = projectedBacklogEnd(r.state_code, r.inputs);
-
 
                   return (
                     <DataTableRow key={r.state_code} gridStyle={gridStyle}>
@@ -569,21 +441,23 @@ export default function LocateDailyCallLogClient() {
 
                       <div className="flex items-center gap-2">
                         <span className="text-sm tabular-nums text-[var(--to-ink-muted)]">{baseline}</span>
-                       <button
-                            type="button"
-                            className="inline-flex items-center rounded-full px-1.5 py-0.25 text-[11px] font-medium leading-2"
-                            style={{
-                              border: "1px solid rgba(16,185,129,0.28)",
-                              background: "rgba(16,185,129,0.07)", // lighter green wash
-                              color: "rgb(16,185,129)",
-                            }}
-                            onClick={() => openBaselineModalFor(r.state_code, r.state_name)}
-                            disabled={submitting}
-                            title="Edit baseline manpower + backlog seed"
-                          >
-                            Edit
-                          </button>
+
+                        <button
+                          type="button"
+                          className="inline-flex items-center rounded-full px-1.5 py-0.25 text-[11px] font-medium leading-2"
+                          style={{
+                            border: "1px solid rgba(16,185,129,0.28)",
+                            background: "rgba(16,185,129,0.07)",
+                            color: "rgb(16,185,129)",
+                          }}
+                          onClick={() => openBaselineModalFor(r.state_code, r.state_name)}
+                          disabled={submitting}
+                          title="Edit baseline manpower + backlog seed"
+                        >
+                          Edit
+                        </button>
                       </div>
+
                       <div>
                         <input
                           inputMode="numeric"
@@ -659,7 +533,6 @@ export default function LocateDailyCallLogClient() {
 
                       <div className="flex items-center">
                         {(() => {
-                          // Only format when BOTH are present (prevents “pretty nulls”)
                           const canFormat = working > 0 && total > 0;
                           const flag = canFormat ? paceFlag(avg) : "NONE";
 
@@ -671,8 +544,8 @@ export default function LocateDailyCallLogClient() {
                             flag === "OK"
                               ? { bg: "rgba(16,185,129,0.14)", fg: "rgb(16,185,129)", label: `${avg}` }
                               : flag === "LOW"
-                                ? { bg: "rgba(234,179,8,0.12)", fg: "rgb(234,179,8)", label: `(-) ${avg}` } // yellow
-                                : { bg: "rgba(239,68,68,0.14)", fg: "rgb(239,68,68)", label: `(+) ${avg}` }; // red
+                              ? { bg: "rgba(234,179,8,0.12)", fg: "rgb(234,179,8)", label: `(-) ${avg}` }
+                              : { bg: "rgba(239,68,68,0.14)", fg: "rgb(239,68,68)", label: `(+) ${avg}` };
 
                           return (
                             <span
@@ -703,17 +576,12 @@ export default function LocateDailyCallLogClient() {
                               background: slaPillStyle(estSla).bg,
                               color: slaPillStyle(estSla).fg,
                             }}
-                            title={
-                              frame === "AM"
-                                ? `Estimated SLA (lead): capacity ${working * TARGET_TICKETS_PER_TECH} ÷ demand ${ticketsReceivedAM}`
-                                : `SLA (PM): pending definition`
-                            }
+                            title={`Estimated SLA (lead): capacity ${working * TARGET_TICKETS_PER_TECH} ÷ demand ${ticketsReceivedAM}`}
                           >
                             {estSla}%
                           </span>
                         )}
                       </div>
-
                     </DataTableRow>
                   );
                 })
@@ -728,45 +596,43 @@ export default function LocateDailyCallLogClient() {
       <Card>
         <div className="grid gap-2">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div className="grid gap-1">
-          <div className="text-sm font-medium">Saved logs for {logDate}</div>
-          <div className="text-sm text-[var(--to-ink-muted)]">DB-backed snapshot for the selected day.</div>
-        </div>
+            <div className="grid gap-1">
+              <div className="text-sm font-medium">Saved logs for {logDate}</div>
+              <div className="text-sm text-[var(--to-ink-muted)]">DB-backed snapshot for the selected day.</div>
+            </div>
 
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="grid gap-1">
-            <span className="text-xs text-[var(--to-ink-muted)]">Filter</span>
-            <input
-              className="to-input h-10 w-[220px]"
-              value={historyFilter}
-              onChange={(e) => setHistoryFilter(e.target.value)}
-              placeholder="State or code…"
-            />
-          </label>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="grid gap-1">
+                <span className="text-xs text-[var(--to-ink-muted)]">Filter</span>
+                <input
+                  className="to-input h-10 w-[220px]"
+                  value={historyFilter}
+                  onChange={(e) => setHistoryFilter(e.target.value)}
+                  placeholder="State or code…"
+                />
+              </label>
 
-          <label className="flex items-center gap-2 rounded-full border px-3 py-2 text-xs"
-            style={{ borderColor: "var(--to-border)", background: "var(--to-surface)" }}
-          >
-            <input
-              type="checkbox"
-              checked={historyOnlySaved}
-              onChange={(e) => setHistoryOnlySaved(e.target.checked)}
-            />
-            Only saved
-          </label>
+              <label
+                className="flex items-center gap-2 rounded-full border px-3 py-2 text-xs"
+                style={{ borderColor: "var(--to-border)", background: "var(--to-surface)" }}
+              >
+                <input type="checkbox" checked={historyOnlySaved} onChange={(e) => setHistoryOnlySaved(e.target.checked)} />
+                Only saved
+              </label>
 
-          <label className="flex items-center gap-2 rounded-full border px-3 py-2 text-xs"
-            style={{ borderColor: "var(--to-border)", background: "var(--to-surface)" }}
-          >
-            <input
-              type="checkbox"
-              checked={historyOnlyFlagged}
-              onChange={(e) => setHistoryOnlyFlagged(e.target.checked)}
-            />
-            Only (!)
-          </label>
-        </div>
-      </div>
+              <label
+                className="flex items-center gap-2 rounded-full border px-3 py-2 text-xs"
+                style={{ borderColor: "var(--to-border)", background: "var(--to-surface)" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={historyOnlyFlagged}
+                  onChange={(e) => setHistoryOnlyFlagged(e.target.checked)}
+                />
+                Only (!)
+              </label>
+            </div>
+          </div>
 
           <DataTable zebra hover layout="content" gridStyle={gridStyle}>
             <DataTableHeader gridStyle={gridStyle}>
@@ -793,97 +659,90 @@ export default function LocateDailyCallLogClient() {
                 </DataTableRow>
               ) : (
                 historyRows.map((s) => {
-                    const baseline = stateByCode[s.state_code]?.default_manpower ?? 0;
+                  const baseline = stateByCode[s.state_code]?.default_manpower ?? 0;
 
-                    const working = Number(s.manpower_count ?? 0);
-                    const receivedAM = Number(s.tickets_received_am ?? 0);
-                    const closedPM = Number(s.tickets_closed_pm ?? 0);
+                  const working = Number(s.manpower_count ?? 0);
+                  const receivedAM = Number(s.tickets_received_am ?? 0);
+                  const closedPM = Number(s.tickets_closed_pm ?? 0);
 
-                    // Utilization against baseline
-                    const util = utilizationPct(working, baseline);
+                  const util = utilizationPct(working, baseline);
 
-                    // Avg/tech depends on the current frame selection
-                    const total = frame === "AM" ? receivedAM : closedPM;
-                    const avg = safeAvg(total, working);
-                    const canFormatAvg = working > 0 && total > 0;
-                    const pace = canFormatAvg ? paceFlag(avg) : "NONE";
+                  const total = frame === "AM" ? receivedAM : closedPM;
+                  const avg = safeAvg(total, working);
+                  const canFormatAvg = working > 0 && total > 0;
+                  const pace = canFormatAvg ? paceFlag(avg) : "NONE";
 
-                    // Estimated SLA (AM lead measure) only
-                    const estSla = frame === "AM" ? estimatedSlaPctAM(receivedAM, working) : null;
+                  const estSla = frame === "AM" ? estimatedSlaPctAM(receivedAM, working) : null;
 
-                    return (
-                      <DataTableRow key={s.state_code} gridStyle={gridStyle}>
-                        <div className="flex items-center gap-1">
-                          <span className="font-medium">{s.state_code}</span>
-                          <span className="text-xs text-[var(--to-ink-muted)]">{s.state_name}</span>
-                        </div>
+                  return (
+                    <DataTableRow key={s.state_code} gridStyle={gridStyle}>
+                      <div className="flex items-center gap-1">
+                        <span className="font-medium">{s.state_code}</span>
+                        <span className="text-xs text-[var(--to-ink-muted)]">{s.state_name}</span>
+                      </div>
 
-                        <div className="text-sm tabular-nums text-[var(--to-ink-muted)]">{baseline}</div>
+                      <div className="text-sm tabular-nums text-[var(--to-ink-muted)]">{baseline}</div>
+                      <div className="text-sm tabular-nums">{working || "—"}</div>
+                      <div className="text-sm tabular-nums">{receivedAM || "—"}</div>
+                      <div className="text-sm tabular-nums">{closedPM || "—"}</div>
 
-                        <div className="text-sm tabular-nums">{working || "—"}</div>
+                      <div className="text-sm tabular-nums">{Number(s.project_tickets ?? 0) || "—"}</div>
+                      <div className="text-sm tabular-nums">{Number(s.emergency_tickets ?? 0) || "—"}</div>
 
-                        <div className="text-sm tabular-nums">{receivedAM || "—"}</div>
-                        <div className="text-sm tabular-nums">{closedPM || "—"}</div>
+                      <div className="text-sm tabular-nums">{Number(s.backlog_start ?? 0)}</div>
+                      <div className="text-sm tabular-nums">{Number(s.backlog_end ?? 0)}</div>
 
-                        <div className="text-sm tabular-nums">{Number(s.project_tickets ?? 0) || "—"}</div>
-                        <div className="text-sm tabular-nums">{Number(s.emergency_tickets ?? 0) || "—"}</div>
+                      <div className="flex items-center">
+                        {(() => {
+                          if (!canFormatAvg || pace === "NONE") {
+                            return <span className="text-sm tabular-nums text-[var(--to-ink-muted)]">—</span>;
+                          }
 
-                        <div className="text-sm tabular-nums">{Number(s.backlog_start ?? 0)}</div>
-                        <div className="text-sm tabular-nums">{Number(s.backlog_end ?? 0)}</div>
+                          const pill =
+                            pace === "OK"
+                              ? { bg: "rgba(16,185,129,0.14)", fg: "rgb(16,185,129)", label: `${avg}` }
+                              : pace === "LOW"
+                              ? { bg: "rgba(249,115,22,0.14)", fg: "rgb(249,115,22)", label: `(-) ${avg}` }
+                              : { bg: "rgba(239,68,68,0.14)", fg: "rgb(239,68,68)", label: `(+) ${avg}` };
 
-                        {/* Avg/tech pill (same styling as top table) */}
-                        <div className="flex items-center">
-                          {(() => {
-                            if (!canFormatAvg || pace === "NONE") {
-                              return <span className="text-sm tabular-nums text-[var(--to-ink-muted)]">—</span>;
-                            }
-
-                            const pill =
-                              pace === "OK"
-                                ? { bg: "rgba(16,185,129,0.14)", fg: "rgb(16,185,129)", label: `${avg}` }
-                                : pace === "LOW"
-                                  ? { bg: "rgba(249,115,22,0.14)", fg: "rgb(249,115,22)", label: `(-) ${avg}` }
-                                  : { bg: "rgba(239,68,68,0.14)", fg: "rgb(239,68,68)", label: `(+) ${avg}` };
-
-                            return (
-                              <span
-                                className="rounded-full px-2 py-1 text-xs font-medium tabular-nums"
-                                style={{
-                                  border: "1px solid var(--to-border)",
-                                  background: pill.bg,
-                                  color: pill.fg,
-                                }}
-                                title="Tickets per tech (pace)"
-                              >
-                                {pill.label}
-                              </span>
-                            );
-                          })()}
-                        </div>
-
-                        <div className="text-sm tabular-nums">{util}%</div>
-
-                        {/* AM Estimated SLA (same pill style) */}
-                        <div className="flex items-center">
-                          {estSla === null ? (
-                            <span className="text-xs text-[var(--to-ink-muted)]">—</span>
-                          ) : (
+                          return (
                             <span
-                              className="rounded-full px-2 py-1 text-xs font-medium"
+                              className="rounded-full px-2 py-1 text-xs font-medium tabular-nums"
                               style={{
                                 border: "1px solid var(--to-border)",
-                                background: slaPillStyle(estSla).bg,
-                                color: slaPillStyle(estSla).fg,
+                                background: pill.bg,
+                                color: pill.fg,
                               }}
-                              title={`Estimated SLA (lead): capacity ${working * TARGET_TICKETS_PER_TECH} ÷ demand ${receivedAM}`}
+                              title="Tickets per tech (pace)"
                             >
-                              {estSla}%
+                              {pill.label}
                             </span>
-                          )}
-                        </div>
-                      </DataTableRow>
-                    );
-                  })
+                          );
+                        })()}
+                      </div>
+
+                      <div className="text-sm tabular-nums">{util}%</div>
+
+                      <div className="flex items-center">
+                        {estSla === null ? (
+                          <span className="text-xs text-[var(--to-ink-muted)]">—</span>
+                        ) : (
+                          <span
+                            className="rounded-full px-2 py-1 text-xs font-medium"
+                            style={{
+                              border: "1px solid var(--to-border)",
+                              background: slaPillStyle(estSla).bg,
+                              color: slaPillStyle(estSla).fg,
+                            }}
+                            title={`Estimated SLA (lead): capacity ${working * TARGET_TICKETS_PER_TECH} ÷ demand ${receivedAM}`}
+                          >
+                            {estSla}%
+                          </span>
+                        )}
+                      </div>
+                    </DataTableRow>
+                  );
+                })
               )}
             </DataTableBody>
           </DataTable>

@@ -1,9 +1,11 @@
-// apps/web/src/state/org.tsx
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { api, type PcOrgChoice } from "@/shared/lib/api";
+import { createClient } from "@/shared/data/supabase/client";
 import { useSession } from "@/state/session";
+import type { PcOrgChoice } from "@/shared/lib/api";
+
+type Lob = "FULFILLMENT" | "LOCATE";
 
 type OrgState = {
   orgs: PcOrgChoice[];
@@ -16,8 +18,16 @@ type OrgState = {
   refreshOrgs: () => Promise<void>;
 };
 
+type OrgProviderProps = {
+  children: React.ReactNode;
+  lob: Lob;
+};
+
 const Ctx = createContext<OrgState | null>(null);
-const STORAGE_KEY = "pc:selected_org_id";
+
+function storageKeyForLob(lob: Lob) {
+  return `pc:selected_org_id:${lob}`;
+}
 
 async function getServerSelectedOrg(): Promise<string | null> {
   const res = await fetch("/api/profile/select-org", { method: "GET" });
@@ -35,13 +45,12 @@ async function setServerSelectedOrg(id: string | null): Promise<void> {
   });
 
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(json?.error ?? "Failed to persist org selection");
-  }
+  if (!res.ok) throw new Error(json?.error ?? "Failed to persist org selection");
 }
 
-export function OrgProvider({ children }: { children: React.ReactNode }) {
+export function OrgProvider({ children, lob }: OrgProviderProps) {
   const { ready, signedIn } = useSession();
+  const supabase = useMemo(() => createClient(), []);
 
   const [orgs, setOrgs] = useState<PcOrgChoice[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(true);
@@ -51,19 +60,22 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
 
   const lastPersistedRef = useRef<string | null>(null);
   const didInitRef = useRef(false);
+  const lobRef = useRef<Lob>(lob);
 
-  // Load persisted org selection (client-only fallback)
+  // Load persisted org selection for THIS LOB (client-only fallback)
   useEffect(() => {
-    const saved = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
-    if (saved) setSelectedOrgIdState(saved);
-  }, []);
+    const key = storageKeyForLob(lob);
+    const saved = typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
+    setSelectedOrgIdState(saved ? saved : null);
+  }, [lob]);
 
-  // Persist org selection to localStorage (still useful for instant UI)
+  // Persist org selection to localStorage (LOB-scoped)
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (selectedOrgId) window.localStorage.setItem(STORAGE_KEY, selectedOrgId);
-    else window.localStorage.removeItem(STORAGE_KEY);
-  }, [selectedOrgId]);
+    const key = storageKeyForLob(lob);
+    if (selectedOrgId) window.localStorage.setItem(key, selectedOrgId);
+    else window.localStorage.removeItem(key);
+  }, [selectedOrgId, lob]);
 
   const refreshOrgs = useCallback(async () => {
     if (!ready || !signedIn) return;
@@ -72,26 +84,38 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
     setOrgsError(null);
 
     try {
-      const choices = (await api.pcOrgChoices()) ?? [];
+      // LOB-aware org list (must already be access-filtered in the RPC)
+      const { data, error } = await supabase.rpc("orgs_for_user_lob", { p_lob: lob });
+      if (error) throw error;
+
+      const rows = (Array.isArray(data) ? data : []) as any[];
+
+      const choices = rows.map((r) => ({
+        pc_org_id: r.pc_org_id,
+        pc_org_name: r.pc_org_name,
+        mso_id: r.mso_id,
+        mso_lob: r.mso_lob,
+      })) as unknown as PcOrgChoice[];
+
       setOrgs(choices);
 
       const serverSelected = await getServerSelectedOrg();
 
       const isValid = (id: string | null) =>
-        !!id && choices.some((o) => String((o as any)?.pc_org_id ?? "").trim() === String(id).trim());
+        !!id && choices.some((o: any) => String(o?.pc_org_id ?? "").trim() === String(id).trim());
 
       const localSelected = selectedOrgId;
 
-      // Prefer server selection if valid; else local if valid; else first choice
+      // Do NOT auto-pick first org: leave null and force explicit selection if not already set.
       const next =
         (isValid(serverSelected) ? serverSelected : null) ??
         (isValid(localSelected) ? localSelected : null) ??
-        (String((choices[0] as any)?.pc_org_id ?? "").trim() || null);
+        null;
 
       setSelectedOrgIdState(next);
 
-      // Heal server if missing/outdated
-      if (next && next !== serverSelected) {
+      // Heal server if invalid for this LOB
+      if ((serverSelected ?? null) !== (next ?? null)) {
         try {
           await setServerSelectedOrg(next);
           lastPersistedRef.current = next;
@@ -99,18 +123,38 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
           setOrgsError(e?.message ?? "Failed to persist org selection");
         }
       } else {
-        lastPersistedRef.current = serverSelected;
+        lastPersistedRef.current = serverSelected ?? null;
       }
     } catch (e: any) {
       const msg = e?.message ?? "Failed to load org choices";
       setOrgsError(msg);
       setOrgs([]);
       setSelectedOrgIdState(null);
+      lastPersistedRef.current = null;
     } finally {
       setOrgsLoading(false);
       didInitRef.current = true;
     }
-  }, [ready, signedIn, selectedOrgId]);
+  }, [ready, signedIn, supabase, lob, selectedOrgId]);
+
+  // Reset on LOB change (client + server)
+  useEffect(() => {
+    if (!ready) return;
+
+    const prev = lobRef.current;
+    if (prev === lob) return;
+
+    lobRef.current = lob;
+
+    setSelectedOrgIdState(null);
+    lastPersistedRef.current = null;
+    didInitRef.current = false;
+
+    if (signedIn) {
+      void setServerSelectedOrg(null).catch(() => {});
+      void refreshOrgs();
+    }
+  }, [lob, ready, signedIn, refreshOrgs]);
 
   // Drive org lifecycle off session state
   useEffect(() => {
@@ -121,7 +165,6 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
       setSelectedOrgIdState(null);
       setOrgsError(null);
       setOrgsLoading(false);
-      if (typeof window !== "undefined") window.localStorage.removeItem(STORAGE_KEY);
       lastPersistedRef.current = null;
       didInitRef.current = false;
       return;
@@ -135,7 +178,6 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
     if (!ready || !signedIn) return;
     if (!didInitRef.current) return;
 
-    // Avoid re-posting the same value in loops
     if ((selectedOrgId ?? null) === (lastPersistedRef.current ?? null)) return;
 
     let cancelled = false;
@@ -148,7 +190,6 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         setOrgsError(e?.message ?? "Failed to persist org selection");
 
-        // Re-sync from server (authoritative) on failure
         try {
           const serverSelected = await getServerSelectedOrg();
           const id = serverSelected ? serverSelected : null;

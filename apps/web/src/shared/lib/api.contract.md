@@ -6,13 +6,15 @@
 - Runtime call-sites enumerated (TS/TSX only, `apps/web/src/features`).
 - Runtime import-sites enumerated (TS/TSX only).
 - Type-only import-sites enumerated (TS/TSX only).
+- Modularized `apps/web/src/shared/lib/api.ts` behind a stable facade.
 
 ### Pending
-- Modularize `apps/web/src/shared/lib/api.ts` behind a stable facade.
+- Enforce module boundaries (no imports from `@/shared/lib/apiClient/*` outside the facade).
+- Add LOC guardrail to prevent api surface regressions.
 
 ## Public import surface (must remain stable)
 - `@/shared/lib/api`
-- `apps/web/src/lib/api.ts` (re-export of `@/shared/lib/api`)
+- `apps/web/src/shared/lib/api.ts` (public facade entrypoint)
 
 ## Runtime contract (must not break)
 These methods are called by the roster feature at runtime and must remain callable as:

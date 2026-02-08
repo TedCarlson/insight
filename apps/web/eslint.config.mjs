@@ -32,6 +32,12 @@ const config = [
               name: "@/lib/activeRoster",
               message: 'Do not import "@/lib/activeRoster". Use "@/shared/lib/activeRoster".',
             },
+
+            // ✅ Kill the old api shim forever
+            {
+              name: "@/lib/api",
+              message: 'Do not import "@/lib/api". Use "@/shared/lib/api".',
+            },
           ],
           patterns: [
             // Block reaching into sibling apps (via relative paths)
@@ -53,6 +59,19 @@ const config = [
               message: 'Do not import from "@/lib/activeRoster*". Use "@/shared/lib/activeRoster".',
             },
 
+            // ✅ Block legacy api shim path too (any subpaths)
+            {
+              group: ["@/lib/api*"],
+              message: 'Do not import from "@/lib/api*". Use "@/shared/lib/api".',
+            },
+
+            // ✅ Prevent bypassing the facade
+            {
+              group: ["@/shared/lib/apiClient*"],
+              message:
+                'Do not import from "@/shared/lib/apiClient/*" directly. Use the facade "@/shared/lib/api".',
+            },
+
             // Belt + suspenders for supabase-js
             {
               group: ["@supabase/supabase-js"],
@@ -71,6 +90,16 @@ const config = [
    */
   {
     files: ["src/shared/data/supabase/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": "off",
+    },
+  },
+
+  /**
+   * ✅ Exception: allow internal apiClient wiring ONLY inside the api layer itself
+   */
+  {
+    files: ["src/shared/lib/apiClient/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": "off",
     },

@@ -7,6 +7,8 @@ import { RegionTableView } from "./views/RegionTableView";
 import { DivisionTableView } from "./views/DivisionTableView";
 import { OfficeTableView } from "./views/OfficeTableView";
 import { PcTableView } from "./views/PcTableView";
+import { MsoTableView } from "./views/MsoTableView";
+import { AssignmentTableView } from "./views/AssignmentTableView";
 
 export function TablePlaceholder(props: { tableKey: string }) {
   const table = ADMIN_TABLES.find((t) => t.key === props.tableKey);
@@ -19,6 +21,8 @@ export function TablePlaceholder(props: { tableKey: string }) {
   if (table.key === "division") return <DivisionTableView />;
   if (table.key === "office") return <OfficeTableView />;
   if (table.key === "pc") return <PcTableView />;
+  if (table.key === "mso") return <MsoTableView />;
+  if (table.key === "assignment") return <AssignmentTableView />;
 
   return (
     <div className="grid gap-4">

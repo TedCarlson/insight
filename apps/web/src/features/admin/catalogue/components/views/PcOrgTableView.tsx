@@ -11,6 +11,7 @@ import {
   type LookupOption,
 } from "@/features/admin/catalogue/components/forms/PcOrgForm";
 import { usePcOrgAdmin, type PcOrgAdminRow } from "@/features/admin/catalogue/hooks/usePcOrgAdmin";
+import { useCatalogueLookups } from "@/features/admin/catalogue/components/lookups/useCatalogueLookups";
 
 function shortId(id: unknown) {
   if (id == null) return "—";
@@ -41,8 +42,8 @@ function CopyUuidButton(props: { value: string }) {
 }
 
 /**
- * Build dropdown options from currently loaded rows.
- * (Good enough for now; later we can swap to a dedicated lookups endpoint.)
+ * Legacy fallback: Build dropdown options from currently loaded rows.
+ * Primary source should be the dedicated lookups endpoint via useCatalogueLookups("pc_org").
  *
  * IMPORTANT: Fulfillment Center is NOT a dropdown (per requirement).
  */
@@ -133,11 +134,16 @@ export function PcOrgTableView() {
     return `${rows.length} rows`;
   }, [loading, err, data, totalRows, rows.length]);
 
-  // lookup options (derived from current page)
-  const { pcOptions, msoOptions, divisionOptions, regionOptions } = useMemo(
-    () => buildOptionsFromRows(rows),
-    [rows]
-  );
+  // Dedicated lookups (domain-shaped). This is the primary dropdown source.
+  const { data: lookups, error: lookupsErr } = useCatalogueLookups("pc_org");
+
+  // Fallback options from current page (only used if lookups are not available)
+  const fallback = useMemo(() => buildOptionsFromRows(rows), [rows]);
+
+  const pcOptions = ((lookups as any)?.pc as LookupOption[] | undefined) ?? fallback.pcOptions;
+  const msoOptions = ((lookups as any)?.mso as LookupOption[] | undefined) ?? fallback.msoOptions;
+  const divisionOptions = ((lookups as any)?.division as LookupOption[] | undefined) ?? fallback.divisionOptions;
+  const regionOptions = ((lookups as any)?.region as LookupOption[] | undefined) ?? fallback.regionOptions;
 
   // drawer state
   const [open, setOpen] = useState(false);
@@ -259,6 +265,14 @@ export function PcOrgTableView() {
         </Card>
       ) : null}
 
+      {lookupsErr ? (
+        <Card variant="subtle" className="p-3">
+          <div className="text-sm" style={{ color: "var(--to-ink-muted)" }}>
+            Lookups error: {lookupsErr} (dropdowns may be incomplete)
+          </div>
+        </Card>
+      ) : null}
+
       {!loading && rows.length === 0 ? (
         <EmptyState title="No PC-ORGs found" message="Try adjusting your search." compact />
       ) : (
@@ -313,7 +327,9 @@ export function PcOrgTableView() {
                     <td className="px-3 py-2">
                       <div className="grid">
                         <div className="text-sm">{fcLabel}</div>
-                        <div className="text-xs font-mono text-[var(--to-ink-muted)]">{shortId(r.fulfillment_center_id)}</div>
+                        <div className="text-xs font-mono text-[var(--to-ink-muted)]">
+                          {shortId(r.fulfillment_center_id)}
+                        </div>
                       </div>
                     </td>
 
@@ -334,7 +350,9 @@ export function PcOrgTableView() {
                     <td className="px-3 py-2">
                       <div className="grid">
                         <div className="text-sm">{divisionLabel}</div>
-                        <div className="text-xs font-mono text-[var(--to-ink-muted)]">{shortId(r.division_id)}</div>
+                        <div className="text-xs font-mono text-[var(--to-ink-muted)]">
+                          {shortId(r.division_id)}
+                        </div>
                       </div>
                     </td>
 

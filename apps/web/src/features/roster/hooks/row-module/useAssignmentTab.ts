@@ -5,6 +5,7 @@ import { api, type RosterMasterRow } from "@/shared/lib/api";
 import { loadMasterAction, loadPositionTitlesAction } from "../rosterRowModule.actions";
 
 type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
+type OfficeOption = { id: string; label: string; sublabel?: string };
 
 export function useAssignmentTab(args: {
   open: boolean;
@@ -34,6 +35,11 @@ export function useAssignmentTab(args: {
   const [positionTitlesLoading, setPositionTitlesLoading] = useState(false);
   const [positionTitlesError, setPositionTitlesError] = useState<string | null>(null);
 
+  // offices (scoped to pc_org, active-only)
+  const [officeOptions, setOfficeOptions] = useState<OfficeOption[]>([]);
+  const [officeLoading, setOfficeLoading] = useState(false);
+  const [officeError, setOfficeError] = useState<string | null>(null);
+
   const loadMaster = async () => {
     await loadMasterAction({
       pcOrgId,
@@ -50,6 +56,45 @@ export function useAssignmentTab(args: {
       setError: setPositionTitlesError,
       setRows: setPositionTitles,
     });
+  };
+
+  const loadOffices = async () => {
+    if (!pcOrgId) return;
+
+    setOfficeLoading(true);
+    setOfficeError(null);
+
+    try {
+      const sp = new URLSearchParams();
+      sp.set("pc_org_id", String(pcOrgId));
+
+      const res = await fetch(`/api/meta/offices?${sp.toString()}`, { method: "GET" });
+      const json = await res.json().catch(() => ({} as any));
+
+      if (!res.ok) {
+        const msg = (json as any)?.error || (json as any)?.message || `Failed to load offices (${res.status})`;
+        setOfficeError(String(msg));
+        setOfficeOptions([]);
+        return;
+      }
+
+      const list = Array.isArray((json as any)?.rows) ? (json as any).rows : Array.isArray(json) ? json : [];
+      const rows: OfficeOption[] = list
+        .filter((o: any) => o && (o.id || o.office_id))
+        .map((o: any) => ({
+          id: String(o.id ?? o.office_id),
+          label: String(o.label ?? o.office_name ?? o.name ?? o.id ?? o.office_id),
+          sublabel: o.sublabel != null ? String(o.sublabel) : undefined,
+        }));
+
+      rows.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+      setOfficeOptions(rows);
+    } catch (e: any) {
+      setOfficeError(e?.message ?? "Failed to load offices");
+      setOfficeOptions([]);
+    } finally {
+      setOfficeLoading(false);
+    }
   };
 
   const positionTitleOptions = useMemo(() => {
@@ -94,10 +139,6 @@ export function useAssignmentTab(args: {
     return byAssignment ?? null;
   }, [master, personId, assignmentId]);
 
-  /**
-   * Begin edit: snapshot baseline/draft from current master row.
-   * Also apply a default position title (only if empty), without using effects.
-   */
   function beginEditAssignment() {
     if (!masterForPerson) return;
 
@@ -113,6 +154,11 @@ export function useAssignmentTab(args: {
 
     setAssignmentBaseline(base);
     setAssignmentDraft(draft);
+
+    // ensure office dropdown is hydrated
+    if (!officeOptions.length && !officeLoading) {
+      void loadOffices();
+    }
   }
 
   function cancelEditAssignment() {
@@ -123,7 +169,7 @@ export function useAssignmentTab(args: {
 
   const assignmentDirty = useMemo(() => {
     if (!assignmentBaseline || !assignmentDraft) return false;
-    const keys = ["position_title", "start_date", "end_date", "active", "tech_id"];
+    const keys = ["position_title", "start_date", "end_date", "active", "tech_id", "office_id"];
     return keys.some(
       (k) => String((assignmentBaseline as any)?.[k] ?? "") !== String((assignmentDraft as any)?.[k] ?? "")
     );
@@ -158,7 +204,7 @@ export function useAssignmentTab(args: {
       return;
     }
 
-    const editableKeys = ["position_title", "start_date", "end_date", "active", "tech_id"] as const;
+    const editableKeys = ["position_title", "start_date", "end_date", "active", "tech_id", "office_id"] as const;
     const patch: any = { assignment_id: aid };
 
     for (const k of editableKeys) {
@@ -184,9 +230,6 @@ export function useAssignmentTab(args: {
     try {
       await api.assignmentUpdate(patch);
       setEditingAssignment(false);
-
-      // Refresh master; draft/baseline are no longer auto-synced via effects.
-      // The UI should reflect the updated master row after reload.
       await loadMaster();
     } catch (e: any) {
       setAssignmentErr(e?.message ?? "Failed to save assignment");
@@ -195,26 +238,21 @@ export function useAssignmentTab(args: {
     }
   }
 
-  /**
-   * Lazy-load titles only when needed.
-   * Schedule to avoid "setState inside effect" rule.
-   */
+  // Load titles + offices when tab is relevant
   useEffect(() => {
     if (!open) return;
     if (tab !== "assignment" && tab !== "leadership") return;
 
     const t = window.setTimeout(() => {
       void loadPositionTitles();
+      void loadOffices();
     }, 0);
 
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tab, pcOrgId]);
 
-  /**
-   * Load master on open (hook is self-sufficient).
-   * Schedule to avoid strict lint about state updates inside effect callstack.
-   */
+  // Load master on open
   useEffect(() => {
     if (!open) return;
 
@@ -227,16 +265,13 @@ export function useAssignmentTab(args: {
   }, [open, pcOrgId]);
 
   return {
-    // master
     master,
     masterErr,
     loadingMaster,
     loadMaster,
 
-    // derived
     masterForPerson,
 
-    // edit
     editingAssignment,
     savingAssignment,
     assignmentErr,
@@ -257,5 +292,11 @@ export function useAssignmentTab(args: {
     positionTitlesLoading,
     positionTitleOptions,
     loadPositionTitles,
+
+    // offices
+    officeOptions,
+    officeLoading,
+    officeError,
+    loadOffices,
   };
 }

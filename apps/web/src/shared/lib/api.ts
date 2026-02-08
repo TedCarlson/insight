@@ -83,6 +83,7 @@ export type AssignmentRow = {
   end_date?: string | null; // date (YYYY-MM-DD)
   position_title?: string | null;
   active?: boolean | null;
+  office_id?: UUID | null;
 
   [k: string]: any;
 };
@@ -137,6 +138,9 @@ export type RosterRow = {
   co_name?: string | null;
   co_type?: string | null;
 
+  office_id?: UUID | null;
+  office_name?: string | null;
+
   position_title?: string | null;
   title?: string | null;
   role_title?: string | null;
@@ -169,6 +173,8 @@ export type RosterCurrentFullRow = {
   person_active?: boolean | null;
 
   tech_id?: string | null;
+  office_id?: UUID | null;
+  office_name?: string | null;
   position_title?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -190,6 +196,9 @@ export type RosterMasterRow = {
   pc_org_name?: string | null;
   person_id?: UUID;
   assignment_id?: UUID;
+
+  office_id?: UUID | null;
+  office_name?: string | null;
 
   position_title?: string | null;
   start_date?: string | null;
@@ -216,6 +225,9 @@ export type RosterDrilldownRow = {
   end_date?: string | null;
   active?: boolean | null;
   assignment_active?: boolean | null;
+
+  office_id?: UUID | null;
+  office_name?: string | null;
 
   reports_to_assignment_id?: UUID | null;
   reports_to_person_id?: UUID | null;
@@ -248,6 +260,8 @@ export type RosterRowModuleRow = {
 
   // assignment
   tech_id?: string | null;
+  office_id?: UUID | null;
+  office_name?: string | null;
   start_date?: string | null;
   end_date?: string | null;
   position_title?: string | null;
@@ -751,7 +765,10 @@ private async rpcWrite<T>(
     end_date?: string | null;
     position_title?: string | null;
     active?: boolean | null;
-  }): Promise<AssignmentRow | null> {
+
+    // NEW
+    office_id?: string | null;
+     }): Promise<AssignmentRow | null> {
     const assignment_id = input.assignment_id;
 
     // Non-destructive: only provided keys are updated.
@@ -761,6 +778,9 @@ private async rpcWrite<T>(
       end_date: input.end_date ?? undefined,
       position_title: input.position_title ?? undefined,
       active: input.active ?? undefined,
+
+      // NEW
+      office_id: input.office_id ?? undefined,
     });
 
     const args = this.compactRecord({

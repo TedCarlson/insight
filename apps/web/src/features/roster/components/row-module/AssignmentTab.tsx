@@ -11,39 +11,46 @@ import { Notice } from "@/components/ui/Notice";
 import { KVRow } from "../rosterRowModule.helpers";
 
 type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
+type OfficeOption = { id: string; label: string; sublabel?: string };
+
+function shortId(id: unknown) {
+  if (id == null) return "—";
+  const s = String(id);
+  if (s.length <= 14) return s;
+  return `${s.slice(0, 8)}…${s.slice(-4)}`;
+}
 
 export function AssignmentTab(props: {
-  // errors/loading
   masterErr: string | null;
   assignmentErr: string | null;
   loadingMaster: boolean;
 
-  // master + selection
   masterForPerson: any | null;
   row: any;
 
-  // edit state
   editingAssignment: boolean;
   savingAssignment: boolean;
 
   assignmentDraft: any | null;
 
-  // validation
   assignmentDirty: boolean;
   assignmentValidation: { ok: boolean; msg: string };
 
-  // position titles
   positionTitlesError: string | null;
   positionTitlesLoading: boolean;
   positionTitleOptions: PositionTitleRow[];
   loadPositionTitles: () => void;
 
-  // actions
+  // NEW (passed from hook)
+  officeOptions?: OfficeOption[];
+  officeLoading?: boolean;
+  officeError?: string | null;
+  loadOffices?: () => void;
+
   beginEditAssignment: () => void;
   cancelEditAssignment: () => void;
   saveAssignment: () => void;
 
-  // setters
   setAssignmentDraft: (updater: any) => void;
 }) {
   const {
@@ -61,11 +68,28 @@ export function AssignmentTab(props: {
     positionTitlesLoading,
     positionTitleOptions,
     loadPositionTitles,
+
+    officeOptions = [],
+    officeLoading = false,
+    officeError = null,
+    loadOffices,
+
     beginEditAssignment,
     cancelEditAssignment,
     saveAssignment,
     setAssignmentDraft,
   } = props;
+
+  const officeLabel = (office_id: unknown) => {
+    const id = office_id == null ? "" : String(office_id);
+    if (!id) return "—";
+    const match = officeOptions.find((o) => String(o.id) === id);
+    return match?.label ?? shortId(id);
+  };
+
+  const currentOfficeLabel =
+    (masterForPerson as any)?.office_name ??
+    officeLabel((masterForPerson as any)?.office_id ?? (assignmentDraft as any)?.office_id ?? null);
 
   return (
     <div className="space-y-3">
@@ -112,6 +136,53 @@ export function AssignmentTab(props: {
           <div className="mt-3 text-sm text-[var(--to-ink-muted)]">Loading roster master…</div>
         ) : masterForPerson ? (
           <div className="mt-3 space-y-2">
+            {/* Office */}
+            {editingAssignment ? (
+              <div className="grid grid-cols-12 gap-2 text-sm">
+                <div className="col-span-4 text-[var(--to-ink-muted)]">Office</div>
+                <div className="col-span-8">
+                  {officeError ? (
+                    <div className="mb-2">
+                      <Notice variant="danger" title="Could not load offices">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm">{officeError}</div>
+                          {loadOffices ? (
+                            <Button variant="ghost" onClick={loadOffices} disabled={officeLoading}>
+                              Retry
+                            </Button>
+                          ) : null}
+                        </div>
+                      </Notice>
+                    </div>
+                  ) : null}
+
+                  <Select
+                    value={(assignmentDraft as any)?.office_id ?? ""}
+                    onChange={(e) =>
+                      setAssignmentDraft((a: any) => ({
+                        ...(a ?? {}),
+                        office_id: e.target.value || null,
+                      }))
+                    }
+                    disabled={officeLoading}
+                  >
+                    <option value="">{officeLoading ? "Loading offices…" : "Select an office…"}</option>
+                    {officeOptions.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </Select>
+
+                  <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
+                    Office is controlled (active-only). This writes <code className="px-1">office_id</code> on assignment.
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <KVRow label="Office" value={currentOfficeLabel} />
+            )}
+
             {/* Position title */}
             {editingAssignment ? (
               <div className="grid grid-cols-12 gap-2 text-sm">
@@ -157,7 +228,7 @@ export function AssignmentTab(props: {
               <KVRow label="Position title" value={(masterForPerson as any)?.position_title ?? "—"} />
             )}
 
-            {/* Tech ID (optional) */}
+            {/* Tech ID */}
             {editingAssignment ? (
               <div className="grid grid-cols-12 gap-2 text-sm">
                 <div className="col-span-4 text-[var(--to-ink-muted)]">Tech ID</div>
@@ -177,7 +248,7 @@ export function AssignmentTab(props: {
               <KVRow label="Tech ID" value={(masterForPerson as any)?.tech_id ?? (row as any)?.tech_id ?? "—"} />
             )}
 
-            {/* Start date (required) */}
+            {/* Start date */}
             {editingAssignment ? (
               <div className="grid grid-cols-12 gap-2 text-sm">
                 <div className="col-span-4 text-[var(--to-ink-muted)]">Start date</div>
@@ -199,7 +270,7 @@ export function AssignmentTab(props: {
               <KVRow label="Start date" value={(masterForPerson as any)?.start_date ?? "—"} />
             )}
 
-            {/* End date (optional) */}
+            {/* End date */}
             {editingAssignment ? (
               <div className="grid grid-cols-12 gap-2 text-sm">
                 <div className="col-span-4 text-[var(--to-ink-muted)]">End date</div>
@@ -244,11 +315,14 @@ export function AssignmentTab(props: {
             ) : (
               <KVRow
                 label="Status"
-                value={Boolean((masterForPerson as any)?.active ?? (masterForPerson as any)?.assignment_active) ? "Active" : "Inactive"}
+                value={
+                  Boolean((masterForPerson as any)?.active ?? (masterForPerson as any)?.assignment_active)
+                    ? "Active"
+                    : "Inactive"
+                }
               />
             )}
 
-            {/* Reporting (read-only) */}
             <KVRow label="Reports to" value={(masterForPerson as any)?.reports_to_full_name ?? "—"} />
           </div>
         ) : null}

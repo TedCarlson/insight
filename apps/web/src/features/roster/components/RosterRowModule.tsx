@@ -367,6 +367,10 @@ function RosterRowModuleInner({
               cancelEditAssignment={(assignment as any).cancelEditAssignment}
               saveAssignment={(assignment as any).saveAssignment}
               setAssignmentDraft={(assignment as any).setAssignmentDraft}
+              officeOptions={(assignment as any).officeOptions}
+              officeLoading={(assignment as any).officeLoading}
+              officeError={(assignment as any).officeError}
+              loadOffices={(assignment as any).loadOffices}
             />
           ) : null}
 

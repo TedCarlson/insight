@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Root workspace (pnpm monorepo)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    versioning-strategy: "increase"
+    labels:
+      - "dependencies"
+    ignore:
+      # Optional: ignore noisy major bumps early on
+      # - dependency-name: "*"
+      #   update-types: ["version-update:semver-major"]

@@ -1,4 +1,3 @@
-// apps/web/src/features/roster/add-to-roster/hooks/useAddToRoster.ts
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -43,17 +42,15 @@ function todayISODate(): string {
 }
 
 function isFnMissingError(msg: string) {
-  return /function .* does not exist/i.test(msg) || /schema/i.test(msg) || /not found/i.test(msg);
+  return /function .* does not exist/i.test(msg) || /schema cache/i.test(msg) || /not found/i.test(msg);
 }
 
 export function useAddToRoster() {
   const supabase = useMemo(() => createClient(), []);
 
   const [saving, setSaving] = useState(false);
-
   const [coLoading, setCoLoading] = useState(false);
   const [coOptions, setCoOptions] = useState<CoOption[]>([]);
-
   const loadPromiseRef = useRef<Promise<CoOption[]> | null>(null);
 
   const callRpc = useCallback(
@@ -78,14 +75,13 @@ export function useAddToRoster() {
     [supabase]
   );
 
-  // Only use api->public fallback for functions that truly exist in BOTH schemas.
   const callRpcApiThenPublic = useCallback(
-    async (fn: string, args: Record<string, any>): Promise<any> => {
+    async (fn: string, apiArgs: Record<string, any>, publicArgs: Record<string, any>) => {
       try {
-        return await callRpc(fn, args, "api");
+        return await callRpc(fn, apiArgs, "api");
       } catch (e: any) {
         const msg = String(e?.message ?? "");
-        if (isFnMissingError(msg)) return await callRpc(fn, args, "public");
+        if (isFnMissingError(msg)) return await callRpc(fn, publicArgs, "public");
         throw e;
       }
     },
@@ -172,7 +168,6 @@ export function useAddToRoster() {
           co_code = hit?.co_code ?? null;
         }
 
-        // 1) Upsert person (PUBLIC)
         const personRow = await callRpc(
           "person_upsert",
           {
@@ -195,51 +190,36 @@ export function useAddToRoster() {
         const personId = String(personRow?.person_id ?? personRow?.id ?? draft.person_id ?? "").trim();
         if (!personId) return { ok: false, error: "Upsert succeeded but no person_id was returned." };
 
-        // 2) Start membership (API ONLY — no public fallback because public.add_to_roster does not exist)
+        // add_to_roster is in api (per your allowlist) — send ONLY api args
         await callRpc(
           "add_to_roster",
-          {
-            p_pc_org_id: pcOrgId,
-            p_person_id: personId,
-            p_start_date: todayISODate(),
-
-            // extra shape support (harmless if ignored)
-            pc_org_id: pcOrgId,
-            person_id: personId,
-            start_date: todayISODate(),
-          },
+          { p_pc_org_id: pcOrgId, p_person_id: personId, p_start_date: todayISODate() },
           "api"
         );
 
-        // 3) Optional: Start assignment (api->public fallback is OK because assignment_start exists in both)
         if (startAssignment) {
           const pos = String(positionTitle ?? "").trim() || null;
-
-          await callRpcApiThenPublic("assignment_start", {
-            p_pc_org_id: pcOrgId,
-            p_person_id: personId,
-            p_position_title: pos,
-            p_start_date: todayISODate(),
-            p_office_id: null,
-
-            pc_org_id: pcOrgId,
-            person_id: personId,
-            position_title: pos,
-            start_date: todayISODate(),
-            office_id: null,
-          });
+          await callRpcApiThenPublic(
+            "assignment_start",
+            {
+              p_pc_org_id: pcOrgId,
+              p_person_id: personId,
+              p_position_title: pos,
+              p_start_date: todayISODate(),
+              p_office_id: null,
+            },
+            {
+              pc_org_id: pcOrgId,
+              person_id: personId,
+              position_title: pos,
+              start_date: todayISODate(),
+            }
+          );
         }
 
         return { ok: true, data: { personId } };
       } catch (e: any) {
-        const msg = String(e?.message ?? "Add failed");
-
-        // If api.add_to_roster is genuinely missing, make it obvious (don’t mislead with schema-cache noise)
-        if (isFnMissingError(msg)) {
-          return { ok: false, error: "add_to_roster is missing in schema api (DB/RPC deployment issue)." };
-        }
-
-        return { ok: false, error: msg };
+        return { ok: false, error: String(e?.message ?? "Add failed") };
       } finally {
         setSaving(false);
       }

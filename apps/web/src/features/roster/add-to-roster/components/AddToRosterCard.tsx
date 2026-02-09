@@ -37,11 +37,13 @@ export function AddToRosterCard({
 
   return (
     <>
-      <Card>
+      <Card className="px-3 py-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm font-semibold">Add to roster</div>
-            <div className="text-xs text-[var(--to-ink-muted)]">Search existing people and add membership for this PC.</div>
+            <div className="text-[12px] leading-4 text-[var(--to-ink-muted)]">
+              Search existing people and add membership.
+            </div>
           </div>
 
           <Button
@@ -69,11 +71,6 @@ export function AddToRosterCard({
           >
             Add
           </Button>
-        </div>
-
-        <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
-          PC: <span className="text-[var(--to-ink)]">{pcOrgName ?? pcOrgId ?? "—"}</span>
-          {!enabled ? <span className="ml-2">• locked</span> : null}
         </div>
       </Card>
 

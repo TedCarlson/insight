@@ -38,7 +38,7 @@ const RPC_ALLOWLIST = new Set<string>([
   "permission_revoke",
   "pc_org_eligibility_grant",
   "pc_org_eligibility_revoke",
-  "wizard_process_to_roster",
+  "add_to_roster",
 ]);
 
 type RpcSchema = "api" | "public";
@@ -349,7 +349,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ✅ Wizard must match DB gate (roster_manage)
-    if (fn === "wizard_process_to_roster") {
+    if (fn === "add_to_roster") {
       const scope = ensureOrgScope(pcOrgFromArgs);
       if (!scope.ok) return json(scope.status, scope.body);
 

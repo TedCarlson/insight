@@ -1,13 +1,11 @@
 // apps/web/src/features/roster/pages/RosterPage.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 
 import type { RosterRow } from "@/shared/lib/api";
 import { createClient } from "@/shared/data/supabase/client";
-
-import { AddToRosterCard } from "@/features/roster/add-to-roster/components/AddToRosterCard";
 
 import { useOrg } from "@/state/org";
 import { useSession } from "@/state/session";
@@ -17,7 +15,6 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useToast } from "@/components/ui/Toast";
 import { PageShell } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
-import { Toolbar } from "@/components/ui/Toolbar";
 import { Button } from "@/components/ui/Button";
 import { Notice } from "@/components/ui/Notice";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -27,6 +24,7 @@ import { Select } from "@/components/ui/Select";
 import { RosterTable } from "@/features/roster/components/RosterTable";
 import { RosterRowModule } from "@/features/roster/components/RosterRowModule";
 import { RosterQuickView } from "@/features/roster/components/RosterQuickView";
+import { RosterHeaderCards } from "@/features/roster/components/RosterHeaderCards";
 
 import { pickName } from "@/features/roster/lib/rosterFormat";
 import { useRosterPageData } from "@/features/roster/hooks/useRosterPageData";
@@ -125,16 +123,17 @@ export default function RosterPage() {
     clearFilters,
   } = useRosterFilters({ roster, validatedOrgId });
 
-  const headerRefreshDisabled = orgsLoading || !canLoad || loading || orgMetaLoading;
+  const refreshDisabled = orgsLoading || !canLoad || loading || orgMetaLoading;
 
   const modifyToggleVars =
     effectiveModifyMode === "open"
       ? ({
-        ["--to-toggle-active-bg" as any]: "rgba(249, 115, 22, 0.16)",
-        ["--to-toggle-active-border" as any]: "var(--to-status-warning)",
-        ["--to-toggle-active-ink" as any]: "var(--to-status-warning)",
-      } as CSSProperties)
+          ["--to-toggle-active-bg" as any]: "rgba(249, 115, 22, 0.16)",
+          ["--to-toggle-active-border" as any]: "var(--to-status-warning)",
+          ["--to-toggle-active-ink" as any]: "var(--to-status-warning)",
+        } as CSSProperties)
       : undefined;
+
   const addToRosterDisabled =
     !validatedOrgId ||
     orgsLoading ||
@@ -146,73 +145,17 @@ export default function RosterPage() {
 
   return (
     <PageShell>
-      <Card variant="subtle">
-        <Toolbar
-          left={
-            validatedOrgId ? (
-              <div className="min-w-0 flex items-center gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="min-w-[220px]">
-                    <AddToRosterCard
-                      pcOrgId={validatedOrgId}
-                      pcOrgName={selectedOrgName}
-                      canEdit={canEditRoster}
-                      disabled={addToRosterDisabled}
-                      onAdded={() => {
-                        if (validatedOrgId) void loadAll(validatedOrgId);
-                      }}
-                    />
-                  </div>
-
-                  <Button
-                    variant="secondary"
-                    type="button"
-                    onClick={() => validatedOrgId && void loadAll(validatedOrgId)}
-                    disabled={headerRefreshDisabled}
-                    className="h-8 px-3 text-xs"
-                  >
-                    {loading ? "Refreshing…" : "Refresh"}
-                  </Button>
-                </div>
-
-                <span className="px-2 text-[var(--to-ink-muted)]">•</span>
-
-                <div className="min-w-0 text-sm">
-                  <span className="font-semibold">Roster</span>
-                  <span className="px-2 text-[var(--to-ink-muted)]">•</span>
-                  <span className="text-[var(--to-ink-muted)]">PC #</span>{" "}
-                  <span className="font-semibold">{selectedOrgName ?? "—"}</span>
-                </div>
-              </div>
-            ) : (
-              <div className="text-sm text-[var(--to-ink-muted)]">Select a PC org in the header to load the roster.</div>
-            )
-          }
-          right={
-            validatedOrgId ? (
-              <div className="min-w-0 text-[12px] leading-4 text-[var(--to-ink-muted)] text-right whitespace-nowrap">
-                <span>MSO:</span>{" "}
-                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.mso_name ?? "—"}</span>
-                <span className="px-2">•</span>
-                <span>Division:</span>{" "}
-                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.division_name ?? "—"}</span>
-                <span className="px-2">•</span>
-                <span>Region:</span>{" "}
-                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.region_name ?? "—"}</span>
-                <span className="px-2">•</span>
-                <span>Manager:</span>{" "}
-                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.pc_lead_label ?? "—"}</span>
-                <span className="px-2">•</span>
-                <span>Director:</span>{" "}
-                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.director_label ?? "—"}</span>
-                <span className="px-2">•</span>
-                <span>VP:</span>{" "}
-                <span className="text-[var(--to-ink)]">{orgMetaLoading ? "…" : orgMeta?.vp_label ?? "—"}</span>
-              </div>
-            ) : null
-          }
-        />
-      </Card>
+      <RosterHeaderCards
+        validatedOrgId={validatedOrgId}
+        selectedOrgName={selectedOrgName}
+        canEditRoster={canEditRoster}
+        addToRosterDisabled={addToRosterDisabled}
+        orgMetaLoading={orgMetaLoading}
+        orgMeta={orgMeta}
+        onAdded={() => {
+          if (validatedOrgId) void loadAll(validatedOrgId);
+        }}
+      />
 
       {canLoad && err ? (
         <Notice variant="danger" title="Could not load roster">
@@ -263,15 +206,15 @@ export default function RosterPage() {
                   style={
                     rosterStats.clean
                       ? {
-                        background: "rgba(34, 197, 94, 0.14)",
-                        borderColor: "var(--to-status-success)",
-                        color: "var(--to-status-success)",
-                      }
+                          background: "rgba(34, 197, 94, 0.14)",
+                          borderColor: "var(--to-status-success)",
+                          color: "var(--to-status-success)",
+                        }
                       : {
-                        background: "rgba(249, 115, 22, 0.16)",
-                        borderColor: "var(--to-status-warning)",
-                        color: "var(--to-status-warning)",
-                      }
+                          background: "rgba(249, 115, 22, 0.16)",
+                          borderColor: "var(--to-status-warning)",
+                          color: "var(--to-status-warning)",
+                        }
                   }
                 >
                   {rosterStats.clean ? "Ready" : "Incomplete"}
@@ -362,6 +305,17 @@ export default function RosterPage() {
               ))}
             </Select>
 
+            {/* Refresh now lives with the table controls */}
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => validatedOrgId && void loadAll(validatedOrgId)}
+              disabled={refreshDisabled}
+              className="h-10 px-3 text-xs"
+            >
+              {loading ? "Refreshing…" : "Refresh"}
+            </Button>
+
             {anyFiltersActive && (
               <Button type="button" variant="secondary" className="h-10 px-3 text-xs" onClick={clearFilters}>
                 Clear
@@ -431,13 +385,7 @@ export default function RosterPage() {
         ) : null}
       </Card>
 
-      <RosterQuickView
-        open={quickOpen}
-        row={quickRow}
-        pos={quickPos}
-        onClose={closeQuick}
-        toastPush={toast.push}
-      />
+      <RosterQuickView open={quickOpen} row={quickRow} pos={quickPos} onClose={closeQuick} toastPush={toast.push} />
 
       {validatedOrgId ? (
         <RosterRowModule

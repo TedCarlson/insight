@@ -42,7 +42,7 @@ function todayISODate(): string {
 }
 
 function isFnMissingError(msg: string) {
-  return /function .* does not exist/i.test(msg) || /schema cache/i.test(msg) || /not found/i.test(msg);
+  return /missing in schema/i.test(msg) || /schema cache/i.test(msg) || /function .* does not exist/i.test(msg) || /not found/i.test(msg);
 }
 
 export function useAddToRoster() {
@@ -168,6 +168,7 @@ export function useAddToRoster() {
           co_code = hit?.co_code ?? null;
         }
 
+        // 1) Upsert person (PUBLIC)
         const personRow = await callRpc(
           "person_upsert",
           {
@@ -190,15 +191,17 @@ export function useAddToRoster() {
         const personId = String(personRow?.person_id ?? personRow?.id ?? draft.person_id ?? "").trim();
         if (!personId) return { ok: false, error: "Upsert succeeded but no person_id was returned." };
 
-        // add_to_roster is in api (per your allowlist) — send ONLY api args
-        await callRpc(
+        // 2) Start membership (API → PUBLIC fallback)
+        await callRpcApiThenPublic(
           "add_to_roster",
           { p_pc_org_id: pcOrgId, p_person_id: personId, p_start_date: todayISODate() },
-          "api"
+          { pc_org_id: pcOrgId, person_id: personId, start_date: todayISODate() }
         );
 
+        // 3) Optional: Start assignment (API → PUBLIC fallback)
         if (startAssignment) {
           const pos = String(positionTitle ?? "").trim() || null;
+
           await callRpcApiThenPublic(
             "assignment_start",
             {

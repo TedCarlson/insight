@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { DailyRowFromApi, Frame, GridRow, StateResource, TicketInputs } from "../types";
 import { detectFrameLocal, todayISODateLocal } from "@/features/locate/daily-log/lib/date";
 import { toNum } from "@/features/locate/daily-log/lib/math";
@@ -13,10 +13,20 @@ function makeInputs(_defaultManpower: number): TicketInputs {
   };
 }
 
+function rowHasAnyInput(r: GridRow): boolean {
+  return (
+    r.inputs.manpower_count !== "" ||
+    r.inputs.tickets_received_am !== "" ||
+    r.inputs.tickets_closed_pm !== "" ||
+    r.inputs.project_tickets !== "" ||
+    r.inputs.emergency_tickets !== ""
+  );
+}
+
 export function useLocateDailyLogState(args: {
   serverRows: Record<string, DailyRowFromApi>;
   stateByCode: Record<string, StateResource>;
-  frameExternal?: Frame; // optional if you ever want data hook to own it
+  frameExternal?: Frame;
 }) {
   const [logDate, setLogDate] = useState<string>(() => todayISODateLocal());
   const [frame, setFrame] = useState<Frame>(() => detectFrameLocal());
@@ -27,30 +37,79 @@ export function useLocateDailyLogState(args: {
     null | { state_code: string; state_name: string; default_manpower: number; backlog_seed: number }
   >(null);
 
+  // Dirty tracking
+  const [dirtyByCode, setDirtyByCode] = useState<Record<string, boolean>>({});
+
+  const markDirty = useCallback((state_code: string) => {
+    const code = String(state_code).toUpperCase();
+    setDirtyByCode((d) => (d[code] ? d : { ...d, [code]: true }));
+  }, []);
+
+  const resetDirty = useCallback(() => {
+    setDirtyByCode({});
+  }, []);
+
+  const isDirtyAny = useCallback(() => {
+    return Object.values(dirtyByCode).some(Boolean);
+  }, [dirtyByCode]);
+
+  const setDirtyFromRows = useCallback((nextRows: GridRow[]) => {
+    const next: Record<string, boolean> = {};
+    for (const r of nextRows) {
+      if (rowHasAnyInput(r)) next[String(r.state_code).toUpperCase()] = true;
+    }
+    setDirtyByCode(next);
+  }, []);
+
   const ticketsLabel = frame === "AM" ? "Tickets received (AM)" : "Tickets closed (PM)";
   const gridStyle = useMemo(
     () => ({ gridTemplateColumns: "140px 110px 140px 140px 140px 140px 120px 120px 110px 90px 90px" }),
     []
   );
 
-  function updateRow(state_code: string, patch: Partial<TicketInputs>) {
-    setRows((prev) => prev.map((r) => (r.state_code !== state_code ? r : { ...r, inputs: { ...r.inputs, ...patch } })));
-  }
+  const updateRow = useCallback(
+    (state_code: string, patch: Partial<TicketInputs>) => {
+      const code = String(state_code).toUpperCase();
+      setRows((prev) =>
+        prev.map((r) =>
+          String(r.state_code).toUpperCase() !== code ? r : { ...r, inputs: { ...r.inputs, ...patch } }
+        )
+      );
+      markDirty(code);
+    },
+    [markDirty]
+  );
 
-  function currentTotal(inputs: TicketInputs): number {
-    return frame === "AM" ? toNum(inputs.tickets_received_am) : toNum(inputs.tickets_closed_pm);
-  }
+  const currentTotal = useCallback(
+    (inputs: TicketInputs): number => {
+      return frame === "AM" ? toNum(inputs.tickets_received_am) : toNum(inputs.tickets_closed_pm);
+    },
+    [frame]
+  );
 
-  function getBacklogStart(state_code: string): number {
-    return args.serverRows[state_code]?.backlog_start ?? 0;
-  }
+  const getBacklogStart = useCallback(
+    (state_code: string): number => {
+      const code = String(state_code).toUpperCase();
+      return args.serverRows[code]?.backlog_start ?? 0;
+    },
+    [args.serverRows]
+  );
 
-  function projectedBacklogEnd(state_code: string, inputs: TicketInputs): number {
-    const start = getBacklogStart(state_code);
-    const received = frame === "AM" ? toNum(inputs.tickets_received_am) : args.serverRows[state_code]?.tickets_received_am ?? 0;
-    const closed = frame === "PM" ? toNum(inputs.tickets_closed_pm) : args.serverRows[state_code]?.tickets_closed_pm ?? 0;
-    return start + received - closed;
-  }
+  const projectedBacklogEnd = useCallback(
+    (state_code: string, inputs: TicketInputs): number => {
+      const code = String(state_code).toUpperCase();
+      const start = getBacklogStart(code);
+
+      const received =
+        frame === "AM" ? toNum(inputs.tickets_received_am) : args.serverRows[code]?.tickets_received_am ?? 0;
+
+      const closed =
+        frame === "PM" ? toNum(inputs.tickets_closed_pm) : args.serverRows[code]?.tickets_closed_pm ?? 0;
+
+      return start + received - closed;
+    },
+    [args.serverRows, frame, getBacklogStart]
+  );
 
   const filteredRows = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -58,18 +117,10 @@ export function useLocateDailyLogState(args: {
     return rows.filter((r) => r.state_name.toLowerCase().includes(q) || r.state_code.toLowerCase().includes(q));
   }, [rows, filter]);
 
-
-  function validate(): string[] {
+  const validate = useCallback((): string[] => {
     const errs: string[] = [];
     for (const r of rows) {
-      const any =
-        r.inputs.manpower_count !== "" ||
-        r.inputs.tickets_received_am !== "" ||
-        r.inputs.tickets_closed_pm !== "" ||
-        r.inputs.project_tickets !== "" ||
-        r.inputs.emergency_tickets !== "";
-
-      if (!any) continue;
+      if (!rowHasAnyInput(r)) continue;
 
       const manpower = toNum(r.inputs.manpower_count);
       const total = currentTotal(r.inputs);
@@ -82,22 +133,15 @@ export function useLocateDailyLogState(args: {
       if (emer < 0) errs.push(`${r.state_name}: emergency tickets cannot be negative`);
     }
     return errs;
-  }
+  }, [rows, currentTotal]);
 
-  function buildPayloadRows() {
+  const buildPayloadRows = useCallback(() => {
     return rows
       .map((r) => {
-        const any =
-          r.inputs.manpower_count !== "" ||
-          r.inputs.tickets_received_am !== "" ||
-          r.inputs.tickets_closed_pm !== "" ||
-          r.inputs.project_tickets !== "" ||
-          r.inputs.emergency_tickets !== "";
-
-        if (!any) return null;
+        if (!rowHasAnyInput(r)) return null;
 
         return {
-          state_code: r.state_code,
+          state_code: String(r.state_code).toUpperCase(),
           manpower_count: toNum(r.inputs.manpower_count),
           tickets_total: frame === "AM" ? toNum(r.inputs.tickets_received_am) : toNum(r.inputs.tickets_closed_pm),
           project_tickets: toNum(r.inputs.project_tickets),
@@ -111,17 +155,21 @@ export function useLocateDailyLogState(args: {
       project_tickets: number;
       emergency_tickets: number;
     }>;
-  }
+  }, [rows, frame]);
 
-  function openBaselineModalFor(state_code: string, state_name: string) {
-    const sr = args.stateByCode[state_code];
-    setEditing({
-      state_code,
-      state_name,
-      default_manpower: sr?.default_manpower ?? 0,
-      backlog_seed: sr?.backlog_seed ?? 0,
-    });
-  }
+  const openBaselineModalFor = useCallback(
+    (state_code: string, state_name: string) => {
+      const code = String(state_code).toUpperCase();
+      const sr = args.stateByCode[code];
+      setEditing({
+        state_code: code,
+        state_name,
+        default_manpower: sr?.default_manpower ?? 0,
+        backlog_seed: sr?.backlog_seed ?? 0,
+      });
+    },
+    [args.stateByCode]
+  );
 
   return {
     // core state
@@ -148,6 +196,12 @@ export function useLocateDailyLogState(args: {
     buildPayloadRows,
     getBacklogStart,
     projectedBacklogEnd,
-    makeInputs, // exported for orchestrator load-to-grid
+    makeInputs,
+
+    // dirty management
+    dirtyByCode,
+    isDirtyAny,
+    resetDirty,
+    setDirtyFromRows,
   };
 }

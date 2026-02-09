@@ -75,7 +75,7 @@ export default function LoginClient() {
   return (
     <main className="mx-auto max-w-md p-6">
       <h1 className="text-2xl font-semibold text-[var(--to-ink)]">Login</h1>
-      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">Sign in with your password or request a magic link.</p>
+      <p className="mt-2 text-sm text-[var(--to-ink-muted)]">Sign in with your password or request a code.</p>
 
       <div className="mt-6 grid gap-3">
         <label className="grid gap-1">

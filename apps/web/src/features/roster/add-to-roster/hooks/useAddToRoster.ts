@@ -32,7 +32,6 @@ export type OnboardPersonDraft = {
 };
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
-
 type RpcSchema = "api" | "public";
 
 function todayISODate(): string {
@@ -58,7 +57,7 @@ export function useAddToRoster() {
   const loadPromiseRef = useRef<Promise<CoOption[]> | null>(null);
 
   const callRpc = useCallback(
-    async (fn: string, args: Record<string, any>, schema: RpcSchema = "api"): Promise<any> => {
+    async (fn: string, args: Record<string, any>, schema: RpcSchema): Promise<any> => {
       const { data: sessionRes } = await supabase.auth.getSession();
       const accessToken = sessionRes?.session?.access_token ?? "";
 
@@ -79,7 +78,7 @@ export function useAddToRoster() {
     [supabase]
   );
 
-  // ✅ New: try schema=api first, fallback to schema=public ONLY for "function missing" style errors
+  // Only use api->public fallback for functions that truly exist in BOTH schemas.
   const callRpcApiThenPublic = useCallback(
     async (fn: string, args: Record<string, any>): Promise<any> => {
       try {
@@ -196,19 +195,23 @@ export function useAddToRoster() {
         const personId = String(personRow?.person_id ?? personRow?.id ?? draft.person_id ?? "").trim();
         if (!personId) return { ok: false, error: "Upsert succeeded but no person_id was returned." };
 
-        // 2) Start membership (API → PUBLIC fallback)
-        await callRpcApiThenPublic("add_to_roster", {
-          p_pc_org_id: pcOrgId,
-          p_person_id: personId,
-          p_start_date: todayISODate(),
+        // 2) Start membership (API ONLY — no public fallback because public.add_to_roster does not exist)
+        await callRpc(
+          "add_to_roster",
+          {
+            p_pc_org_id: pcOrgId,
+            p_person_id: personId,
+            p_start_date: todayISODate(),
 
-          // extra shape support (harmless if ignored)
-          pc_org_id: pcOrgId,
-          person_id: personId,
-          start_date: todayISODate(),
-        });
+            // extra shape support (harmless if ignored)
+            pc_org_id: pcOrgId,
+            person_id: personId,
+            start_date: todayISODate(),
+          },
+          "api"
+        );
 
-        // 3) Optional: Start assignment (API → PUBLIC fallback)
+        // 3) Optional: Start assignment (api->public fallback is OK because assignment_start exists in both)
         if (startAssignment) {
           const pos = String(positionTitle ?? "").trim() || null;
 
@@ -229,7 +232,14 @@ export function useAddToRoster() {
 
         return { ok: true, data: { personId } };
       } catch (e: any) {
-        return { ok: false, error: e?.message ?? "Add failed" };
+        const msg = String(e?.message ?? "Add failed");
+
+        // If api.add_to_roster is genuinely missing, make it obvious (don’t mislead with schema-cache noise)
+        if (isFnMissingError(msg)) {
+          return { ok: false, error: "add_to_roster is missing in schema api (DB/RPC deployment issue)." };
+        }
+
+        return { ok: false, error: msg };
       } finally {
         setSaving(false);
       }

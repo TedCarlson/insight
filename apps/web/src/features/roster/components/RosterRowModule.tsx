@@ -108,8 +108,8 @@ function RosterRowModuleInner({
     pcOrgId,
     personId: personId ? String(personId) : null,
     assignmentId: assignmentId ? String(assignmentId) : null,
-    canManage: Boolean(canManage),
-    modifyMode: (modifyMode ?? "locked") as "open" | "locked",
+    canManage,
+    modifyMode,
   });
 
   const leadership = useLeadershipTab({

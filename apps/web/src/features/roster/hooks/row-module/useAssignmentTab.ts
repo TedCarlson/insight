@@ -1,14 +1,13 @@
 // apps/web/src/features/roster/hooks/row-module/useAssignmentTab.ts
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
-import { api, type RosterMasterRow } from "@/shared/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { type RosterMasterRow } from "@/shared/lib/api";
 import { loadMasterAction, loadPositionTitlesAction } from "../rosterRowModule.actions";
 import { createClient } from "@/shared/data/supabase/client";
 
 type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
 type OfficeOption = { id: string; label: string; sublabel?: string };
-
 type RpcSchema = "api" | "public";
 
 function todayISODate(): string {
@@ -19,16 +18,26 @@ function todayISODate(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function isActiveAssignmentRow(r: any) {
+  const end = String(r?.end_date ?? "").trim();
+  const active = r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true;
+  return !end && Boolean(active);
+}
+
+function normalizeOpt(v: unknown): string | null {
+  const s = String(v ?? "").trim();
+  return s ? s : null;
+}
+
 export function useAssignmentTab(args: {
   open: boolean;
   tab: "assignment" | "leadership" | "person" | "org" | "invite";
   pcOrgId: string;
-
   personId: string | null;
   assignmentId: string | null;
 
-  // ✅ gating for lifecycle buttons
-  canManage: boolean; // roster_manage OR owner
+  // passed from row module
+  canManage: boolean;
   modifyMode: "open" | "locked";
 }) {
   const { open, tab, pcOrgId, personId, assignmentId, canManage, modifyMode } = args;
@@ -48,7 +57,7 @@ export function useAssignmentTab(args: {
   const [assignmentBaseline, setAssignmentBaseline] = useState<any | null>(null);
   const [assignmentDraft, setAssignmentDraft] = useState<any | null>(null);
 
-  // lifecycle (NEW)
+  // lifecycle
   const [startingAssignment, setStartingAssignment] = useState(false);
   const [endingAssignment, setEndingAssignment] = useState(false);
 
@@ -57,13 +66,13 @@ export function useAssignmentTab(args: {
   const [positionTitlesLoading, setPositionTitlesLoading] = useState(false);
   const [positionTitlesError, setPositionTitlesError] = useState<string | null>(null);
 
-  // offices (scoped to pc_org, active-only)
+  // offices
   const [officeOptions, setOfficeOptions] = useState<OfficeOption[]>([]);
   const [officeLoading, setOfficeLoading] = useState(false);
   const [officeError, setOfficeError] = useState<string | null>(null);
 
   /**
-   * Session-aware RPC caller (uses your /api/org/rpc allowlist + permission gate)
+   * Session-aware RPC caller (hits /api/org/rpc allowlist + gatekeeper)
    */
   const callRpc = useCallback(
     async (fn: string, rpcArgs: Record<string, any> | null, schema: RpcSchema = "api") => {
@@ -81,8 +90,8 @@ export function useAssignmentTab(args: {
       });
 
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error ?? `RPC failed: ${fn}`);
-      return json?.data ?? null;
+      if (!res.ok) throw new Error(json?.error ?? json?.message ?? `RPC failed: ${fn}`);
+      return (json as any)?.data ?? null;
     },
     [supabase]
   );
@@ -134,7 +143,10 @@ export function useAssignmentTab(args: {
           sublabel: o.sublabel != null ? String(o.sublabel) : undefined,
         }));
 
-      rows.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+      rows.sort((a: OfficeOption, b: OfficeOption) =>
+        a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
+      );
+
       setOfficeOptions(rows);
     } catch (e: any) {
       setOfficeError(e?.message ?? "Failed to load offices");
@@ -161,32 +173,28 @@ export function useAssignmentTab(args: {
     return ci ?? null;
   }, [positionTitleOptions]);
 
-  // computed active master row for this person/assignment
+  // active assignment row for this person
   const masterForPerson = useMemo(() => {
     if (!master || !master.length || !personId) return null;
 
     const pid = String(personId);
     const aid = assignmentId ? String(assignmentId) : null;
 
-    const isActive = (r: any) => {
-      const end = String(r?.end_date ?? "").trim();
-      const active = r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true;
-      return !end && Boolean(active);
-    };
-
     const activeMatches = (master as any[])
       .filter((r) => String(r.person_id) === pid)
-      .filter(isActive);
+      .filter(isActiveAssignmentRow);
 
     if (activeMatches.length > 0) return activeMatches[0] as any;
 
     const byAssignment =
-      (aid ? (master as any[]).find((r) => String(r.assignment_id) === aid && isActive(r)) : null) ?? null;
+      (aid ? (master as any[]).find((r) => String(r.assignment_id) === aid && isActiveAssignmentRow(r)) : null) ?? null;
 
     return byAssignment ?? null;
   }, [master, personId, assignmentId]);
 
-  function beginEditAssignment() {
+  const canLifecycle = canManage && modifyMode === "open";
+
+  const beginEditAssignment = useCallback(() => {
     if (!masterForPerson) return;
 
     setAssignmentErr(null);
@@ -202,21 +210,18 @@ export function useAssignmentTab(args: {
     setAssignmentBaseline(base);
     setAssignmentDraft(draft);
 
-    // ensure office dropdown is hydrated
-    if (!officeOptions.length && !officeLoading) {
-      void loadOffices();
-    }
-  }
+    if (!officeOptions.length && !officeLoading) void loadOffices();
+  }, [masterForPerson, defaultPositionTitle, officeOptions.length, officeLoading, loadOffices]);
 
-  function cancelEditAssignment() {
+  const cancelEditAssignment = useCallback(() => {
     setAssignmentErr(null);
     setEditingAssignment(false);
     setAssignmentDraft(assignmentBaseline ?? masterForPerson);
-  }
+  }, [assignmentBaseline, masterForPerson]);
 
   const assignmentDirty = useMemo(() => {
     if (!assignmentBaseline || !assignmentDraft) return false;
-    const keys = ["position_title", "start_date", "end_date", "active", "tech_id", "office_id"];
+    const keys = ["position_title", "start_date", "end_date", "active", "tech_id", "office_id"] as const;
     return keys.some(
       (k) => String((assignmentBaseline as any)?.[k] ?? "") !== String((assignmentDraft as any)?.[k] ?? "")
     );
@@ -233,13 +238,13 @@ export function useAssignmentTab(args: {
     return { ok: true as const, msg: "" };
   }, [assignmentDraft]);
 
-  async function saveAssignment() {
+  const saveAssignment = useCallback(async () => {
     if (!assignmentDraft) {
       setEditingAssignment(false);
       return;
     }
 
-    const aid = String((assignmentDraft as any)?.assignment_id ?? assignmentId ?? "");
+    const aid = String((assignmentDraft as any)?.assignment_id ?? assignmentId ?? "").trim();
     if (!aid) {
       setAssignmentErr("No assignment_id to save.");
       setEditingAssignment(false);
@@ -251,8 +256,15 @@ export function useAssignmentTab(args: {
       return;
     }
 
+    if (!pcOrgId) {
+      setAssignmentErr("Missing pc_org_id.");
+      return;
+    }
+
     const editableKeys = ["position_title", "start_date", "end_date", "active", "tech_id", "office_id"] as const;
-    const patch: any = { assignment_id: aid };
+
+    // always include for gatekeeper scoping
+    const p_patch: any = { pc_org_id: pcOrgId };
 
     for (const k of editableKeys) {
       const before = (assignmentBaseline as any)?.[k] ?? null;
@@ -264,10 +276,12 @@ export function useAssignmentTab(args: {
         return;
       }
 
-      if (String(before ?? "") !== String(after ?? "")) patch[k] = after;
+      if (String(before ?? "") !== String(after ?? "")) p_patch[k] = after;
     }
 
-    if (Object.keys(patch).length <= 1) {
+    // nothing changed (besides pc_org_id)
+    const changedKeys = Object.keys(p_patch).filter((k) => k !== "pc_org_id");
+    if (changedKeys.length === 0) {
       setEditingAssignment(false);
       return;
     }
@@ -275,7 +289,12 @@ export function useAssignmentTab(args: {
     setSavingAssignment(true);
     setAssignmentErr(null);
     try {
-      await api.assignmentUpdate(patch);
+      await callRpc(
+        "assignment_patch",
+        { p_assignment_id: aid, p_patch },
+        "public"
+      );
+
       setEditingAssignment(false);
       await loadMaster();
     } catch (e: any) {
@@ -283,138 +302,105 @@ export function useAssignmentTab(args: {
     } finally {
       setSavingAssignment(false);
     }
-  }
+  }, [
+    assignmentDraft,
+    assignmentId,
+    assignmentValidation,
+    pcOrgId,
+    assignmentBaseline,
+    callRpc,
+    loadMaster,
+  ]);
 
-  /**
-   * ✅ NEW: Start assignment (when membership exists but assignment is missing)
-   * Assumes public.assignment_patch supports INSERT when p_assignment_id is null.
-   * NOTE: UI buttons will gate on canManage + modifyMode === "open".
-   */
   const startAssignment = useCallback(async () => {
     setAssignmentErr(null);
 
-    if (!canManage || modifyMode !== "open") {
-      setAssignmentErr("Modify must be Open and you must have roster_manage to start an assignment.");
-      return;
-    }
-
-    if (!pcOrgId) {
-      setAssignmentErr("Missing pcOrgId.");
-      return;
-    }
-    if (!personId) {
-      setAssignmentErr("Missing personId.");
-      return;
-    }
-
-    // Guard: don’t start if one is already active
-    if (masterForPerson) {
-      setAssignmentErr("Active assignment already exists.");
-      return;
-    }
+    if (!canLifecycle) return setAssignmentErr("Not allowed (requires Modify=open and roster_manage).");
+    if (!pcOrgId) return setAssignmentErr("Missing pc_org_id.");
+    if (!personId) return setAssignmentErr("Missing person_id.");
+    if (masterForPerson) return setAssignmentErr("Active assignment already exists.");
 
     setStartingAssignment(true);
     try {
-      // best-effort defaults
       const pos = defaultPositionTitle ?? "Technician";
       const start = todayISODate();
 
-      // tech_id best-effort: user can edit later
-      const techIdBest = String((assignmentDraft as any)?.tech_id ?? "").trim() || "";
-
-      // office best-effort: keep null unless user chooses
-      const officeIdBest = String((assignmentDraft as any)?.office_id ?? "").trim() || null;
-
-      await callRpc(
-        "assignment_patch",
-        {
-          p_assignment_id: null,
-          p_patch: {
-            pc_org_id: pcOrgId,
-            person_id: personId,
-            start_date: start,
-            end_date: null,
-            active: true,
-            position_title: pos,
-            tech_id: techIdBest || null,
-            office_id: officeIdBest,
+      // Prefer canonical RPC, fallback to patch-insert only if your SQL supports it.
+      try {
+        await callRpc(
+          "assignment_start",
+          { pc_org_id: pcOrgId, person_id: personId, start_date: start, position_title: pos },
+          "public"
+        );
+      } catch {
+        await callRpc(
+          "assignment_patch",
+          {
+            p_assignment_id: null,
+            p_patch: {
+              pc_org_id: pcOrgId,
+              person_id: personId,
+              start_date: start,
+              end_date: null,
+              active: true,
+              position_title: pos,
+              tech_id: null,
+              office_id: null,
+            },
           },
-        },
-        "public"
-      );
+          "public"
+        );
+      }
 
       setEditingAssignment(false);
       setAssignmentDraft(null);
       setAssignmentBaseline(null);
-
       await loadMaster();
     } catch (e: any) {
       setAssignmentErr(e?.message ?? "Failed to start assignment");
     } finally {
       setStartingAssignment(false);
     }
-  }, [
-    canManage,
-    modifyMode,
-    pcOrgId,
-    personId,
-    masterForPerson,
-    defaultPositionTitle,
-    assignmentDraft,
-    callRpc,
-    loadMaster,
-  ]);
+  }, [canLifecycle, pcOrgId, personId, masterForPerson, defaultPositionTitle, callRpc, loadMaster]);
 
-  /**
-   * ✅ NEW: End assignment (sets end_date + active=false)
-   */
   const endAssignment = useCallback(async () => {
     setAssignmentErr(null);
 
-    if (!canManage || modifyMode !== "open") {
-      setAssignmentErr("Modify must be Open and you must have roster_manage to end an assignment.");
-      return;
-    }
+    if (!canLifecycle) return setAssignmentErr("Not allowed (requires Modify=open and roster_manage).");
 
     const active = masterForPerson as any;
     const aid = String(active?.assignment_id ?? assignmentId ?? "").trim();
-
-    if (!aid) {
-      setAssignmentErr("No active assignment to end.");
-      return;
-    }
+    if (!aid) return setAssignmentErr("No active assignment to end.");
+    if (!pcOrgId) return setAssignmentErr("Missing pc_org_id.");
 
     setEndingAssignment(true);
     try {
-      await callRpc(
-        "assignment_patch",
-        {
-          p_assignment_id: aid,
-          p_patch: {
-            end_date: todayISODate(),
-            active: false,
-          },
-        },
-        "public"
-      );
+      const end = todayISODate();
+
+      try {
+        await callRpc(
+          "assignment_end",
+          { pc_org_id: pcOrgId, assignment_id: aid, end_date: end },
+          "public"
+        );
+      } catch {
+        await callRpc(
+          "assignment_patch",
+          { p_assignment_id: aid, p_patch: { pc_org_id: pcOrgId, end_date: end, active: false } },
+          "public"
+        );
+      }
 
       setEditingAssignment(false);
       setAssignmentDraft(null);
       setAssignmentBaseline(null);
-
       await loadMaster();
     } catch (e: any) {
       setAssignmentErr(e?.message ?? "Failed to end assignment");
     } finally {
       setEndingAssignment(false);
     }
-  }, [canManage, modifyMode, masterForPerson, assignmentId, callRpc, loadMaster]);
-
-  // If we start/end assignment, ensure edit mode is off (safety)
-  useEffect(() => {
-    if (startingAssignment || endingAssignment) return;
-    // no-op; placeholder for future side-effects
-  }, [startingAssignment, endingAssignment]);
+  }, [canLifecycle, masterForPerson, assignmentId, pcOrgId, callRpc, loadMaster]);
 
   // Load titles + offices when tab is relevant
   useEffect(() => {
@@ -427,8 +413,7 @@ export function useAssignmentTab(args: {
     }, 0);
 
     return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, tab, pcOrgId]);
+  }, [open, tab, loadPositionTitles, loadOffices]);
 
   // Load master on open
   useEffect(() => {
@@ -439,35 +424,34 @@ export function useAssignmentTab(args: {
     }, 0);
 
     return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, pcOrgId]);
+  }, [open, loadMaster]);
 
   return {
+    // gates for UI
+    canManage,
+    modifyMode,
+
+    // master
     master,
     masterErr,
     loadingMaster,
     loadMaster,
-
     masterForPerson,
 
+    // edit
     editingAssignment,
     savingAssignment,
     assignmentErr,
-
     assignmentBaseline,
     assignmentDraft,
     setAssignmentDraft,
-
     assignmentDirty,
     assignmentValidation,
-
     beginEditAssignment,
     cancelEditAssignment,
     saveAssignment,
 
-    // ✅ NEW lifecycle API
-    canManage,
-    modifyMode,
+    // lifecycle
     startAssignment,
     endAssignment,
     startingAssignment,

@@ -1,23 +1,31 @@
 // apps/web/src/app/api/org/rpc/_rpc.handlers.ts
-import type { RpcSchema } from "./_rpc.types";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import { json } from "./_rpc.utils";
-import { makeServiceClient, withSchema } from "./_rpc.authz";
+import type { RpcSchema } from "./_rpc.types";
 
-export async function handleOnboardGlobalRead(args: {
-  rid: string;
-  fn: string;
-  schema: RpcSchema;
-  rpcArgs: any;
-}) {
-  const { rid, fn, schema, rpcArgs } = args;
-
-  const admin = makeServiceClient();
-  if (!admin) {
-    return json(500, { ok: false, request_id: rid, error: "Service client unavailable", code: "missing_service_key" });
+function makeServiceClient() {
+  try {
+    return supabaseAdmin();
+  } catch {
+    return null;
   }
+}
 
-  const adminRpcClient: any = withSchema(admin, schema);
-  const { data, error } = rpcArgs ? await adminRpcClient.rpc(fn, rpcArgs) : await adminRpcClient.rpc(fn);
+function adminRpcClient(admin: any, schema: RpcSchema) {
+  return schema === "api" ? (admin as any).schema("api") : admin;
+}
+
+export async function handleDefaultRpcAsUser(args: {
+  rid: string;
+  supabaseUser: any;
+  schema: RpcSchema;
+  fn: string;
+  rpcArgs: Record<string, any> | null;
+}) {
+  const { rid, supabaseUser, schema, fn, rpcArgs } = args;
+
+  const rpcClient: any = schema === "api" ? (supabaseUser as any).schema("api") : supabaseUser;
+  const { data, error } = rpcArgs ? await rpcClient.rpc(fn, rpcArgs) : await rpcClient.rpc(fn);
 
   if (error) {
     return json(500, {
@@ -32,21 +40,14 @@ export async function handleOnboardGlobalRead(args: {
     });
   }
 
-  return json(200, {
-    ok: true,
-    request_id: rid,
-    build: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.VERCEL_GIT_COMMIT_REF ?? "local",
-    fn,
-    schema,
-    data,
-  });
+  return json(200, { ok: true, request_id: rid, fn, schema, data });
 }
 
-export async function handlePersonUpsertServiceRole(args: {
+export async function handleOnboardGlobalRead(args: {
   rid: string;
-  fn: "person_upsert";
-  schema: RpcSchema; // caller may pass "public" and that's ok
-  rpcArgs: any;
+  fn: string;
+  schema: RpcSchema;
+  rpcArgs: Record<string, any> | null;
 }) {
   const { rid, fn, schema, rpcArgs } = args;
 
@@ -55,8 +56,40 @@ export async function handlePersonUpsertServiceRole(args: {
     return json(500, { ok: false, request_id: rid, error: "Service client unavailable", code: "missing_service_key" });
   }
 
-  const adminRpcClient: any = withSchema(admin, schema);
-  const { data, error } = rpcArgs ? await adminRpcClient.rpc(fn, rpcArgs) : await adminRpcClient.rpc(fn);
+  const client: any = adminRpcClient(admin, schema);
+  const { data, error } = rpcArgs ? await client.rpc(fn, rpcArgs) : await client.rpc(fn);
+
+  if (error) {
+    return json(500, {
+      ok: false,
+      request_id: rid,
+      error: error.message,
+      code: (error as any)?.code ?? "rpc_failed",
+      details: (error as any)?.details ?? null,
+      hint: (error as any)?.hint ?? null,
+      fn,
+      schema,
+    });
+  }
+
+  return json(200, { ok: true, request_id: rid, fn, schema, data });
+}
+
+export async function handlePersonUpsertServiceRole(args: {
+  rid: string;
+  fn: string;
+  schema: RpcSchema;
+  rpcArgs: Record<string, any> | null;
+}) {
+  const { rid, fn, schema, rpcArgs } = args;
+
+  const admin = makeServiceClient();
+  if (!admin) {
+    return json(500, { ok: false, request_id: rid, error: "Service client unavailable", code: "missing_service_key" });
+  }
+
+  const client: any = adminRpcClient(admin, schema);
+  const { data, error } = rpcArgs ? await client.rpc(fn, rpcArgs) : await client.rpc(fn);
 
   if (error) {
     return json(500, {
@@ -76,7 +109,7 @@ export async function handlePersonPcOrgEndAssociation(args: {
   rid: string;
   person_id: string;
   pc_org_id: string;
-  end_date: string; // already normalized
+  end_date: string;
 }) {
   const { rid, person_id, pc_org_id, end_date } = args;
 
@@ -100,17 +133,20 @@ export async function handlePersonPcOrgEndAssociation(args: {
   return json(200, { ok: true, request_id: rid, data: { ok: true, end_date, updated: updatedRows[0] } });
 }
 
-export async function handleDefaultRpcAsUser(args: {
+export async function handleAddToRosterServiceRole(args: {
   rid: string;
-  supabaseUser: any;
   schema: RpcSchema;
-  fn: string;
-  rpcArgs: any;
+  rpcArgs: Record<string, any> | null;
 }) {
-  const { rid, supabaseUser, schema, fn, rpcArgs } = args;
+  const { rid, schema, rpcArgs } = args;
 
-  const rpcClient: any = withSchema(supabaseUser, schema);
-  const { data, error } = rpcArgs ? await rpcClient.rpc(fn, rpcArgs) : await rpcClient.rpc(fn);
+  const admin = makeServiceClient();
+  if (!admin) {
+    return json(500, { ok: false, request_id: rid, error: "Service client unavailable", code: "missing_service_key" });
+  }
+
+  const client: any = adminRpcClient(admin, schema);
+  const { data, error } = rpcArgs ? await client.rpc("add_to_roster", rpcArgs) : await client.rpc("add_to_roster");
 
   if (error) {
     return json(500, {
@@ -120,17 +156,10 @@ export async function handleDefaultRpcAsUser(args: {
       code: (error as any)?.code ?? "rpc_failed",
       details: (error as any)?.details ?? null,
       hint: (error as any)?.hint ?? null,
-      fn,
+      fn: "add_to_roster",
       schema,
     });
   }
 
-  return json(200, {
-    ok: true,
-    request_id: rid,
-    build: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.VERCEL_GIT_COMMIT_REF ?? "local",
-    fn,
-    schema,
-    data,
-  });
+  return json(200, { ok: true, request_id: rid, fn: "add_to_roster", schema, data });
 }

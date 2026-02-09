@@ -17,24 +17,13 @@ import {
   handleOnboardGlobalRead,
   handlePersonPcOrgEndAssociation,
   handlePersonUpsertServiceRole,
+  handleAddToRosterServiceRole,
 } from "./_rpc.handlers";
 
 export const runtime = "nodejs";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-
-/**
- * Functions that are allowed to default pc_org_id from the user's selected org (non-elevated only).
- * - For elevated users, cross-org is possible, so we REQUIRE explicit pc_org_id to prevent accidents.
- */
-const DEFAULT_TO_SELECTED_ORG_FNS = new Set<string>([
-  "add_to_roster",
-  "assignment_start",
-  "assignment_end",
-  "assignment_patch",
-  "person_pc_org_end_association", // (still uses explicit args path, but safe to list)
-]);
 
 export async function POST(req: NextRequest) {
   const rid = reqId();
@@ -79,61 +68,28 @@ export async function POST(req: NextRequest) {
 
     const userId = user.id;
 
-    // ✅ Selected org MUST be read via service role to avoid RLS surprises
     const selectedPcOrgId = await getSelectedPcOrgIdService(userId);
-
-    // Owner check (runs as user so you can keep owner logic centralized in DB)
     const owner = await isOwnerUserClient(supabaseUser);
-
-    // ✅ Elevated role bypass (multi-org capable, but still must pass can_access_pc_org(target))
     const elevated = owner || (await hasAnyRoleService(userId, ["admin", "dev", "director", "vp"]));
 
     const ensureOrgScope = makeEnsureOrgScope({ rid, selectedPcOrgId, elevated });
 
-    // Extract org id from args (covers both api/public patterns, including nested p_patch.pc_org_id)
     const pcOrgFromArgs = extractPcOrgIdFromArgs(rpcArgs);
 
-    /**
-     * ✅ Resolve "effective" org for this call.
-     * - If args contains pc_org_id => use it
-     * - Else if fn is allowed to default and user is NOT elevated => use selectedPcOrgId
-     * - Else => empty (will be rejected by gates that require org)
-     */
-    const effectivePcOrgId =
-      pcOrgFromArgs ||
-      (!elevated && DEFAULT_TO_SELECTED_ORG_FNS.has(fn) ? String(selectedPcOrgId ?? "").trim() : "");
-
-    /**
-     * ✅ Elevated cross-org safety:
-     * If user is elevated AND this fn requires org scoping, require explicit pc_org_id.
-     * (Prevents accidental writes to "selected org" when an admin intended another org.)
-     */
-    if (elevated && DEFAULT_TO_SELECTED_ORG_FNS.has(fn) && !pcOrgFromArgs) {
-      return json(400, {
-        ok: false,
-        request_id: rid,
-        error: "Missing pc_org_id (required for elevated users)",
-        code: "missing_pc_org_id",
-        fn,
-      });
-    }
-
-    // ✅ For elevated users acting cross-org: still require baseline access to target org
-    if (effectivePcOrgId && elevated) {
-      const ok = await canAccessPcOrgUserClient(supabaseUser, effectivePcOrgId);
+    if (pcOrgFromArgs && elevated) {
+      const ok = await canAccessPcOrgUserClient(supabaseUser, pcOrgFromArgs);
       if (!ok) {
         return json(403, {
           ok: false,
           request_id: rid,
           error: "Forbidden",
           code: "forbidden",
-          debug: { reason: "elevated_but_no_baseline_access", pc_org_id: effectivePcOrgId },
+          debug: { reason: "elevated_but_no_baseline_access", pc_org_id: pcOrgFromArgs },
         });
       }
     }
 
-    // ✅ Global visibility for Onboard reads:
-    // If you can roster_manage your SELECTED org, you can read the global onboard pool.
+    // Global onboard reads
     if (ONBOARD_GLOBAL_READS.has(fn)) {
       if (!selectedPcOrgId && !elevated) {
         return json(409, { ok: false, request_id: rid, error: "No selected org", code: "no_selected_pc_org" });
@@ -156,17 +112,17 @@ export async function POST(req: NextRequest) {
       return handleOnboardGlobalRead({ rid, fn, schema, rpcArgs });
     }
 
-    // ✅ Fine-grained permission gates for sensitive RPCs (must have explicit org, or selected if non-elevated + allowed)
+    // Sensitive permission RPCs (execute as user)
     if (
       fn === "permission_grant" ||
       fn === "permission_revoke" ||
       fn === "pc_org_eligibility_grant" ||
       fn === "pc_org_eligibility_revoke"
     ) {
-      const scope = ensureOrgScope(effectivePcOrgId);
+      const scope = ensureOrgScope(pcOrgFromArgs);
       if (!scope.ok) return json(scope.status, scope.body);
 
-      const allowed = await requirePermission(supabaseUser, effectivePcOrgId, "permissions_manage");
+      const allowed = await requirePermission(supabaseUser, pcOrgFromArgs, "permissions_manage");
       if (!allowed) {
         return json(403, {
           ok: false,
@@ -174,56 +130,22 @@ export async function POST(req: NextRequest) {
           error: "Forbidden",
           code: "forbidden",
           required_permission: "permissions_manage",
-          pc_org_id: effectivePcOrgId,
+          pc_org_id: pcOrgFromArgs,
         });
       }
 
       return handleDefaultRpcAsUser({ rid, supabaseUser, schema, fn, rpcArgs });
     }
 
-    // ✅ Roster-manage gated writes (membership + assignment lifecycle + assignment_patch)
-    if (fn === "add_to_roster" || fn === "assignment_start" || fn === "assignment_end" || fn === "assignment_patch") {
-      const scope = ensureOrgScope(effectivePcOrgId);
-      if (!scope.ok) return json(scope.status, scope.body);
-
-      const allowed = await requirePermission(supabaseUser, effectivePcOrgId, "roster_manage");
-      if (!allowed) {
-        return json(403, {
-          ok: false,
-          request_id: rid,
-          error: "Forbidden",
-          code: "forbidden",
-          required_permission: "roster_manage",
-          pc_org_id: effectivePcOrgId,
-        });
-      }
-
-      return handleDefaultRpcAsUser({ rid, supabaseUser, schema, fn, rpcArgs });
-    }
-
-    /**
-     * Direct table write: person_pc_org_end_association
-     * Still service-role, still permission-gated by roster_manage.
-     *
-     * NOTE: This handler expects pc_org_id in the direct args.
-     * If you want to allow omitting pc_org_id here (default to selected org),
-     * you can safely set pc_org_id = effectivePcOrgId when rpcArgs.pc_org_id is empty.
-     */
+    // Direct table write: end association (service role)
     if (schema === "public" && fn === "person_pc_org_end_association") {
       const person_id = String(rpcArgs?.person_id ?? "").trim();
-      const pc_org_id_direct = String(rpcArgs?.pc_org_id ?? "").trim();
-      const pc_org_id = pc_org_id_direct || effectivePcOrgId;
-
+      const pc_org_id = String(rpcArgs?.pc_org_id ?? "").trim();
       const end_date_raw = rpcArgs?.end_date ? String(rpcArgs.end_date).trim() : "";
       const end_date = end_date_raw ? end_date_raw : new Date().toISOString().slice(0, 10);
 
       if (!person_id || !pc_org_id) {
-        return json(400, {
-          ok: false,
-          request_id: rid,
-          error: "Missing person_id or pc_org_id",
-          code: "missing_keys",
-        });
+        return json(400, { ok: false, request_id: rid, error: "Missing person_id or pc_org_id", code: "missing_keys" });
       }
 
       const scope = ensureOrgScope(pc_org_id);
@@ -244,7 +166,7 @@ export async function POST(req: NextRequest) {
       return handlePersonPcOrgEndAssociation({ rid, person_id, pc_org_id, end_date });
     }
 
-    // person_upsert: service role execution but still roster_manage gated (by SELECTED org)
+    // person_upsert: service role (selected org gate)
     if (fn === "person_upsert") {
       if (!selectedPcOrgId && !elevated) {
         return json(409, { ok: false, request_id: rid, error: "No selected org", code: "no_selected_pc_org" });
@@ -257,7 +179,33 @@ export async function POST(req: NextRequest) {
       return handlePersonUpsertServiceRole({ rid, fn: "person_upsert", schema, rpcArgs });
     }
 
-    // Default: execute RPC as the real user (auth.uid() present)
+    // Roster-manage gated writes
+    if (fn === "add_to_roster" || fn === "assignment_start" || fn === "assignment_end" || fn === "assignment_patch") {
+      const scope = ensureOrgScope(pcOrgFromArgs);
+      if (!scope.ok) return json(scope.status, scope.body);
+
+      const allowed = await requirePermission(supabaseUser, pcOrgFromArgs, "roster_manage");
+      if (!allowed) {
+        return json(403, {
+          ok: false,
+          request_id: rid,
+          error: "Forbidden",
+          code: "forbidden",
+          required_permission: "roster_manage",
+          pc_org_id: pcOrgFromArgs,
+        });
+      }
+
+      // ✅ Key fix: membership is written via service role to avoid table permission denied
+      if (fn === "add_to_roster") {
+        return handleAddToRosterServiceRole({ rid, schema, rpcArgs });
+      }
+
+      // keep everything else as-is (user execution)
+      return handleDefaultRpcAsUser({ rid, supabaseUser, schema, fn, rpcArgs });
+    }
+
+    // Default: execute as user
     return handleDefaultRpcAsUser({ rid, supabaseUser, schema, fn, rpcArgs });
   } catch (e: any) {
     return json(500, { ok: false, request_id: rid, error: e?.message ?? "Unknown error", code: "exception" });

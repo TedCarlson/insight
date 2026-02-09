@@ -28,6 +28,7 @@ export function AssignmentTab(props: {
   masterForPerson: any | null;
   row: any;
 
+  // existing edit flow
   editingAssignment: boolean;
   savingAssignment: boolean;
 
@@ -41,7 +42,7 @@ export function AssignmentTab(props: {
   positionTitleOptions: PositionTitleRow[];
   loadPositionTitles: () => void;
 
-  // NEW (passed from hook)
+  // office picker
   officeOptions?: OfficeOption[];
   officeLoading?: boolean;
   officeError?: string | null;
@@ -52,6 +53,14 @@ export function AssignmentTab(props: {
   saveAssignment: () => void;
 
   setAssignmentDraft: (updater: any) => void;
+
+  // ✅ NEW: assignment lifecycle controls (start/end)
+  canManage?: boolean; // roster_manage OR owner
+  modifyMode?: "open" | "locked";
+  startingAssignment?: boolean;
+  endingAssignment?: boolean;
+  startAssignment?: () => void;
+  endAssignment?: () => void;
 }) {
   const {
     masterErr,
@@ -59,11 +68,13 @@ export function AssignmentTab(props: {
     loadingMaster,
     masterForPerson,
     row,
+
     editingAssignment,
     savingAssignment,
     assignmentDraft,
     assignmentDirty,
     assignmentValidation,
+
     positionTitlesError,
     positionTitlesLoading,
     positionTitleOptions,
@@ -78,7 +89,17 @@ export function AssignmentTab(props: {
     cancelEditAssignment,
     saveAssignment,
     setAssignmentDraft,
+
+    canManage = false,
+    modifyMode = "locked",
+    startingAssignment = false,
+    endingAssignment = false,
+    startAssignment,
+    endAssignment,
   } = props;
+
+  const hasActiveAssignment = Boolean(masterForPerson);
+  const canShowLifecycleButtons = canManage && modifyMode === "open";
 
   const officeLabel = (office_id: unknown) => {
     const id = office_id == null ? "" : String(office_id);
@@ -109,27 +130,56 @@ export function AssignmentTab(props: {
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="text-sm text-[var(--to-ink-muted)]">
-              Assignment is the source of truth for position + dates. Edit inline to confirm hydration and write.
+              Assignment is the source of truth for position + dates.
             </div>
-            {!masterForPerson && !loadingMaster ? (
-              <div className="text-sm text-[var(--to-ink-muted)]">No active assignment found (end date is set).</div>
+
+            {!hasActiveAssignment && !loadingMaster ? (
+              <div className="text-sm text-[var(--to-ink-muted)]">
+                No active assignment found. Start one to enable assignment editing + full roster actions.
+              </div>
             ) : null}
           </div>
 
-          {!editingAssignment ? (
-            <Button onClick={beginEditAssignment} disabled={!masterForPerson || loadingMaster}>
-              Edit
-            </Button>
-          ) : (
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={cancelEditAssignment} disabled={savingAssignment}>
-                Cancel
+          <div className="flex items-center gap-2">
+            {/* ✅ NEW: Start/End Assignment buttons (only when Modify=open + roster_manage) */}
+            {canShowLifecycleButtons ? (
+              hasActiveAssignment ? (
+                <Button
+                  variant="secondary"
+                  onClick={endAssignment}
+                  disabled={loadingMaster || savingAssignment || endingAssignment || !endAssignment}
+                  title={!endAssignment ? "endAssignment handler not wired yet" : undefined}
+                >
+                  {endingAssignment ? "Ending…" : "End assignment"}
+                </Button>
+              ) : (
+                <Button
+                  variant="secondary"
+                  onClick={startAssignment}
+                  disabled={loadingMaster || savingAssignment || startingAssignment || !startAssignment}
+                  title={!startAssignment ? "startAssignment handler not wired yet" : undefined}
+                >
+                  {startingAssignment ? "Starting…" : "Start assignment"}
+                </Button>
+              )
+            ) : null}
+
+            {/* Existing edit flow remains (safe) */}
+            {!editingAssignment ? (
+              <Button onClick={beginEditAssignment} disabled={!hasActiveAssignment || loadingMaster}>
+                Edit
               </Button>
-              <Button onClick={saveAssignment} disabled={savingAssignment || !assignmentDirty || !assignmentValidation.ok}>
-                {savingAssignment ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          )}
+            ) : (
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={cancelEditAssignment} disabled={savingAssignment}>
+                  Cancel
+                </Button>
+                <Button onClick={saveAssignment} disabled={savingAssignment || !assignmentDirty || !assignmentValidation.ok}>
+                  {savingAssignment ? "Saving…" : "Save"}
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
 
         {loadingMaster && !masterForPerson ? (
@@ -175,7 +225,7 @@ export function AssignmentTab(props: {
                   </Select>
 
                   <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-                    Office is controlled (active-only). This writes <code className="px-1">office_id</code> on assignment.
+                    Writes <code className="px-1">office_id</code> on assignment.
                   </div>
                 </div>
               </div>
@@ -220,7 +270,7 @@ export function AssignmentTab(props: {
                   </Select>
 
                   <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-                    (This references <code className="px-1">position_title</code> lookup; save will fail if invalid.)
+                    (Save will fail if invalid.)
                   </div>
                 </div>
               </div>

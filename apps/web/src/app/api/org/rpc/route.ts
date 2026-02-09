@@ -26,14 +26,6 @@ const RPC_ALLOWLIST = new Set<string>([
   "person_picker",
   "person_get",
 
-  // ----- Permission reads (UI gates) -----
-  "has_pc_org_permission",
-  "has_any_pc_org_permission",
-  "permissions_for_org",
-  "effective_permissions_for_org",
-  "effective_permissions_for_org_admin",
-  "is_app_owner",
-
   // ----- Writes -----
   // public schema writes
   "person_upsert",
@@ -47,6 +39,10 @@ const RPC_ALLOWLIST = new Set<string>([
   "pc_org_eligibility_grant",
   "pc_org_eligibility_revoke",
   "add_to_roster",
+
+  // ✅ Assignment lifecycle (new canonical contract)
+  "assignment_start",
+  "assignment_end",
 ]);
 
 type RpcSchema = "api" | "public";
@@ -194,16 +190,16 @@ export async function POST(req: NextRequest) {
 
     const userId = user.id;
 
-    // ✅ Selected org MUST be read via service role to avoid RLS surprises
+    // Selected org MUST be read via service role to avoid RLS surprises
     const selectedPcOrgId = await getSelectedPcOrgIdService(userId);
 
-    // Owner check (runs as user so you can keep owner logic centralized in DB)
+    // Owner check (runs as user so owner logic stays in DB)
     const owner = await isOwnerUserClient(supabaseUser);
 
-    // ✅ Elevated role bypass (multi-org capable, but still must pass can_access_pc_org(target))
+    // Elevated role bypass (multi-org capable, but still must pass can_access_pc_org(target))
     const elevated = owner || (await hasAnyRoleService(userId, ["admin", "dev", "director", "vp"]));
 
-    // ✅ Global visibility for Onboard reads:
+    // Global visibility for Onboard reads:
     // If you can roster_manage your SELECTED org, you can read the global onboard pool.
     if (ONBOARD_GLOBAL_READS.has(fn)) {
       if (!selectedPcOrgId && !elevated) {
@@ -234,7 +230,6 @@ export async function POST(req: NextRequest) {
         };
       }
 
-      // If you require a selected org, enforce it for non-elevated users.
       if (requiredSelected && !selectedPcOrgId && !elevated) {
         return {
           ok: false as const,
@@ -256,9 +251,11 @@ export async function POST(req: NextRequest) {
     }
 
     // Extract org id from args (covers both api/public patterns)
-    const pcOrgFromArgs = String((args?.pc_org_id ?? args?.p_pc_org_id ?? args?.pcOrgId ?? args?.pc_org) ?? "").trim();
+    const pcOrgFromArgs = String(
+      (args?.pc_org_id ?? args?.p_pc_org_id ?? args?.pcOrgId ?? args?.pc_org) ?? ""
+    ).trim();
 
-    // ✅ For elevated users acting cross-org: still require baseline access to target org
+    // For elevated users acting cross-org: still require baseline access to target org
     if (pcOrgFromArgs && elevated) {
       const ok = await canAccessPcOrgUserClient(supabaseUser, pcOrgFromArgs);
       if (!ok) {
@@ -303,7 +300,12 @@ export async function POST(req: NextRequest) {
 
       const admin = makeServiceClient();
       if (!admin) {
-        return json(500, { ok: false, request_id: rid, error: "Service client unavailable", code: "missing_service_key" });
+        return json(500, {
+          ok: false,
+          request_id: rid,
+          error: "Service client unavailable",
+          code: "missing_service_key",
+        });
       }
 
       const { data: updatedRows, error: updateErr } = await admin
@@ -356,20 +358,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ✅ Permission read RPCs must be org-scoped (but do NOT recurse requirePermission)
-    if (
-      fn === "has_pc_org_permission" ||
-      fn === "has_any_pc_org_permission" ||
-      fn === "permissions_for_org" ||
-      fn === "effective_permissions_for_org" ||
-      fn === "effective_permissions_for_org_admin"
-    ) {
-      const scope = ensureOrgScope(pcOrgFromArgs);
-      if (!scope.ok) return json(scope.status, scope.body);
-    }
-
-    // ✅ Wizard must match DB gate (roster_manage)
-    if (fn === "add_to_roster") {
+    // ✅ Roster-manage gated writes (membership + assignment lifecycle)
+    if (fn === "add_to_roster" || fn === "assignment_start" || fn === "assignment_end") {
       const scope = ensureOrgScope(pcOrgFromArgs);
       if (!scope.ok) return json(scope.status, scope.body);
 
@@ -386,7 +376,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ✅ Global onboard reads execute via service role (permission-gated above)
+    // Global onboard reads execute via service role (permission-gated above)
     if (ONBOARD_GLOBAL_READS.has(fn)) {
       const admin = makeServiceClient();
       if (!admin) {

@@ -24,15 +24,7 @@ import { useLeadershipTab } from "../hooks/row-module/useLeadershipTab";
 import { useInviteTab } from "../hooks/row-module/useInviteTab";
 
 /** ---- Static component (must be outside render) ---- */
-function Pill({
-  label,
-  ok,
-  title,
-}: {
-  label: string;
-  ok: boolean;
-  title: string;
-}) {
+function Pill({ label, ok, title }: { label: string; ok: boolean; title: string }) {
   return (
     <span
       className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold"
@@ -61,9 +53,14 @@ export function RosterRowModule(props: {
   pcOrgId: string;
   pcOrgName?: string | null;
   row: RosterRow | null;
+
+  // ✅ NEW: permission + modify mode (passed down from RosterPage)
+  canManage?: boolean; // roster_manage OR owner
+  modifyMode?: "open" | "locked";
 }) {
-  const rowKey =
-    String((props.row as any)?.person_id ?? (props.row as any)?.assignment_id ?? (props.row as any)?.tech_id ?? "");
+  const rowKey = String(
+    (props.row as any)?.person_id ?? (props.row as any)?.assignment_id ?? (props.row as any)?.tech_id ?? ""
+  );
   const mountKey = `${props.open ? "open" : "closed"}:${props.pcOrgId}:${rowKey}`;
 
   return <RosterRowModuleInner key={mountKey} {...props} />;
@@ -75,12 +72,18 @@ function RosterRowModuleInner({
   pcOrgId,
   pcOrgName,
   row,
+
+  canManage = false,
+  modifyMode = "locked",
 }: {
   open: boolean;
   onClose: () => void;
   pcOrgId: string;
   pcOrgName?: string | null;
   row: RosterRow | null;
+
+  canManage?: boolean;
+  modifyMode?: "open" | "locked";
 }) {
   const [tab, setTab] = useState<TabKey>("person");
 
@@ -98,12 +101,15 @@ function RosterRowModuleInner({
     personId: personId ? String(personId) : null,
   });
 
+  // ✅ FIX: new hook signature requires canManage + modifyMode
   const assignment = useAssignmentTab({
     open,
     tab,
     pcOrgId,
     personId: personId ? String(personId) : null,
     assignmentId: assignmentId ? String(assignmentId) : null,
+    canManage: Boolean(canManage),
+    modifyMode: (modifyMode ?? "locked") as "open" | "locked",
   });
 
   const leadership = useLeadershipTab({
@@ -112,8 +118,8 @@ function RosterRowModuleInner({
     row,
     personId: personId ? String(personId) : null,
     assignmentId: assignmentId ? String(assignmentId) : null,
-    master: assignment.master ?? null,
-    masterForPerson: assignment.masterForPerson as any,
+    master: (assignment as any).master ?? null,
+    masterForPerson: (assignment as any).masterForPerson as any,
     positionTitles: (assignment as any).positionTitleOptions ?? [],
   });
 
@@ -155,9 +161,7 @@ function RosterRowModuleInner({
         !!r?.assignment_reporting_id ||
         !!r?.reporting_id;
 
-      const end = String(
-        (r?.reports_to_end_date ?? r?.assignment_reporting_end_date ?? r?.reporting_end_date ?? "")
-      ).trim();
+      const end = String(r?.reports_to_end_date ?? r?.assignment_reporting_end_date ?? r?.reporting_end_date ?? "").trim();
 
       return hasLeader && !end;
     }).length;
@@ -258,6 +262,15 @@ function RosterRowModuleInner({
       return;
     }
   };
+
+  // ✅ lifecycle handlers (safe: only pass if present)
+  const startAssignment =
+    typeof (assignment as any)?.startAssignment === "function" ? (assignment as any).startAssignment : undefined;
+  const endAssignment =
+    typeof (assignment as any)?.endAssignment === "function" ? (assignment as any).endAssignment : undefined;
+
+  const startingAssignment = Boolean((assignment as any)?.startingAssignment);
+  const endingAssignment = Boolean((assignment as any)?.endingAssignment);
 
   return (
     <Modal
@@ -371,6 +384,14 @@ function RosterRowModuleInner({
               officeLoading={(assignment as any).officeLoading}
               officeError={(assignment as any).officeError}
               loadOffices={(assignment as any).loadOffices}
+              // ✅ gates come from module props (not the hook)
+              canManage={Boolean(canManage)}
+              modifyMode={(modifyMode ?? "locked") as "open" | "locked"}
+              // ✅ lifecycle from hook (if present)
+              startAssignment={startAssignment}
+              endAssignment={endAssignment}
+              startingAssignment={startingAssignment}
+              endingAssignment={endingAssignment}
             />
           ) : null}
 

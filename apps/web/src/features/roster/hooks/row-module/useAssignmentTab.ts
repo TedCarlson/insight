@@ -1,11 +1,23 @@
+// apps/web/src/features/roster/hooks/row-module/useAssignmentTab.ts
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { api, type RosterMasterRow } from "@/shared/lib/api";
 import { loadMasterAction, loadPositionTitlesAction } from "../rosterRowModule.actions";
+import { createClient } from "@/shared/data/supabase/client";
 
 type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
 type OfficeOption = { id: string; label: string; sublabel?: string };
+
+type RpcSchema = "api" | "public";
+
+function todayISODate(): string {
+  const d = new Date();
+  const yyyy = String(d.getFullYear());
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 export function useAssignmentTab(args: {
   open: boolean;
@@ -14,8 +26,14 @@ export function useAssignmentTab(args: {
 
   personId: string | null;
   assignmentId: string | null;
+
+  // ✅ gating for lifecycle buttons
+  canManage: boolean; // roster_manage OR owner
+  modifyMode: "open" | "locked";
 }) {
-  const { open, tab, pcOrgId, personId, assignmentId } = args;
+  const { open, tab, pcOrgId, personId, assignmentId, canManage, modifyMode } = args;
+
+  const supabase = useMemo(() => createClient(), []);
 
   // master
   const [master, setMaster] = useState<RosterMasterRow[] | null>(null);
@@ -30,6 +48,10 @@ export function useAssignmentTab(args: {
   const [assignmentBaseline, setAssignmentBaseline] = useState<any | null>(null);
   const [assignmentDraft, setAssignmentDraft] = useState<any | null>(null);
 
+  // lifecycle (NEW)
+  const [startingAssignment, setStartingAssignment] = useState(false);
+  const [endingAssignment, setEndingAssignment] = useState(false);
+
   // position titles
   const [positionTitles, setPositionTitles] = useState<PositionTitleRow[]>([]);
   const [positionTitlesLoading, setPositionTitlesLoading] = useState(false);
@@ -40,25 +62,50 @@ export function useAssignmentTab(args: {
   const [officeLoading, setOfficeLoading] = useState(false);
   const [officeError, setOfficeError] = useState<string | null>(null);
 
-  const loadMaster = async () => {
+  /**
+   * Session-aware RPC caller (uses your /api/org/rpc allowlist + permission gate)
+   */
+  const callRpc = useCallback(
+    async (fn: string, rpcArgs: Record<string, any> | null, schema: RpcSchema = "api") => {
+      const { data: sessionRes } = await supabase.auth.getSession();
+      const accessToken = sessionRes?.session?.access_token ?? "";
+
+      const res = await fetch("/api/org/rpc", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "content-type": "application/json",
+          ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({ schema, fn, args: rpcArgs }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error ?? `RPC failed: ${fn}`);
+      return json?.data ?? null;
+    },
+    [supabase]
+  );
+
+  const loadMaster = useCallback(async () => {
     await loadMasterAction({
       pcOrgId,
       setLoading: setLoadingMaster,
       setErr: setMasterErr,
       setRows: setMaster,
     });
-  };
+  }, [pcOrgId]);
 
-  const loadPositionTitles = async () => {
+  const loadPositionTitles = useCallback(async () => {
     await loadPositionTitlesAction({
       pcOrgId,
       setLoading: setPositionTitlesLoading,
       setError: setPositionTitlesError,
       setRows: setPositionTitles,
     });
-  };
+  }, [pcOrgId]);
 
-  const loadOffices = async () => {
+  const loadOffices = useCallback(async () => {
     if (!pcOrgId) return;
 
     setOfficeLoading(true);
@@ -95,7 +142,7 @@ export function useAssignmentTab(args: {
     } finally {
       setOfficeLoading(false);
     }
-  };
+  }, [pcOrgId]);
 
   const positionTitleOptions = useMemo(() => {
     const list = [...(positionTitles ?? [])];
@@ -238,6 +285,137 @@ export function useAssignmentTab(args: {
     }
   }
 
+  /**
+   * ✅ NEW: Start assignment (when membership exists but assignment is missing)
+   * Assumes public.assignment_patch supports INSERT when p_assignment_id is null.
+   * NOTE: UI buttons will gate on canManage + modifyMode === "open".
+   */
+  const startAssignment = useCallback(async () => {
+    setAssignmentErr(null);
+
+    if (!canManage || modifyMode !== "open") {
+      setAssignmentErr("Modify must be Open and you must have roster_manage to start an assignment.");
+      return;
+    }
+
+    if (!pcOrgId) {
+      setAssignmentErr("Missing pcOrgId.");
+      return;
+    }
+    if (!personId) {
+      setAssignmentErr("Missing personId.");
+      return;
+    }
+
+    // Guard: don’t start if one is already active
+    if (masterForPerson) {
+      setAssignmentErr("Active assignment already exists.");
+      return;
+    }
+
+    setStartingAssignment(true);
+    try {
+      // best-effort defaults
+      const pos = defaultPositionTitle ?? "Technician";
+      const start = todayISODate();
+
+      // tech_id best-effort: user can edit later
+      const techIdBest = String((assignmentDraft as any)?.tech_id ?? "").trim() || "";
+
+      // office best-effort: keep null unless user chooses
+      const officeIdBest = String((assignmentDraft as any)?.office_id ?? "").trim() || null;
+
+      await callRpc(
+        "assignment_patch",
+        {
+          p_assignment_id: null,
+          p_patch: {
+            pc_org_id: pcOrgId,
+            person_id: personId,
+            start_date: start,
+            end_date: null,
+            active: true,
+            position_title: pos,
+            tech_id: techIdBest || null,
+            office_id: officeIdBest,
+          },
+        },
+        "public"
+      );
+
+      setEditingAssignment(false);
+      setAssignmentDraft(null);
+      setAssignmentBaseline(null);
+
+      await loadMaster();
+    } catch (e: any) {
+      setAssignmentErr(e?.message ?? "Failed to start assignment");
+    } finally {
+      setStartingAssignment(false);
+    }
+  }, [
+    canManage,
+    modifyMode,
+    pcOrgId,
+    personId,
+    masterForPerson,
+    defaultPositionTitle,
+    assignmentDraft,
+    callRpc,
+    loadMaster,
+  ]);
+
+  /**
+   * ✅ NEW: End assignment (sets end_date + active=false)
+   */
+  const endAssignment = useCallback(async () => {
+    setAssignmentErr(null);
+
+    if (!canManage || modifyMode !== "open") {
+      setAssignmentErr("Modify must be Open and you must have roster_manage to end an assignment.");
+      return;
+    }
+
+    const active = masterForPerson as any;
+    const aid = String(active?.assignment_id ?? assignmentId ?? "").trim();
+
+    if (!aid) {
+      setAssignmentErr("No active assignment to end.");
+      return;
+    }
+
+    setEndingAssignment(true);
+    try {
+      await callRpc(
+        "assignment_patch",
+        {
+          p_assignment_id: aid,
+          p_patch: {
+            end_date: todayISODate(),
+            active: false,
+          },
+        },
+        "public"
+      );
+
+      setEditingAssignment(false);
+      setAssignmentDraft(null);
+      setAssignmentBaseline(null);
+
+      await loadMaster();
+    } catch (e: any) {
+      setAssignmentErr(e?.message ?? "Failed to end assignment");
+    } finally {
+      setEndingAssignment(false);
+    }
+  }, [canManage, modifyMode, masterForPerson, assignmentId, callRpc, loadMaster]);
+
+  // If we start/end assignment, ensure edit mode is off (safety)
+  useEffect(() => {
+    if (startingAssignment || endingAssignment) return;
+    // no-op; placeholder for future side-effects
+  }, [startingAssignment, endingAssignment]);
+
   // Load titles + offices when tab is relevant
   useEffect(() => {
     if (!open) return;
@@ -286,6 +464,14 @@ export function useAssignmentTab(args: {
     beginEditAssignment,
     cancelEditAssignment,
     saveAssignment,
+
+    // ✅ NEW lifecycle API
+    canManage,
+    modifyMode,
+    startAssignment,
+    endAssignment,
+    startingAssignment,
+    endingAssignment,
 
     // titles
     positionTitlesError,

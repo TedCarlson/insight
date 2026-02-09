@@ -10,24 +10,13 @@ import { TextInput } from "@/components/ui/TextInput";
 import { useToast } from "@/components/ui/Toast";
 
 import { PersonSearch } from "@/features/roster/add-to-roster/components/PersonSearch";
-import {
-  useAddToRoster,
-  type OnboardPersonDraft,
-  type CoOption,
-} from "@/features/roster/add-to-roster/hooks/useAddToRoster";
-import {
-  usePersonSearch,
-  type PersonHit,
-} from "@/features/roster/add-to-roster/hooks/usePersonSearch";
-import {
-  formatPersonTitle,
-  formatPersonSubtitle,
-  markMatches,
-} from "@/features/roster/add-to-roster/lib/personSearchFormat";
+import { useAddToRoster, type OnboardPersonDraft, type CoOption } from "@/features/roster/add-to-roster/hooks/useAddToRoster";
+import { usePersonSearch, type PersonHit } from "@/features/roster/add-to-roster/hooks/usePersonSearch";
+import { formatPersonTitle, formatPersonSubtitle, markMatches } from "@/features/roster/add-to-roster/lib/personSearchFormat";
 
 import { createClient } from "@/shared/data/supabase/client";
 import { fetchActiveMembershipOrgByPersonIds } from "@/shared/lib/activeRoster";
-import { resolveActiveLob, lobLabel, type Lob } from "@/shared/lob"; // if no index.ts: "@/shared/lob/lob"
+import { resolveActiveLob, lobLabel, type Lob } from "@/shared/lob";
 
 type Props = {
   open: boolean;
@@ -97,20 +86,19 @@ export function AddToRosterDrawer({
 
   const supabase = useMemo(() => createClient(), []);
 
-  // ✅ hooks always called (no early return above these)
   const { saving, coLoading, coOptions, ensureCoOptions, upsertAndAddMembership } = useAddToRoster();
 
-  // ✅ LOB-aware search (Locate excludes NT/CSG in search dims)
   const pickSearch = usePersonSearch({ excludePersonIds, lob });
   const looksLikeSearch = usePersonSearch({ excludePersonIds, lob });
 
   const [mode, setMode] = useState<"pick" | "new">("pick");
   const [draft, setDraft] = useState<OnboardPersonDraft>(() => emptyDraft());
 
-  // ✅ Active membership lookup (person_id -> active pc org name)
-  const [activeOrgNameByPersonId, setActiveOrgNameByPersonId] = useState<Map<string, string>>(
-    () => new Map()
-  );
+  // NEW: assignment controls (practical)
+  const [positionTitle, setPositionTitle] = useState<string>("Technician");
+  const [startAssignment, setStartAssignment] = useState<boolean>(true);
+
+  const [activeOrgNameByPersonId, setActiveOrgNameByPersonId] = useState<Map<string, string>>(() => new Map());
 
   const didEnsureCoOptionsRef = useRef(false);
 
@@ -118,7 +106,6 @@ export function AddToRosterDrawer({
   const locked = !canEdit;
   const disabled = saving || locked;
 
-  // Affiliation load: run once per "open session" (prevents render side-effects / loops)
   useEffect(() => {
     if (!open) return;
 
@@ -137,7 +124,6 @@ export function AddToRosterDrawer({
   const coKey = draft.co_ref_id ? String(draft.co_ref_id) : "none";
   const canSubmitNew = !disabled && Boolean(fullName) && Boolean(emails) && Boolean(draft.co_ref_id);
 
-  // 🚫 No useCallback here (avoids React Compiler preserve-memo lint)
   const onPickAffiliation = (newCoRefId: string) => {
     const opt = coOptions.find((o) => String(o.co_ref_id) === String(newCoRefId)) ?? null;
 
@@ -169,7 +155,8 @@ export function AddToRosterDrawer({
 
       const r = await upsertAndAddMembership({
         pcOrgId,
-        positionTitle: "Technician", // internal only; not displayed in UI
+        positionTitle: positionTitle || "Technician",
+        startAssignment,
         draft: {
           ...emptyDraft(),
           person_id: pid,
@@ -177,7 +164,6 @@ export function AddToRosterDrawer({
           emails: p.emails ?? "",
           mobile: p.mobile ?? "",
           fuse_emp_id: p.fuse_emp_id ?? "",
-          // even if Locate UI hides these fields, we preserve values if they exist
           person_nt_login: p.person_nt_login ?? "",
           person_csg_id: p.person_csg_id ?? "",
           person_notes: p.person_notes ?? "",
@@ -194,14 +180,14 @@ export function AddToRosterDrawer({
 
       toast.push({
         title: "Added",
-        message: `${formatPersonTitle(p)} added to roster.`,
+        message: `${formatPersonTitle(p)} added to roster${startAssignment ? " + assigned" : ""}.`,
         variant: "success",
       });
 
       onAdded?.();
       onClose();
     },
-    [open, disabled, excludePersonIds, onAdded, onClose, pcOrgId, toast, upsertAndAddMembership]
+    [open, disabled, excludePersonIds, onAdded, onClose, pcOrgId, toast, upsertAndAddMembership, positionTitle, startAssignment]
   );
 
   const onConfirmNew = useCallback(async () => {
@@ -210,7 +196,8 @@ export function AddToRosterDrawer({
 
     const r = await upsertAndAddMembership({
       pcOrgId,
-      positionTitle: "Technician",
+      positionTitle: positionTitle || "Technician",
+      startAssignment,
       draft,
     });
 
@@ -221,17 +208,16 @@ export function AddToRosterDrawer({
 
     toast.push({
       title: "Added",
-      message: `${fullName || "Person"} added to roster.`,
+      message: `${fullName || "Person"} added to roster${startAssignment ? " + assigned" : ""}.`,
       variant: "success",
     });
 
     onAdded?.();
     onClose();
-  }, [open, canSubmitNew, draft, fullName, onAdded, onClose, pcOrgId, toast, upsertAndAddMembership]);
+  }, [open, canSubmitNew, draft, fullName, onAdded, onClose, pcOrgId, toast, upsertAndAddMembership, positionTitle, startAssignment]);
 
   const looksLikeQ = buildLooksLikeQuery(draft, lob);
 
-  // Unified display vars
   const displayedResults = mode === "pick" ? pickSearch.results : looksLikeSearch.results;
 
   const displayedPersonIds = useMemo(() => {
@@ -246,7 +232,6 @@ export function AddToRosterDrawer({
   const displayedLoading = mode === "pick" ? pickSearch.loading : looksLikeSearch.loading;
   const displayedError = mode === "pick" ? pickSearch.error : looksLikeSearch.error;
 
-  // ✅ Hydrate active membership: person_id -> pc_org_name (for disabling Add + label)
   useEffect(() => {
     if (!open) return;
 
@@ -259,7 +244,6 @@ export function AddToRosterDrawer({
 
     (async () => {
       try {
-        // person_id -> pc_org_id (current membership anywhere)
         const orgByPerson = await fetchActiveMembershipOrgByPersonIds(supabase, displayedPersonIds);
 
         const orgIds = Array.from(new Set(Array.from(orgByPerson.values()).filter(Boolean)));
@@ -268,12 +252,7 @@ export function AddToRosterDrawer({
           return;
         }
 
-        // pc_org_id -> pc_org_name
-        const { data, error } = await supabase
-          .from("pc_org")
-          .select("pc_org_id, pc_org_name")
-          .in("pc_org_id", orgIds);
-
+        const { data, error } = await supabase.from("pc_org").select("pc_org_id, pc_org_name").in("pc_org_id", orgIds);
         if (error) throw error;
 
         const nameByOrgId = new Map<string, string>();
@@ -283,7 +262,6 @@ export function AddToRosterDrawer({
           if (oid) nameByOrgId.set(oid, oname || oid);
         }
 
-        // person_id -> pc_org_name
         const out = new Map<string, string>();
         for (const [pid, oid] of orgByPerson.entries()) {
           const name = nameByOrgId.get(oid) ?? oid;
@@ -292,7 +270,6 @@ export function AddToRosterDrawer({
 
         if (!cancelled) setActiveOrgNameByPersonId(out);
       } catch {
-        // Fail open (do not block add) if this read fails
         if (!cancelled) setActiveOrgNameByPersonId(new Map());
       }
     })();
@@ -302,7 +279,6 @@ export function AddToRosterDrawer({
     };
   }, [open, supabase, displayedPersonIdsKey, displayedPersonIds]);
 
-  // ✅ early return AFTER hooks
   if (!open) return null;
 
   return (
@@ -338,6 +314,39 @@ export function AddToRosterDrawer({
                 {saving ? "Adding…" : "Confirm add"}
               </Button>
             </div>
+          </div>
+
+          {/* Practical: assignment controls */}
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[var(--to-ink-muted)]">Position</span>
+              <TextInput
+                value={positionTitle}
+                onChange={(e) => setPositionTitle(e.target.value)}
+                className="h-9 w-48"
+                disabled={disabled}
+                placeholder="Technician"
+              />
+            </div>
+
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 text-xs text-[var(--to-ink-muted)]"
+              onClick={() => !disabled && setStartAssignment((v) => !v)}
+              disabled={disabled}
+            >
+              <span
+                className="inline-flex h-4 w-4 items-center justify-center rounded border"
+                style={{
+                  borderColor: "var(--to-border)",
+                  background: startAssignment ? "var(--to-surface-2)" : "transparent",
+                  color: "var(--to-ink)",
+                }}
+              >
+                {startAssignment ? "✓" : ""}
+              </span>
+              Start assignment after add
+            </button>
           </div>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -427,7 +436,6 @@ export function AddToRosterDrawer({
                     />
                   </div>
 
-                  {/* LOCATE: hide NT Login + CSG ID */}
                   {lob !== "LOCATE" ? (
                     <div className="grid sm:grid-cols-2 gap-3">
                       <TextInput
@@ -465,12 +473,7 @@ export function AddToRosterDrawer({
 
                   <div className="grid gap-1">
                     <div className="text-xs text-[var(--to-ink-muted)]">Affiliation</div>
-                    <Select
-                      value={coKey}
-                      onChange={(e) => onPickAffiliation(e.target.value)}
-                      className="h-10"
-                      disabled={disabled || coLoading}
-                    >
+                    <Select value={coKey} onChange={(e) => onPickAffiliation(e.target.value)} className="h-10" disabled={disabled || coLoading}>
                       <option value="none">{coLoading ? "Loading…" : "Select affiliation"}</option>
                       {(coOptions ?? []).map((o) => (
                         <option key={String(o.co_ref_id)} value={String(o.co_ref_id)}>
@@ -480,28 +483,18 @@ export function AddToRosterDrawer({
                     </Select>
 
                     {!fullName || !emails || !draft.co_ref_id ? (
-                      <div className="text-xs text-[var(--to-ink-muted)]">
-                        Required: full name + emails + affiliation.
-                      </div>
+                      <div className="text-xs text-[var(--to-ink-muted)]">Required: full name + emails + affiliation.</div>
                     ) : null}
                   </div>
                 </div>
               )}
-
-              {locked ? (
-                <div className="text-xs text-[var(--to-status-warning)]">
-                  Locked: you need roster_manage permission (or owner) to add.
-                </div>
-              ) : null}
             </div>
 
             {/* RIGHT */}
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold">Looks-like candidates</div>
-                <div className="text-xs text-[var(--to-ink-muted)]">
-                  {mode === "pick" ? "Based on your search" : "Based on what you typed"}
-                </div>
+                <div className="text-xs text-[var(--to-ink-muted)]">{mode === "pick" ? "Based on your search" : "Based on what you typed"}</div>
               </div>
 
               <CandidatesList
@@ -535,9 +528,7 @@ function CandidatesList(props: {
   const { query, loading, error, results, coOptions, onAdd, disabled, activeOrgNameByPersonId } = props;
   const q = String(query ?? "").trim();
 
-  if (!q || q.length < 2) {
-    return <div className="text-xs text-[var(--to-ink-muted)]">Type 2+ characters to see candidates.</div>;
-  }
+  if (!q || q.length < 2) return <div className="text-xs text-[var(--to-ink-muted)]">Type 2+ characters to see candidates.</div>;
   if (loading) return <div className="text-xs text-[var(--to-ink-muted)]">Searching…</div>;
   if (error) return <div className="text-xs text-[var(--to-status-warning)]">{error}</div>;
   if (!results.length) return <div className="text-xs text-[var(--to-ink-muted)]">No matches.</div>;
@@ -551,8 +542,6 @@ function CandidatesList(props: {
 
         const titleParts = markMatches(title, q);
         const subParts = markMatches(sub, q);
-
-        const lobText = lobLabel(p.lob);
 
         const alreadyInOrgName = String(activeOrgNameByPersonId.get(String(p.person_id)) ?? "").trim();
         const alreadyAssigned = Boolean(alreadyInOrgName);
@@ -573,18 +562,6 @@ function CandidatesList(props: {
                       )
                     )}
                   </div>
-
-                  <span
-                    className="shrink-0 rounded-full px-2 py-0.5 text-[11px] border"
-                    style={{
-                      borderColor: "var(--to-border)",
-                      color: "var(--to-ink-muted)",
-                      background: "var(--to-surface-2)",
-                    }}
-                    title="Line of Business"
-                  >
-                    {lobText}
-                  </span>
                 </div>
 
                 <div className="text-xs text-[var(--to-ink-muted)]">

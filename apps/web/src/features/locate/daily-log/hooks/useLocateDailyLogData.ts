@@ -21,6 +21,10 @@ export function useLocateDailyLogData() {
   const [stateByCode, setStateByCode] = useState<Record<string, StateResource>>({});
   const [statesList, setStatesList] = useState<StateResource[]>([]);
 
+  // Tracks the most recently submitted state codes for the current logDate.
+  // This powers the "Last submitted rows" card highlighting just what the user touched.
+  const [lastSubmittedCodes, setLastSubmittedCodes] = useState<string[]>([]);
+
   const loadStatesAndDay = useCallback(
     async (date: string): Promise<{
       serverRows: Record<string, DailyRowFromApi>;
@@ -28,6 +32,9 @@ export function useLocateDailyLogData() {
     } | null> => {
       setLoading(true);
       setOut("");
+
+      // Switching days resets the "last submitted" preview.
+      setLastSubmittedCodes([]);
 
       try {
         // 1) states
@@ -79,6 +86,8 @@ export function useLocateDailyLogData() {
 
       setSubmitting(true);
       try {
+        setLastSubmittedCodes(args.payloadRows.map((r) => String(r.state_code).toUpperCase()));
+
         const res = await fetch("/api/locate/daily-log", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -100,6 +109,15 @@ export function useLocateDailyLogData() {
     },
     [loadStatesAndDay]
   );
+
+  const clearLastSubmitted = useCallback(() => setLastSubmittedCodes([]), []);
+
+  const lastSubmittedRows = useCallback((): DailyRowFromApi[] => {
+    if (!lastSubmittedCodes.length) return [];
+    return lastSubmittedCodes
+      .map((code) => serverRows[String(code).toUpperCase()])
+      .filter(Boolean) as DailyRowFromApi[];
+  }, [lastSubmittedCodes, serverRows]);
 
   const saveBaseline = useCallback(
     async (editing: { state_code: string; default_manpower: number; backlog_seed: number }, logDate: string) => {
@@ -142,6 +160,10 @@ export function useLocateDailyLogData() {
     serverRows,
     stateByCode,
     statesList,
+
+    lastSubmittedCodes,
+    lastSubmittedRows,
+    clearLastSubmitted,
 
     loadStatesAndDay,
     submitDailyLog,

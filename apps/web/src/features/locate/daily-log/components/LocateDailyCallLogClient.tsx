@@ -1,10 +1,18 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useLocateDailyLogData } from "../hooks/useLocateDailyLogData";
 import { useLocateDailyLogState } from "../hooks/useLocateDailyLogState";
 import { LocateDailyCallLogView } from "./LocateDailyCallLogView";
-import type { GridRow, StateResource } from "../types";
+import type { DailyRowFromApi, GridRow, StateResource } from "../types";
+
+type SubmitRow = {
+  state_code: string;
+  manpower_count: number;
+  tickets_total: number;
+  project_tickets: number;
+  emergency_tickets: number;
+};
 
 export default function LocateDailyCallLogClient() {
   const data = useLocateDailyLogData();
@@ -12,6 +20,15 @@ export default function LocateDailyCallLogClient() {
     serverRows: data.serverRows,
     stateByCode: data.stateByCode,
   });
+
+  // "Last submitted rows" (client-side preview)
+  const [lastSubmittedRows, setLastSubmittedRows] = useState<DailyRowFromApi[]>([]);
+
+  const lastSubmittedByCode = useMemo(() => {
+    const m: Record<string, DailyRowFromApi> = {};
+    for (const r of lastSubmittedRows) m[String(r.state_code).toUpperCase()] = r;
+    return m;
+  }, [lastSubmittedRows]);
 
   // Pin only what the effect needs (so eslint doesn't demand `data`/`state`)
   const load = data.loadStatesAndDay;
@@ -72,6 +89,40 @@ export default function LocateDailyCallLogClient() {
     };
   }, [load, logDate, frame, makeInputs, setRows]);
 
+  function toPreviewRow(payload: SubmitRow): DailyRowFromApi {
+    const code = String(payload.state_code).toUpperCase();
+    const stateRes = data.stateByCode[code];
+
+    const manpower = Number(payload.manpower_count ?? 0);
+    const total = Number(payload.tickets_total ?? 0);
+    const proj = Number(payload.project_tickets ?? 0);
+    const emer = Number(payload.emergency_tickets ?? 0);
+
+    // Use current server row as the safest "backlog start" anchor when available
+    const existing = data.serverRows[code];
+    const backlogStart = Number(existing?.backlog_start ?? 0);
+
+    return {
+      log_date: state.logDate,
+      state_code: code,
+      state_name: String(stateRes?.state_name ?? code),
+
+      manpower_count: manpower,
+      tickets_received_am: state.frame === "AM" ? total : Number(existing?.tickets_received_am ?? 0),
+      tickets_closed_pm: state.frame === "PM" ? total : Number(existing?.tickets_closed_pm ?? 0),
+      project_tickets: proj,
+      emergency_tickets: emer,
+
+      backlog_start: backlogStart,
+      backlog_end: 0,
+
+      avg_received_per_tech: 0,
+      avg_closed_per_tech: 0,
+
+      updated_at: new Date().toISOString(),
+    };
+  }
+
   async function onSubmitBatch() {
     data.setOut("");
 
@@ -81,12 +132,19 @@ export default function LocateDailyCallLogClient() {
       return;
     }
 
-    const payloadRows = state.buildPayloadRows();
-    await data.submitDailyLog({
+    const payloadRows = state.buildPayloadRows() as SubmitRow[];
+
+    const r = await data.submitDailyLog({
       logDate: state.logDate,
       frame: state.frame,
       payloadRows,
     });
+
+    if (r.ok) {
+      // Create client-side "last submitted rows" snapshot
+      const snapshot = payloadRows.map(toPreviewRow);
+      setLastSubmittedRows(snapshot);
+    }
   }
 
   async function onSaveBaseline() {
@@ -104,6 +162,28 @@ export default function LocateDailyCallLogClient() {
     if (r.ok) state.setEditing(null);
   }
 
+  async function onSaveLastSubmittedRow(payloadRow: {
+    state_code: string;
+    manpower_count: number;
+    tickets_total: number;
+    project_tickets: number;
+    emergency_tickets: number;
+  }) {
+    data.setOut("");
+
+    const r = await data.submitDailyLog({
+      logDate: state.logDate,
+      frame: state.frame,
+      payloadRows: [payloadRow],
+    });
+
+    if (!r.ok) return;
+
+    const updated = toPreviewRow(payloadRow as SubmitRow);
+    const next = { ...lastSubmittedByCode, [String(payloadRow.state_code).toUpperCase()]: updated };
+    setLastSubmittedRows(Object.values(next));
+  }
+
   return (
     <LocateDailyCallLogView
       loading={data.loading}
@@ -118,16 +198,12 @@ export default function LocateDailyCallLogClient() {
       setFrame={state.setFrame}
       filter={state.filter}
       setFilter={state.setFilter}
-      historyFilter={state.historyFilter}
-      setHistoryFilter={state.setHistoryFilter}
-      historyOnlySaved={state.historyOnlySaved}
-      setHistoryOnlySaved={state.setHistoryOnlySaved}
-      historyOnlyFlagged={state.historyOnlyFlagged}
-      setHistoryOnlyFlagged={state.setHistoryOnlyFlagged}
       rows={state.rows}
       setRows={state.setRows}
       filteredRows={state.filteredRows}
-      historyRows={state.historyRows}
+      lastSubmittedRows={lastSubmittedRows}
+      onClearLastSubmitted={() => setLastSubmittedRows([])}
+      onSaveLastSubmittedRow={onSaveLastSubmittedRow}
       editing={state.editing}
       setEditing={state.setEditing}
       ticketsLabel={state.ticketsLabel}

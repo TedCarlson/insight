@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { DailyRowFromApi, Frame, GridRow, StateResource, TicketInputs } from "../types";
 import { detectFrameLocal, todayISODateLocal } from "@/features/locate/daily-log/lib/date";
-import { paceFlag, safeAvg, toNum } from "@/features/locate/daily-log/lib/math";
+import { toNum } from "@/features/locate/daily-log/lib/math";
 
 function makeInputs(_defaultManpower: number): TicketInputs {
   return {
@@ -21,10 +21,6 @@ export function useLocateDailyLogState(args: {
   const [logDate, setLogDate] = useState<string>(() => todayISODateLocal());
   const [frame, setFrame] = useState<Frame>(() => detectFrameLocal());
   const [filter, setFilter] = useState<string>("");
-
-  const [historyFilter, setHistoryFilter] = useState<string>("");
-  const [historyOnlySaved, setHistoryOnlySaved] = useState<boolean>(true);
-  const [historyOnlyFlagged, setHistoryOnlyFlagged] = useState<boolean>(false);
 
   const [rows, setRows] = useState<GridRow[]>([]);
   const [editing, setEditing] = useState<
@@ -62,37 +58,6 @@ export function useLocateDailyLogState(args: {
     return rows.filter((r) => r.state_name.toLowerCase().includes(q) || r.state_code.toLowerCase().includes(q));
   }, [rows, filter]);
 
-  const historyRows = useMemo(() => {
-    const all = Object.values(args.serverRows).sort((a, b) => a.state_name.localeCompare(b.state_name));
-    const q = historyFilter.trim().toLowerCase();
-
-    function hasAnyMeaningfulData(r: DailyRowFromApi) {
-      return (
-        (r.manpower_count ?? 0) > 0 ||
-        (r.tickets_received_am ?? 0) > 0 ||
-        (r.tickets_closed_pm ?? 0) > 0 ||
-        (r.project_tickets ?? 0) > 0 ||
-        (r.emergency_tickets ?? 0) > 0
-      );
-    }
-
-    function isFlagged(r: DailyRowFromApi) {
-      const working = Number(r.manpower_count ?? 0);
-      const total = frame === "AM" ? Number(r.tickets_received_am ?? 0) : Number(r.tickets_closed_pm ?? 0);
-      const avg = safeAvg(total, working);
-      const canFormat = working > 0 && total > 0;
-      if (!canFormat) return false;
-      const pace = paceFlag(avg);
-      return pace === "LOW" || pace === "HIGH";
-    }
-
-    return all.filter((r) => {
-      if (historyOnlySaved && !hasAnyMeaningfulData(r)) return false;
-      if (historyOnlyFlagged && !isFlagged(r)) return false;
-      if (!q) return true;
-      return r.state_name.toLowerCase().includes(q) || r.state_code.toLowerCase().includes(q);
-    });
-  }, [args.serverRows, historyFilter, historyOnlySaved, historyOnlyFlagged, frame]);
 
   function validate(): string[] {
     const errs: string[] = [];
@@ -167,17 +132,9 @@ export function useLocateDailyLogState(args: {
     filter,
     setFilter,
 
-    historyFilter,
-    setHistoryFilter,
-    historyOnlySaved,
-    setHistoryOnlySaved,
-    historyOnlyFlagged,
-    setHistoryOnlyFlagged,
-
     rows,
     setRows,
     filteredRows,
-    historyRows,
 
     editing,
     setEditing,

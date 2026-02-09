@@ -27,7 +27,6 @@
     "react-dom": "19.2.3",
     "resend": "^6.9.1",
     "tailwind-merge": "^3.4.0",
-    "tailwindcss-animate": "^1.0.7",
     "vaul": "^1.1.2"
   },
   "devDependencies": {
@@ -41,6 +40,7 @@
     "prettier": "^3.3.3",
     "prettier-plugin-tailwindcss": "^0.6.8",
     "tailwindcss": "^3.4.1",
+    "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.9.0",
     "xlsx": "^0.18.5"
   }

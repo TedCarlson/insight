@@ -13,6 +13,14 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function headerCell(className: string, label: string) {
+  return (
+    <div className={className} role="columnheader">
+      {label}
+    </div>
+  );
+}
+
 export default function LocateDailyHistoryClient() {
   const [rows, setRows] = useState<DailyRowFromApi[]>([]);
   const [total, setTotal] = useState(0);
@@ -78,6 +86,15 @@ export default function LocateDailyHistoryClient() {
 
   const canPrev = page > 1;
   const canNext = page < pageCount;
+
+  // Grid columns (match header + row cells)
+  const gridCols =
+    "grid grid-cols-[140px_220px_110px_110px_110px_90px_90px_180px] items-center";
+
+  const thBase = "px-3 py-2 text-left text-xs font-medium text-[var(--to-ink-muted)]";
+  const tdBase = "px-3 py-2 text-sm";
+  const tdRight = "px-3 py-2 text-sm text-right tabular-nums";
+  const tdMuted = "px-3 py-2 text-xs text-[var(--to-ink-muted)]";
 
   return (
     <div className="grid gap-4">
@@ -161,12 +178,7 @@ export default function LocateDailyHistoryClient() {
               Saved only
             </label>
 
-            <Button
-              onClick={() => void load()}
-              disabled={loading}
-              className="ml-auto"
-              variant="secondary"
-            >
+            <Button onClick={() => void load()} disabled={loading} className="ml-auto" variant="secondary">
               {loading ? "Loading…" : "Refresh"}
             </Button>
           </div>
@@ -179,49 +191,56 @@ export default function LocateDailyHistoryClient() {
         <DataTable>
           <DataTableHeader>
             <DataTableRow>
-              <th className="px-3 py-2 text-left text-xs font-medium text-[var(--to-ink-muted)]">Date</th>
-              <th className="px-3 py-2 text-left text-xs font-medium text-[var(--to-ink-muted)]">State</th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-[var(--to-ink-muted)]">Manpower</th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-[var(--to-ink-muted)]">AM Recv</th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-[var(--to-ink-muted)]">PM Closed</th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-[var(--to-ink-muted)]">Proj</th>
-              <th className="px-3 py-2 text-right text-xs font-medium text-[var(--to-ink-muted)]">Emer</th>
-              <th className="px-3 py-2 text-left text-xs font-medium text-[var(--to-ink-muted)]">Updated</th>
+              <div className={gridCols} role="row">
+                {headerCell(thBase, "Date")}
+                {headerCell(thBase, "State")}
+                {headerCell(`${thBase} text-right`, "Manpower")}
+                {headerCell(`${thBase} text-right`, "AM Recv")}
+                {headerCell(`${thBase} text-right`, "PM Closed")}
+                {headerCell(`${thBase} text-right`, "Proj")}
+                {headerCell(`${thBase} text-right`, "Emer")}
+                {headerCell(thBase, "Updated")}
+              </div>
             </DataTableRow>
           </DataTableHeader>
 
           <DataTableBody>
             {rows.map((r) => (
               <DataTableRow key={`${r.log_date}:${r.state_code}`}>
-                <td className="px-3 py-2 text-sm">{r.log_date}</td>
-                <td className="px-3 py-2 text-sm">
-                  <div className="font-medium">{r.state_name}</div>
-                  <div className="text-xs text-[var(--to-ink-muted)]">{r.state_code}</div>
-                </td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums">{Number(r.manpower_count ?? 0)}</td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums">{Number(r.tickets_received_am ?? 0)}</td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums">{Number(r.tickets_closed_pm ?? 0)}</td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums">{Number(r.project_tickets ?? 0)}</td>
-                <td className="px-3 py-2 text-sm text-right tabular-nums">{Number(r.emergency_tickets ?? 0)}</td>
-                <td className="px-3 py-2 text-xs text-[var(--to-ink-muted)]">
-                  {r.updated_at ? String(r.updated_at).slice(0, 19).replace("T", " ") : "—"}
-                </td>
+                <div className={gridCols} role="row">
+                  <div className={tdBase}>{r.log_date}</div>
+
+                  <div className={tdBase}>
+                    <div className="font-medium">{r.state_name}</div>
+                    <div className="text-xs text-[var(--to-ink-muted)]">{r.state_code}</div>
+                  </div>
+
+                  <div className={tdRight}>{Number(r.manpower_count ?? 0)}</div>
+                  <div className={tdRight}>{Number(r.tickets_received_am ?? 0)}</div>
+                  <div className={tdRight}>{Number(r.tickets_closed_pm ?? 0)}</div>
+                  <div className={tdRight}>{Number(r.project_tickets ?? 0)}</div>
+                  <div className={tdRight}>{Number(r.emergency_tickets ?? 0)}</div>
+
+                  <div className={tdMuted}>
+                    {r.updated_at ? String(r.updated_at).slice(0, 19).replace("T", " ") : "—"}
+                  </div>
+                </div>
               </DataTableRow>
             ))}
 
             {!rows.length && !loading ? (
               <DataTableRow>
-                <td className="px-3 py-6 text-sm text-[var(--to-ink-muted)]" colSpan={8}>
+                <div className="px-3 py-6 text-sm text-[var(--to-ink-muted)]" role="row">
                   No rows found.
-                </td>
+                </div>
               </DataTableRow>
             ) : null}
 
             {loading ? (
               <DataTableRow>
-                <td className="px-3 py-6 text-sm text-[var(--to-ink-muted)]" colSpan={8}>
+                <div className="px-3 py-6 text-sm text-[var(--to-ink-muted)]" role="row">
                   Loading…
-                </td>
+                </div>
               </DataTableRow>
             ) : null}
           </DataTableBody>

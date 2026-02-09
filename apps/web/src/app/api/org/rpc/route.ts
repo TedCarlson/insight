@@ -26,6 +26,14 @@ const RPC_ALLOWLIST = new Set<string>([
   "person_picker",
   "person_get",
 
+  // ----- Permission reads (UI gates) -----
+  "has_pc_org_permission",
+  "has_any_pc_org_permission",
+  "permissions_for_org",
+  "effective_permissions_for_org",
+  "effective_permissions_for_org_admin",
+  "is_app_owner",
+
   // ----- Writes -----
   // public schema writes
   "person_upsert",
@@ -346,6 +354,18 @@ export async function POST(req: NextRequest) {
           pc_org_id: pcOrgFromArgs,
         });
       }
+    }
+
+    // ✅ Permission read RPCs must be org-scoped (but do NOT recurse requirePermission)
+    if (
+      fn === "has_pc_org_permission" ||
+      fn === "has_any_pc_org_permission" ||
+      fn === "permissions_for_org" ||
+      fn === "effective_permissions_for_org" ||
+      fn === "effective_permissions_for_org_admin"
+    ) {
+      const scope = ensureOrgScope(pcOrgFromArgs);
+      if (!scope.ok) return json(scope.status, scope.body);
     }
 
     // ✅ Wizard must match DB gate (roster_manage)

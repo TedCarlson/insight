@@ -22,9 +22,11 @@ export type OnboardPersonDraft = {
   person_nt_login?: string | null;
   person_csg_id?: string | null;
 
+  // system/derived in DB (kept here for completeness; not user-driven)
   active?: boolean | null;
   role?: string | null;
 
+  // affiliation selection (required for membership start)
   co_ref_id?: string | null;
   co_code?: string | null;
   co_name?: string | null;
@@ -55,9 +57,9 @@ export function useAddToRoster() {
   const loadPromiseRef = useRef<Promise<CoOption[]> | null>(null);
 
   /**
-   * Session-aware RPC caller (drift-guard: keeps your callRpc pattern, but fixes Unauthorized)
+   * Session-aware RPC caller
    * - Sends Authorization header so /api/org/rpc can resolve user
-   * - Sends schema explicitly (route.ts defaults to "api" but we need "public" for person_upsert)
+   * - Sends schema explicitly for functions that live in public vs api
    */
   const callRpc = useCallback(
     async (fn: string, args: Record<string, any>, schema: RpcSchema = "api"): Promise<any> => {
@@ -75,11 +77,7 @@ export function useAddToRoster() {
       });
 
       const json = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        // Preserve server error message (and your toast behavior)
-        throw new Error(json?.error ?? `RPC failed: ${fn}`);
-      }
+      if (!res.ok) throw new Error(json?.error ?? `RPC failed: ${fn}`);
 
       return json?.data ?? null;
     },
@@ -87,10 +85,7 @@ export function useAddToRoster() {
   );
 
   const ensureCoOptions = useCallback(async (): Promise<CoOption[]> => {
-    // already loaded
     if (coOptions.length) return coOptions;
-
-    // already loading
     if (loadPromiseRef.current) return loadPromiseRef.current;
 
     const p = (async () => {
@@ -123,7 +118,6 @@ export function useAddToRoster() {
           })),
         ];
 
-        // stable ordering: companies first, then contractors; alphabetical
         out.sort((a, b) => {
           const aType = a.co_type === "company" ? 0 : 1;
           const bType = b.co_type === "company" ? 0 : 1;
@@ -145,18 +139,20 @@ export function useAddToRoster() {
 
   const upsertAndAddMembership = useCallback(
     async (input: { pcOrgId: string; positionTitle: string; draft: OnboardPersonDraft }): Promise<Result<true>> => {
-      const { pcOrgId, positionTitle, draft } = input;
+      const { pcOrgId, draft } = input;
 
       const full_name = String(draft.full_name ?? "").trim();
       const emails = String(draft.emails ?? "").trim();
       const co_ref_id = draft.co_ref_id ? String(draft.co_ref_id).trim() : "";
 
+      // Required user fields for person creation + affiliation requirement
       if (!full_name) return { ok: false, error: "Full name is required." };
       if (!emails) return { ok: false, error: "Emails is required." };
       if (!co_ref_id) return { ok: false, error: "Affiliation is required." };
 
       setSaving(true);
       try {
+        // derive co_code from dropdown selection when not provided
         let co_code = draft.co_code ? String(draft.co_code) : null;
 
         if (!co_code) {
@@ -165,7 +161,8 @@ export function useAddToRoster() {
           co_code = hit?.co_code ?? null;
         }
 
-        // 1) Upsert person (must be PUBLIC schema to match route allowlist handling)
+        // 1) Upsert person first (affiliation must exist before membership start)
+        // NOTE: your RPC gateway currently allowlists person_upsert and executes it safely.
         const personRow = await callRpc(
           "person_upsert",
           {
@@ -178,7 +175,7 @@ export function useAddToRoster() {
             p_person_nt_login: String(draft.person_nt_login ?? "").trim() || null,
             p_person_csg_id: String(draft.person_csg_id ?? "").trim() || null,
 
-            // safe default
+            // safe default (DB controls active/role derivation)
             p_active: typeof draft.active === "boolean" ? draft.active : true,
 
             // derived/hidden
@@ -192,8 +189,7 @@ export function useAddToRoster() {
         const personId = String(personRow?.person_id ?? personRow?.id ?? draft.person_id ?? "").trim() || null;
         if (!personId) return { ok: false, error: "Upsert succeeded but no person_id was returned." };
 
-        // 2) Add membership for scoped PC org
-        // Drift guardrail: your gateway allowlist includes wizard_process_to_roster (org_assign_person is not allowlisted)
+        // 2) Start membership (membership-only contract)
         await callRpc(
           "add_to_roster",
           {

@@ -38,29 +38,26 @@ export function parseCookies(cookieHeader: string) {
   return out;
 }
 
-/**
- * Extract pc_org_id from common RPC arg shapes.
- * Supports:
- *  - direct args: pc_org_id / p_pc_org_id / pcOrgId / pc_org
- *  - nested patch shapes: p_patch.pc_org_id / patch.pc_org_id
- */
+function str(v: unknown) {
+  const s = String(v ?? "").trim();
+  return s ? s : "";
+}
+
 export function extractPcOrgIdFromArgs(args: any): string {
-  const direct =
-    args?.pc_org_id ??
-    args?.p_pc_org_id ??
-    args?.pcOrgId ??
-    args?.pc_org ??
-    null;
+  const top =
+    str(args?.pc_org_id) ||
+    str(args?.p_pc_org_id) ||
+    str(args?.pcOrgId) ||
+    str(args?.pc_org) ||
+    str(args?.pPcOrgId);
 
-  const directId = String(direct ?? "").trim();
-  if (directId) return directId;
+  if (top) return top;
 
-  const nested =
-    args?.p_patch?.pc_org_id ??
-    args?.patch?.pc_org_id ??
-    args?.p_payload?.pc_org_id ??
-    args?.payload?.pc_org_id ??
-    null;
+  const patch =
+    str(args?.p_patch?.pc_org_id) ||
+    str(args?.patch?.pc_org_id) ||
+    str(args?.p_patch?.p_pc_org_id) ||
+    str(args?.patch?.p_pc_org_id);
 
-  return String(nested ?? "").trim();
+  return patch;
 }

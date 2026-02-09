@@ -1,7 +1,7 @@
 // apps/web/src/features/roster/hooks/row-module/useAssignmentTab.ts
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type RosterMasterRow } from "@/shared/lib/api";
 import { loadMasterAction, loadPositionTitlesAction } from "../rosterRowModule.actions";
 import { createClient } from "@/shared/data/supabase/client";
@@ -10,9 +10,7 @@ type PositionTitleRow = { position_title: string; sort_order?: number | null; ac
 type OfficeOption = { id: string; label: string; sublabel?: string };
 type RpcSchema = "api" | "public";
 
-const EDIT_KEYS = ["position_title", "start_date", "end_date", "active", "tech_id", "office_id"] as const;
-
-function todayISO(): string {
+function todayISODate(): string {
   const d = new Date();
   const yyyy = String(d.getFullYear());
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -20,49 +18,41 @@ function todayISO(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function norm(v: unknown): string {
-  return String(v ?? "").trim();
+function norm(v: unknown): string | null {
+  const s = String(v ?? "").trim();
+  return s ? s : null;
 }
 
-function isActive(r: any): boolean {
-  const end = norm(r?.end_date);
+function isActiveRow(r: any) {
+  const end = String(r?.end_date ?? "").trim();
   const active = r?.active ?? r?.assignment_active ?? r?.assignment_record_active ?? true;
   return !end && Boolean(active);
 }
 
-function pickActive(rows: RosterMasterRow[] | null, personId: string | null, assignmentId: string | null) {
-  if (!rows?.length || !personId) return null;
-  const pid = norm(personId);
-  const aid = assignmentId ? norm(assignmentId) : "";
+function pickActiveAssignmentRow(rows: RosterMasterRow[] | null, personId: string | null): any | null {
+  if (!rows || !rows.length || !personId) return null;
+  const pid = String(personId);
 
-  const byPerson = rows
-    .filter((r: any) => norm(r?.person_id) === pid)
-    .filter((r: any) => isActive(r));
+  const matches = (rows as any[])
+    .filter((r) => String(r?.person_id ?? "") === pid)
+    .filter(isActiveRow);
 
-  if (byPerson.length) return byPerson[0] as any;
+  if (!matches.length) return null;
 
-  if (aid) {
-    const byA = rows.find((r: any) => norm(r?.assignment_id) === aid && isActive(r));
-    return (byA as any) ?? null;
-  }
-
-  return null;
+  // Prefer one that already has assignment_id
+  const withId = matches.find((r) => norm(r?.assignment_id));
+  return withId ?? matches[0];
 }
 
-function readAssignmentId(x: any): string | null {
-  if (!x) return null;
-  if (typeof x === "string") return norm(x) || null;
-  const direct = norm(x?.assignment_id ?? x?.id);
-  if (direct) return direct;
-  if (Array.isArray(x)) {
-    const v = norm(x[0]?.assignment_id ?? x[0]?.id);
-    return v || null;
-  }
-  if (Array.isArray(x?.rows)) {
-    const v = norm(x.rows[0]?.assignment_id ?? x.rows[0]?.id);
-    return v || null;
-  }
-  return null;
+function extractAssignmentId(data: any): string | null {
+  if (!data) return null;
+  if (typeof data === "string") return norm(data);
+  if (Array.isArray(data)) return norm(data[0]?.assignment_id ?? data[0]?.id);
+  return norm(data?.assignment_id ?? data?.id);
+}
+
+function isFnMissingError(msg: string) {
+  return /function .* does not exist/i.test(msg) || /schema/i.test(msg) || /not found/i.test(msg);
 }
 
 export function useAssignmentTab(args: {
@@ -100,19 +90,19 @@ export function useAssignmentTab(args: {
   const [officeLoading, setOfficeLoading] = useState(false);
   const [officeError, setOfficeError] = useState<string | null>(null);
 
-  const canLifecycle = canManage && modifyMode === "open";
+  const createdAssignmentIdRef = useRef<string | null>(null);
 
   const callRpc = useCallback(
-    async (fn: string, rpcArgs: Record<string, any> | null, schema: RpcSchema = "api") => {
+    async (fn: string, rpcArgs: Record<string, any> | null, schema: RpcSchema): Promise<any> => {
       const { data: sessionRes } = await supabase.auth.getSession();
-      const token = sessionRes?.session?.access_token ?? "";
+      const accessToken = sessionRes?.session?.access_token ?? "";
 
       const res = await fetch("/api/org/rpc", {
         method: "POST",
         credentials: "include",
         headers: {
           "content-type": "application/json",
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({ schema, fn, args: rpcArgs }),
       });
@@ -124,12 +114,25 @@ export function useAssignmentTab(args: {
     [supabase]
   );
 
+  const callRpcApiThenPublic = useCallback(
+    async (fn: string, rpcArgs: Record<string, any> | null) => {
+      try {
+        return await callRpc(fn, rpcArgs, "api");
+      } catch (e: any) {
+        const msg = String(e?.message ?? "");
+        if (isFnMissingError(msg)) return await callRpc(fn, rpcArgs, "public");
+        throw e;
+      }
+    },
+    [callRpc]
+  );
+
   const loadMaster = useCallback(async () => {
     await loadMasterAction({
       pcOrgId,
       setLoading: setLoadingMaster,
       setErr: setMasterErr,
-      setRows: (rows: any) => setMaster(Array.isArray(rows) ? rows : null),
+      setRows: (rows: any) => setMaster(Array.isArray(rows) ? (rows as RosterMasterRow[]) : null),
     });
   }, [pcOrgId]);
 
@@ -150,7 +153,7 @@ export function useAssignmentTab(args: {
 
     try {
       const sp = new URLSearchParams();
-      sp.set("pc_org_id", norm(pcOrgId));
+      sp.set("pc_org_id", String(pcOrgId));
 
       const res = await fetch(`/api/meta/offices?${sp.toString()}`, { method: "GET" });
       const json = await res.json().catch(() => ({} as any));
@@ -166,13 +169,15 @@ export function useAssignmentTab(args: {
       const rows: OfficeOption[] = list
         .filter((o: any) => o && (o.id || o.office_id))
         .map((o: any) => ({
-          id: norm(o.id ?? o.office_id),
+          id: String(o.id ?? o.office_id),
           label: String(o.label ?? o.office_name ?? o.name ?? o.id ?? o.office_id),
           sublabel: o.sublabel != null ? String(o.sublabel) : undefined,
-        }))
-        .filter((o: OfficeOption) => Boolean(o.id));
+        }));
 
-      rows.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+      rows.sort((a: OfficeOption, b: OfficeOption) =>
+        a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
+      );
+
       setOfficeOptions(rows);
     } catch (e: any) {
       setOfficeError(e?.message ?? "Failed to load offices");
@@ -199,7 +204,9 @@ export function useAssignmentTab(args: {
     return ci ?? null;
   }, [positionTitleOptions]);
 
-  const masterForPerson = useMemo(() => pickActive(master, personId, assignmentId), [master, personId, assignmentId]);
+  const masterForPerson = useMemo(() => pickActiveAssignmentRow(master, personId), [master, personId]);
+
+  const canLifecycle = canManage && modifyMode === "open";
 
   const beginEditAssignment = useCallback(() => {
     if (!masterForPerson) return;
@@ -211,6 +218,11 @@ export function useAssignmentTab(args: {
     const draft = { ...base };
 
     if (!draft.position_title && defaultPositionTitle) draft.position_title = defaultPositionTitle;
+
+    // If master row didn't hydrate assignment_id yet, bridge from ref
+    if (!norm(draft.assignment_id) && createdAssignmentIdRef.current) {
+      draft.assignment_id = createdAssignmentIdRef.current;
+    }
 
     setAssignmentBaseline(base);
     setAssignmentDraft(draft);
@@ -226,14 +238,18 @@ export function useAssignmentTab(args: {
 
   const assignmentDirty = useMemo(() => {
     if (!assignmentBaseline || !assignmentDraft) return false;
-    return EDIT_KEYS.some((k) => norm((assignmentBaseline as any)?.[k]) !== norm((assignmentDraft as any)?.[k]));
+    const keys = ["position_title", "start_date", "end_date", "active", "tech_id", "office_id"] as const;
+    return keys.some((k) => String((assignmentBaseline as any)?.[k] ?? "") !== String((assignmentDraft as any)?.[k] ?? ""));
   }, [assignmentBaseline, assignmentDraft]);
 
   const assignmentValidation = useMemo(() => {
-    const start = norm((assignmentDraft as any)?.start_date);
-    const end = norm((assignmentDraft as any)?.end_date);
-    if (!start) return { ok: false as const, msg: "Start date is required." };
-    if (end && end < start) return { ok: false as const, msg: "End date must be on or after start date." };
+    const start = (assignmentDraft as any)?.start_date ?? null;
+    const end = (assignmentDraft as any)?.end_date ?? null;
+
+    if (!start || String(start).trim() === "") return { ok: false as const, msg: "Start date is required." };
+    if (end && String(end).trim() !== "" && String(end) < String(start)) {
+      return { ok: false as const, msg: "End date must be on or after start date." };
+    }
     return { ok: true as const, msg: "" };
   }, [assignmentDraft]);
 
@@ -243,26 +259,44 @@ export function useAssignmentTab(args: {
       return;
     }
 
-    const aid = norm((assignmentDraft as any)?.assignment_id) || norm((masterForPerson as any)?.assignment_id) || "";
+    const aid =
+      norm((assignmentDraft as any)?.assignment_id) ??
+      norm((masterForPerson as any)?.assignment_id) ??
+      norm(assignmentId) ??
+      norm(createdAssignmentIdRef.current);
+
     if (!aid) {
-      setAssignmentErr("No assignment_id to save. Start assignment first, then refresh.");
+      setAssignmentErr("No assignment_id. Start assignment first.");
       setEditingAssignment(false);
       return;
     }
-    if (!assignmentValidation.ok) return setAssignmentErr(assignmentValidation.msg);
-    if (!pcOrgId) return setAssignmentErr("Missing pc_org_id.");
 
-    const p_patch: any = { pc_org_id: pcOrgId };
-    for (const k of EDIT_KEYS) {
-      const before = (assignmentBaseline as any)?.[k] ?? null;
-      let after: any = (assignmentDraft as any)?.[k] ?? null;
-      if (typeof after === "string" && !after.trim()) after = null;
-      if (k === "start_date" && after == null) return setAssignmentErr("Start date is required.");
-      if (norm(before) !== norm(after)) p_patch[k] = after;
+    if (!assignmentValidation.ok) {
+      setAssignmentErr(assignmentValidation.msg);
+      return;
     }
 
-    const changed = Object.keys(p_patch).some((k) => k !== "pc_org_id");
-    if (!changed) {
+    if (!pcOrgId) {
+      setAssignmentErr("Missing pc_org_id.");
+      return;
+    }
+
+    const editableKeys = ["position_title", "start_date", "end_date", "active", "tech_id", "office_id"] as const;
+    const p_patch: any = { pc_org_id: pcOrgId };
+
+    for (const k of editableKeys) {
+      const before = (assignmentBaseline as any)?.[k] ?? null;
+      let after: any = (assignmentDraft as any)?.[k] ?? null;
+      if (typeof after === "string" && after.trim() === "") after = null;
+      if (k === "start_date" && after == null) {
+        setAssignmentErr("Start date is required.");
+        return;
+      }
+      if (String(before ?? "") !== String(after ?? "")) p_patch[k] = after;
+    }
+
+    const changed = Object.keys(p_patch).filter((k) => k !== "pc_org_id");
+    if (changed.length === 0) {
       setEditingAssignment(false);
       return;
     }
@@ -270,7 +304,7 @@ export function useAssignmentTab(args: {
     setSavingAssignment(true);
     setAssignmentErr(null);
     try {
-      await callRpc("assignment_patch", { p_assignment_id: aid, p_patch }, "public");
+      await callRpcApiThenPublic("assignment_patch", { p_assignment_id: aid, p_patch });
       setEditingAssignment(false);
       await loadMaster();
     } catch (e: any) {
@@ -278,43 +312,63 @@ export function useAssignmentTab(args: {
     } finally {
       setSavingAssignment(false);
     }
-  }, [assignmentDraft, assignmentBaseline, assignmentValidation, pcOrgId, masterForPerson, callRpc, loadMaster]);
+  }, [
+    assignmentDraft,
+    assignmentBaseline,
+    assignmentId,
+    assignmentValidation,
+    pcOrgId,
+    masterForPerson,
+    callRpcApiThenPublic,
+    loadMaster,
+  ]);
 
   const startAssignment = useCallback(async () => {
     setAssignmentErr(null);
 
-    if (!canLifecycle) return setAssignmentErr("Not allowed.");
+    if (!canLifecycle) return setAssignmentErr("Not allowed (requires Modify=open and roster_manage).");
     if (!pcOrgId) return setAssignmentErr("Missing pc_org_id.");
     if (!personId) return setAssignmentErr("Missing person_id.");
     if (masterForPerson) return setAssignmentErr("Active assignment already exists.");
 
     setStartingAssignment(true);
+    createdAssignmentIdRef.current = null;
+
     try {
       const pos = defaultPositionTitle ?? "Technician";
-      const start = todayISO();
+      const start = todayISODate();
 
-      const data = await callRpc(
-        "assignment_start",
-        { pc_org_id: pcOrgId, person_id: personId, start_date: start, position_title: pos },
-        "public"
-      );
+      // 1) Try API first (returns assignment composite)
+      let createdId: string | null = null;
+      try {
+        const data = await callRpc("assignment_start", {
+          p_pc_org_id: pcOrgId,
+          p_person_id: personId,
+          p_position_title: pos,
+          p_start_date: start,
+          p_office_id: null,
+        }, "api");
+        createdId = extractAssignmentId(data);
+      } catch (e: any) {
+        // If API function missing, fall through to public
+        const msg = String(e?.message ?? "");
+        if (!isFnMissingError(msg)) throw e;
+      }
 
-      const createdId = readAssignmentId(data);
+      // 2) If API didn’t give us an id, call PUBLIC (returns uuid)
+      if (!createdId) {
+        const data = await callRpc("assignment_start", {
+          pc_org_id: pcOrgId,
+          person_id: personId,
+          start_date: start,
+          position_title: pos,
+        }, "public");
+        createdId = extractAssignmentId(data);
+      }
+
+      if (createdId) createdAssignmentIdRef.current = createdId;
 
       await loadMaster();
-
-      if (createdId) {
-        setMaster((prev) => {
-          if (!prev || !personId) return prev;
-          const pid = norm(personId);
-          return prev.map((r: any) => {
-            if (norm(r?.person_id) !== pid) return r;
-            if (norm(r?.assignment_id)) return r;
-            if (!isActive(r)) return r;
-            return { ...r, assignment_id: createdId };
-          });
-        });
-      }
     } catch (e: any) {
       setAssignmentErr(e?.message ?? "Failed to start assignment");
     } finally {
@@ -325,36 +379,59 @@ export function useAssignmentTab(args: {
   const endAssignment = useCallback(async () => {
     setAssignmentErr(null);
 
-    if (!canLifecycle) return setAssignmentErr("Not allowed.");
-
-    const aid = norm((masterForPerson as any)?.assignment_id) || norm(assignmentId) || "";
-    if (!aid) return setAssignmentErr("No active assignment to end.");
+    if (!canLifecycle) return setAssignmentErr("Not allowed (requires Modify=open and roster_manage).");
     if (!pcOrgId) return setAssignmentErr("Missing pc_org_id.");
+
+    const aid =
+      norm((masterForPerson as any)?.assignment_id) ??
+      norm(assignmentId) ??
+      norm(createdAssignmentIdRef.current);
+
+    if (!aid) return setAssignmentErr("No active assignment to end.");
 
     setEndingAssignment(true);
     try {
-      await callRpc("assignment_end", { pc_org_id: pcOrgId, assignment_id: aid, end_date: todayISO() }, "public");
+      const end = todayISODate();
+
+      // Prefer API (if present), fallback to public if missing
+      try {
+        await callRpc("assignment_end", {
+          p_pc_org_id: pcOrgId,
+          p_assignment_id: aid,
+          p_end_date: end,
+        }, "api");
+      } catch (e: any) {
+        const msg = String(e?.message ?? "");
+        if (!isFnMissingError(msg)) throw e;
+        await callRpc("assignment_end", { pc_org_id: pcOrgId, assignment_id: aid, end_date: end }, "public");
+      }
+
       setEditingAssignment(false);
       setAssignmentDraft(null);
       setAssignmentBaseline(null);
+
       await loadMaster();
     } catch (e: any) {
       setAssignmentErr(e?.message ?? "Failed to end assignment");
     } finally {
       setEndingAssignment(false);
     }
-  }, [canLifecycle, masterForPerson, assignmentId, pcOrgId, callRpc, loadMaster]);
+  }, [canLifecycle, pcOrgId, masterForPerson, assignmentId, callRpc, loadMaster]);
 
   useEffect(() => {
     if (!open) return;
     if (tab !== "assignment" && tab !== "leadership") return;
-    void loadPositionTitles();
-    void loadOffices();
+    const t = window.setTimeout(() => {
+      void loadPositionTitles();
+      void loadOffices();
+    }, 0);
+    return () => window.clearTimeout(t);
   }, [open, tab, loadPositionTitles, loadOffices]);
 
   useEffect(() => {
     if (!open) return;
-    void loadMaster();
+    const t = window.setTimeout(() => void loadMaster(), 0);
+    return () => window.clearTimeout(t);
   }, [open, loadMaster]);
 
   return {

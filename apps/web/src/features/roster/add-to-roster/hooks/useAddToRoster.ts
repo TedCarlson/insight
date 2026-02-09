@@ -43,6 +43,10 @@ function todayISODate(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function isFnMissingError(msg: string) {
+  return /function .* does not exist/i.test(msg) || /schema/i.test(msg) || /not found/i.test(msg);
+}
+
 export function useAddToRoster() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -51,14 +55,8 @@ export function useAddToRoster() {
   const [coLoading, setCoLoading] = useState(false);
   const [coOptions, setCoOptions] = useState<CoOption[]>([]);
 
-  // Prevent duplicate loads + prevent render loops.
   const loadPromiseRef = useRef<Promise<CoOption[]> | null>(null);
 
-  /**
-   * Session-aware RPC caller
-   * - Sends Authorization header so /api/org/rpc can resolve user
-   * - Allows explicit schema ("api" | "public")
-   */
   const callRpc = useCallback(
     async (fn: string, args: Record<string, any>, schema: RpcSchema = "api"): Promise<any> => {
       const { data: sessionRes } = await supabase.auth.getSession();
@@ -75,10 +73,24 @@ export function useAddToRoster() {
       });
 
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error ?? `RPC failed: ${fn}`);
+      if (!res.ok) throw new Error(json?.error ?? json?.message ?? `RPC failed: ${fn}`);
       return json?.data ?? null;
     },
     [supabase]
+  );
+
+  // ✅ New: try schema=api first, fallback to schema=public ONLY for "function missing" style errors
+  const callRpcApiThenPublic = useCallback(
+    async (fn: string, args: Record<string, any>): Promise<any> => {
+      try {
+        return await callRpc(fn, args, "api");
+      } catch (e: any) {
+        const msg = String(e?.message ?? "");
+        if (isFnMissingError(msg)) return await callRpc(fn, args, "public");
+        throw e;
+      }
+    },
+    [callRpc]
   );
 
   const ensureCoOptions = useCallback(async (): Promise<CoOption[]> => {
@@ -134,10 +146,6 @@ export function useAddToRoster() {
     return p;
   }, [coOptions, supabase]);
 
-  /**
-   * Step 2: upsert person (public), start membership (api.add_to_roster),
-   * and optionally start assignment (api.assignment_start).
-   */
   const upsertAndAddMembership = useCallback(
     async (input: {
       pcOrgId: string;
@@ -161,7 +169,7 @@ export function useAddToRoster() {
 
         if (!co_code) {
           const opts = await ensureCoOptions();
-          const hit = opts.find((o) => String(o.co_ref_id) === co_ref_id) ?? null;
+          const hit = opts.find((o: CoOption) => String(o.co_ref_id) === co_ref_id) ?? null;
           co_code = hit?.co_code ?? null;
         }
 
@@ -169,7 +177,7 @@ export function useAddToRoster() {
         const personRow = await callRpc(
           "person_upsert",
           {
-            p_person_id: draft.person_id, // null = insert
+            p_person_id: draft.person_id,
             p_full_name: full_name,
             p_emails: emails,
             p_mobile: String(draft.mobile ?? "").trim() || null,
@@ -177,11 +185,7 @@ export function useAddToRoster() {
             p_person_notes: String(draft.person_notes ?? "").trim() || null,
             p_person_nt_login: String(draft.person_nt_login ?? "").trim() || null,
             p_person_csg_id: String(draft.person_csg_id ?? "").trim() || null,
-
-            // safe default
             p_active: typeof draft.active === "boolean" ? draft.active : true,
-
-            // derived/hidden
             p_role: null,
             p_co_ref_id: co_ref_id,
             p_co_code: co_code,
@@ -192,30 +196,35 @@ export function useAddToRoster() {
         const personId = String(personRow?.person_id ?? personRow?.id ?? draft.person_id ?? "").trim();
         if (!personId) return { ok: false, error: "Upsert succeeded but no person_id was returned." };
 
-        // 2) Start membership (API)
-        await callRpc(
-          "add_to_roster",
-          {
+        // 2) Start membership (API → PUBLIC fallback)
+        await callRpcApiThenPublic("add_to_roster", {
+          p_pc_org_id: pcOrgId,
+          p_person_id: personId,
+          p_start_date: todayISODate(),
+
+          // extra shape support (harmless if ignored)
+          pc_org_id: pcOrgId,
+          person_id: personId,
+          start_date: todayISODate(),
+        });
+
+        // 3) Optional: Start assignment (API → PUBLIC fallback)
+        if (startAssignment) {
+          const pos = String(positionTitle ?? "").trim() || null;
+
+          await callRpcApiThenPublic("assignment_start", {
             p_pc_org_id: pcOrgId,
             p_person_id: personId,
+            p_position_title: pos,
             p_start_date: todayISODate(),
-          },
-          "api"
-        );
+            p_office_id: null,
 
-        // 3) Optional: Start assignment (API) so roster module can edit immediately
-        if (startAssignment) {
-          await callRpc(
-            "assignment_start",
-            {
-              p_pc_org_id: pcOrgId,
-              p_person_id: personId,
-              p_position_title: String(positionTitle ?? "").trim() || null,
-              p_start_date: todayISODate(),
-              p_office_id: null,
-            },
-            "api"
-          );
+            pc_org_id: pcOrgId,
+            person_id: personId,
+            position_title: pos,
+            start_date: todayISODate(),
+            office_id: null,
+          });
         }
 
         return { ok: true, data: { personId } };
@@ -225,7 +234,7 @@ export function useAddToRoster() {
         setSaving(false);
       }
     },
-    [ensureCoOptions, callRpc]
+    [ensureCoOptions, callRpc, callRpcApiThenPublic]
   );
 
   return {

@@ -124,7 +124,7 @@ export function LocateDailyEntryTable(props: Props) {
         <DataTable zebra hover layout="content" gridStyle={gridStyle}>
           <DataTableHeader gridStyle={gridStyle}>
             <div>State</div>
-            <div>Baseline</div>
+            <div>Headcount</div>
             <div>Working</div>
             <div>{ticketsLabel}</div>
             <div>Project</div>

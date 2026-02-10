@@ -81,9 +81,9 @@ export function PersonTab(props: {
       <Card>
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold">Person (api.person_get) — all fields (human readable)</div>
+            <div className="text-sm font-semibold">Person Details</div>
             <div className="text-xs text-[var(--to-ink-muted)]">
-              This view is the source of truth. Edit inline to test hydration and write.
+              This section shows all individual. Affiliation details are at the foot of this view.
             </div>
           </div>
 
@@ -250,7 +250,7 @@ export function PersonTab(props: {
                   } else {
                     n.co_ref_id = String(next.co_ref_id);
                     n.co_code = next.co_code ? String(next.co_code) : null;
-                    n.role = next.kind === "contractor" ? "contractor" : null;
+                    n.role = next.kind === "contractor" ? "Contractors" : "Hires";
                   }
 
                   if (!n.full_name || String(n.full_name).trim() === "") {

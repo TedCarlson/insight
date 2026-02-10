@@ -42,32 +42,55 @@ function todayISODate(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function isFnMissingError(msg: string) {
+  return (
+    /could not find the function/i.test(msg) ||
+    /does not exist/i.test(msg) ||
+    /schema cache/i.test(msg) ||
+    /not found/i.test(msg)
+  );
+}
+
 function norm(v: unknown): string | null {
   const s = String(v ?? "").trim();
   return s ? s : null;
 }
 
-function newUUID(): string {
-  // Browser-safe UUID
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  // Ultra-rare fallback; should not hit in modern browsers
-  const s4 = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
-  return `${s4()}${s4()}-${s4()}-${s4()}-${s4()}-${s4()}${s4()}${s4()}`;
+/**
+ * Extract person_id from a wide range of RPC return shapes.
+ * Handles:
+ * - uuid string
+ * - { person_id } / { id }
+ * - { data: { person_id } } / { data: [...] }
+ * - [{ person_id }]
+ */
+function extractPersonId(rpcData: unknown, fallback: string | null): string | null {
+  const fb = norm(fallback);
+  if (!rpcData) return fb;
+
+  if (typeof rpcData === "string") return norm(rpcData) ?? fb;
+
+  if (Array.isArray(rpcData)) {
+    const first: any = rpcData[0];
+    return norm(first?.person_id ?? first?.id) ?? fb;
+  }
+
+  const o: any = rpcData as any;
+
+  const direct = norm(o?.person_id ?? o?.id);
+
+  const dataObj = o?.data;
+  const nested =
+    (Array.isArray(dataObj)
+      ? norm((dataObj[0] as any)?.person_id ?? (dataObj[0] as any)?.id)
+      : norm((dataObj as any)?.person_id ?? (dataObj as any)?.id)) ?? null;
+
+  return direct ?? nested ?? fb;
 }
 
-/**
- * Only treat true "missing function" / schema-cache errors as fallback-safe.
- * Do NOT fallback on SQL errors (ambiguous column, permission denied, etc.).
- */
-function isFnMissingError(msg: string) {
-  const m = String(msg ?? "");
-  return (
-    /could not find the function/i.test(m) ||
-    /does not exist/i.test(m) ||
-    /schema cache/i.test(m) ||
-    /not found/i.test(m) ||
-    /missing in schema/i.test(m)
-  );
+function deriveRoleFromAffiliation(kind: "company" | "contractor" | null | undefined): string {
+  // Per your rule set (no NULL allowed)
+  return kind === "contractor" ? "Contractors" : "Hires";
 }
 
 export function useAddToRoster() {
@@ -96,12 +119,16 @@ export function useAddToRoster() {
       });
 
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((json as any)?.error ?? (json as any)?.message ?? `RPC failed: ${fn}`);
-      return (json as any)?.data ?? null;
+      if (!res.ok) throw new Error(json?.error ?? json?.message ?? `RPC failed: ${fn}`);
+      return json?.data ?? null;
     },
     [supabase]
   );
 
+  /**
+   * Prefer api schema, fallback to public ONLY if the function is missing in api.
+   * IMPORTANT: apiArgs and publicArgs can differ (they do in this project).
+   */
   const callRpcPreferApi = useCallback(
     async (fn: string, apiArgs: Record<string, any>, publicArgs: Record<string, any>): Promise<any> => {
       try {
@@ -124,7 +151,11 @@ export function useAddToRoster() {
       try {
         const [{ data: companies, error: cErr }, { data: contractors, error: kErr }] = await Promise.all([
           supabase.from("company").select("company_id, company_name, company_code").order("company_name").limit(500),
-          supabase.from("contractor").select("contractor_id, contractor_name, contractor_code").order("contractor_name").limit(500),
+          supabase
+            .from("contractor")
+            .select("contractor_id, contractor_name, contractor_code")
+            .order("contractor_name")
+            .limit(500),
         ]);
 
         if (cErr) throw cErr;
@@ -165,9 +196,8 @@ export function useAddToRoster() {
   }, [coOptions, supabase]);
 
   /**
-   * Upsert person (public) -> REQUIRES p_person_id even for inserts (DB rule)
-   * add_to_roster (api preferred)
-   * assignment_start optional (api preferred)
+   * Upsert person (public), start membership (api.add_to_roster; public fallback),
+   * then start assignment (api/public) using selected positionTitle.
    */
   const upsertAndAddMembership = useCallback(
     async (input: {
@@ -179,57 +209,69 @@ export function useAddToRoster() {
       const { pcOrgId, positionTitle, draft, startAssignment = true } = input;
 
       const full_name = String(draft.full_name ?? "").trim();
-      const emails = String(draft.emails ?? "").trim();
-      const co_ref_id = norm(draft.co_ref_id);
+      const emailsRaw = String(draft.emails ?? "").trim();
+      const emails = emailsRaw ? emailsRaw : null;
 
+      const co_ref_id = draft.co_ref_id ? String(draft.co_ref_id).trim() : "";
       if (!full_name) return { ok: false, error: "Full name is required." };
-      if (!emails) return { ok: false, error: "Emails is required." };
       if (!co_ref_id) return { ok: false, error: "Affiliation is required." };
       if (!pcOrgId) return { ok: false, error: "Missing pc_org_id." };
 
       setSaving(true);
       try {
-        let co_code = norm(draft.co_code);
+        let co_code = draft.co_code ? String(draft.co_code) : null;
 
-        if (!co_code) {
-          const opts = await ensureCoOptions();
-          const hit = opts.find((o) => String(o.co_ref_id) === String(co_ref_id)) ?? null;
-          co_code = hit?.co_code ?? null;
-        }
+        const opts = await ensureCoOptions();
+        const hit = opts.find((o) => String(o.co_ref_id) === co_ref_id) ?? null;
 
-        // ✅ DB requires explicit person_id for inserts
-        const personId = norm(draft.person_id) ?? newUUID();
+        if (!co_code) co_code = hit?.co_code ?? null;
+
+        // Role: NEVER NULL (per your rule). Prefer explicit draft.role, else derive.
+        const derivedKind =
+          (hit?.co_type as any) ??
+          (String(draft.co_type ?? "").toLowerCase().includes("contract") ? "contractor" : "company");
+
+        const role = norm(draft.role) ?? deriveRoleFromAffiliation(derivedKind);
 
         // 1) Upsert person (PUBLIC)
-        await callRpc(
+        const personRow = await callRpc(
           "person_upsert",
           {
-            p_person_id: personId,
+            p_person_id: draft.person_id, // null = insert
             p_full_name: full_name,
-            p_emails: emails,
-            p_mobile: norm(draft.mobile),
-            p_fuse_emp_id: norm(draft.fuse_emp_id),
-            p_person_notes: norm(draft.person_notes),
-            p_person_nt_login: norm(draft.person_nt_login),
-            p_person_csg_id: norm(draft.person_csg_id),
+            p_emails: emails, // ✅ email optional
+            p_mobile: String(draft.mobile ?? "").trim() || null,
+            p_fuse_emp_id: String(draft.fuse_emp_id ?? "").trim() || null,
+            p_person_notes: String(draft.person_notes ?? "").trim() || null,
+            p_person_nt_login: String(draft.person_nt_login ?? "").trim() || null,
+            p_person_csg_id: String(draft.person_csg_id ?? "").trim() || null,
             p_active: typeof draft.active === "boolean" ? draft.active : true,
-            p_role: null,
+            p_role: role, // ✅ NEVER NULL
             p_co_ref_id: co_ref_id,
             p_co_code: co_code,
           },
           "public"
         );
 
-        const startDate = todayISODate();
+        const personId = extractPersonId(personRow, draft.person_id);
+        if (!personId) return { ok: false, error: "Upsert succeeded but no person_id was returned." };
 
-        // 2) Start membership (prefer API p_* args; fallback to PUBLIC non-p args if api function missing)
+        // 2) Start membership
         await callRpcPreferApi(
           "add_to_roster",
-          { p_pc_org_id: pcOrgId, p_person_id: personId, p_start_date: startDate },
-          { pc_org_id: pcOrgId, person_id: personId, start_date: startDate }
+          {
+            p_pc_org_id: pcOrgId,
+            p_person_id: personId,
+            p_start_date: todayISODate(),
+          },
+          {
+            pc_org_id: pcOrgId,
+            person_id: personId,
+            start_date: todayISODate(),
+          }
         );
 
-        // 3) Optional: Start assignment (prefer API p_* args; fallback to PUBLIC non-p args if api missing)
+        // 3) Optional: Start assignment
         if (startAssignment) {
           const pos = norm(positionTitle) ?? "Technician";
 
@@ -239,14 +281,14 @@ export function useAddToRoster() {
               p_pc_org_id: pcOrgId,
               p_person_id: personId,
               p_position_title: pos,
-              p_start_date: startDate,
+              p_start_date: todayISODate(),
               p_office_id: null,
             },
             {
               pc_org_id: pcOrgId,
               person_id: personId,
               position_title: pos,
-              start_date: startDate,
+              start_date: todayISODate(),
             }
           );
         }

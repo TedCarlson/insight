@@ -1,4 +1,5 @@
-import { api, type PersonRow, type RosterDrilldownRow, type RosterMasterRow } from "@/shared/lib/api";
+// apps/web/src/features/roster/hooks/rosterRowModule.actions.ts
+import { api, type RosterDrilldownRow, type RosterMasterRow } from "@/shared/lib/api";
 
 export type PositionTitleRow = {
   position_title: string;
@@ -27,8 +28,20 @@ export async function loadPositionTitlesAction(args: {
       return;
     }
 
-    const list = Array.isArray(json) ? json : Array.isArray((json as any)?.data) ? (json as any).data : [];
-    const rows: PositionTitleRow[] = list
+    // ✅ Accept multiple shapes:
+    // 1) [...]
+    // 2) { data: [...] }
+    // 3) { ok: true, titles: [...] }  <-- your server helper
+    const list =
+      Array.isArray(json)
+        ? json
+        : Array.isArray((json as any)?.titles)
+          ? (json as any).titles
+          : Array.isArray((json as any)?.data)
+            ? (json as any).data
+            : [];
+
+    const rows: PositionTitleRow[] = (list ?? [])
       .filter((t: any) => t && typeof t.position_title === "string")
       .map((t: any) => ({
         position_title: String(t.position_title),
@@ -40,70 +53,6 @@ export async function loadPositionTitlesAction(args: {
   } catch (e: any) {
     setError(e?.message ?? "Failed to load position titles");
     setRows([]);
-  } finally {
-    setLoading(false);
-  }
-}
-
-export async function loadPersonAction(args: {
-  personId: string;
-  row: any;
-  editingPerson: boolean;
-  ensurePersonIdentity: (obj: any, row: any) => any;
-
-  setLoading: (v: boolean) => void;
-  setErr: (v: string | null) => void;
-
-  setPerson: (v: any) => void;
-  setBaseline: (v: any) => void;
-  setDraft: (updater: any) => void;
-
-  setCoResolved: (v: any) => void;
-}) {
-  const {
-    personId,
-    row,
-    editingPerson,
-    ensurePersonIdentity,
-    setLoading,
-    setErr,
-    setPerson,
-    setBaseline,
-    setDraft,
-    setCoResolved,
-  } = args;
-
-  if (!personId) return;
-
-  setLoading(true);
-  setErr(null);
-
-  try {
-    const data = await api.personGet(String(personId));
-    const merged = ensurePersonIdentity(data, row);
-    setPerson(merged);
-
-    // Resolve co display (best-effort)
-    try {
-      const resolved = await api.resolveCoDisplay({
-        co_ref_id: (merged as any)?.co_ref_id ?? null,
-        co_code: (merged as any)?.co_code ?? null,
-      });
-      setCoResolved(resolved);
-    } catch {
-      setCoResolved(null);
-    }
-
-    setBaseline(merged ? { ...(merged as any) } : null);
-
-    // Draft: keep prior draft if already editing, otherwise reset to merged
-    setDraft((prev: any | null) => (editingPerson ? prev : merged ? { ...(merged as any) } : null));
-  } catch (e: any) {
-    setErr(e?.message ?? "Failed to load person");
-    setPerson(null);
-    setBaseline(null);
-    setDraft(() => null);
-    setCoResolved(null);
   } finally {
     setLoading(false);
   }

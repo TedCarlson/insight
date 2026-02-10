@@ -35,7 +35,9 @@ export function AssignmentTab(props: {
   assignmentDraft: any | null;
 
   assignmentDirty: boolean;
-  assignmentValidation: { ok: boolean; msg: string };
+
+  // ✅ make optional because hook wiring can briefly pass undefined
+  assignmentValidation?: { ok: boolean; msg: string };
 
   positionTitlesError: string | null;
   positionTitlesLoading: boolean;
@@ -54,7 +56,7 @@ export function AssignmentTab(props: {
 
   setAssignmentDraft: (updater: any) => void;
 
-  // ✅ NEW: assignment lifecycle controls (start/end)
+  // assignment lifecycle controls (start/end)
   canManage?: boolean; // roster_manage OR owner
   modifyMode?: "open" | "locked";
   startingAssignment?: boolean;
@@ -73,7 +75,9 @@ export function AssignmentTab(props: {
     savingAssignment,
     assignmentDraft,
     assignmentDirty,
-    assignmentValidation,
+
+    // ✅ safe default prevents runtime crash
+    assignmentValidation = { ok: true, msg: "" },
 
     positionTitlesError,
     positionTitlesLoading,
@@ -141,7 +145,7 @@ export function AssignmentTab(props: {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* ✅ NEW: Start/End Assignment buttons (only when Modify=open + roster_manage) */}
+            {/* Start/End Assignment buttons (only when Modify=open + roster_manage) */}
             {canShowLifecycleButtons ? (
               hasActiveAssignment ? (
                 <Button
@@ -164,7 +168,7 @@ export function AssignmentTab(props: {
               )
             ) : null}
 
-            {/* Existing edit flow remains (safe) */}
+            {/* Existing edit flow remains */}
             {!editingAssignment ? (
               <Button onClick={beginEditAssignment} disabled={!hasActiveAssignment || loadingMaster}>
                 Edit
@@ -174,7 +178,10 @@ export function AssignmentTab(props: {
                 <Button variant="ghost" onClick={cancelEditAssignment} disabled={savingAssignment}>
                   Cancel
                 </Button>
-                <Button onClick={saveAssignment} disabled={savingAssignment || !assignmentDirty || !assignmentValidation.ok}>
+                <Button
+                  onClick={saveAssignment}
+                  disabled={savingAssignment || !assignmentDirty || !assignmentValidation.ok}
+                >
                   {savingAssignment ? "Saving…" : "Save"}
                 </Button>
               </div>
@@ -269,9 +276,7 @@ export function AssignmentTab(props: {
                     ))}
                   </Select>
 
-                  <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-                    (Save will fail if invalid.)
-                  </div>
+                  <div className="mt-1 text-xs text-[var(--to-ink-muted)]">(Save will fail if invalid.)</div>
                 </div>
               </div>
             ) : (

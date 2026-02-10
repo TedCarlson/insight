@@ -22,10 +22,14 @@ import { createClient } from "@/shared/data/supabase/client";
 import { fetchActiveMembershipOrgByPersonIds } from "@/shared/lib/activeRoster";
 import { resolveActiveLob, lobLabel, type Lob } from "@/shared/lob";
 
-// ✅ reuse the same action already used elsewhere
-import { loadPositionTitlesAction } from "@/features/roster/hooks/rosterRowModule.actions";
+// ✅ reuse existing actions (keeps blast radius tiny)
+import {
+  loadPositionTitlesAction,
+  loadMasterAction,
+  type PositionTitleRow,
+} from "@/features/roster/hooks/rosterRowModule.actions";
 
-type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
+type OfficeOption = { id: string; label: string; sublabel?: string | null };
 
 type Props = {
   open: boolean;
@@ -56,6 +60,11 @@ function emptyDraft(): OnboardPersonDraft {
     co_code: null,
     co_name: null,
     co_type: null,
+
+    // New Person extras
+    tech_id: "",
+    office_id: null,
+    reports_to_assignment_id: null,
   };
 }
 
@@ -85,9 +94,48 @@ function isAllowedPositionTitle(t: string): boolean {
   if (!s) return false;
 
   // Keep “Manager and below”; exclude higher leadership titles.
-  // Adjust tokens if your list differs.
   if (/(director|sr\.?\s*director|vp|vice\s*president|president|ceo|cfo|coo|owner)/i.test(s)) return false;
 
+  return true;
+}
+
+function norm(v: unknown): string {
+  return String(v ?? "").trim();
+}
+
+function titleRankFallback(titleRaw: string) {
+  const t = norm(titleRaw).toLowerCase();
+  if (t.includes("technician")) return 10;
+  if (t.includes("supervisor")) return 20;
+  if (t.includes("manager")) return 30;
+  if (t.includes("director")) return 40;
+  if (t.includes("vp") || t.includes("vice president")) return 50;
+  return 25;
+}
+
+function getRankForTitle(title: string, positionTitles: PositionTitleRow[]) {
+  const map = new Map<string, number>();
+  for (const pt of positionTitles ?? []) {
+    const key = norm((pt as any)?.position_title);
+    const so = Number((pt as any)?.sort_order);
+    if (key && Number.isFinite(so)) map.set(key, so);
+  }
+
+  const direct = map.get(norm(title));
+  return typeof direct === "number" ? direct : titleRankFallback(title);
+}
+
+function sortIncreasesWithSeniority(positionTitles: PositionTitleRow[]) {
+  const map = new Map<string, number>();
+  for (const pt of positionTitles ?? []) {
+    const key = norm((pt as any)?.position_title);
+    const so = Number((pt as any)?.sort_order);
+    if (key && Number.isFinite(so)) map.set(key, so);
+  }
+
+  const tech = map.get("Technician");
+  const sup = map.get("Supervisor");
+  if (typeof tech === "number" && typeof sup === "number") return tech < sup;
   return true;
 }
 
@@ -106,7 +154,14 @@ export function AddToRosterDrawer({
 
   const supabase = useMemo(() => createClient(), []);
 
-  const { saving, coLoading, coOptions, ensureCoOptions, upsertAndAddMembership } = useAddToRoster();
+  const {
+    saving,
+    coLoading,
+    coOptions,
+    ensureCoOptions,
+    upsertAndAddMembership,
+    addNewPersonWaterfall,
+  } = useAddToRoster();
 
   const pickSearch = usePersonSearch({ excludePersonIds, lob });
   const looksLikeSearch = usePersonSearch({ excludePersonIds, lob });
@@ -117,7 +172,7 @@ export function AddToRosterDrawer({
   // Assignment controls
   const [startAssignment, setStartAssignment] = useState<boolean>(true);
 
-  // ✅ Position dropdown
+  // Position dropdown
   const [positionTitle, setPositionTitle] = useState<string>("Technician");
   const [positionTitles, setPositionTitles] = useState<PositionTitleRow[]>([]);
   const [positionTitlesLoading, setPositionTitlesLoading] = useState(false);
@@ -125,18 +180,29 @@ export function AddToRosterDrawer({
 
   const positionOptions = useMemo(() => {
     const list = [...(positionTitles ?? [])]
-      .filter((r) => r && typeof r.position_title === "string")
-      .filter((r) => isAllowedPositionTitle(r.position_title));
+      .filter((r) => r && typeof (r as any).position_title === "string")
+      .filter((r) => isAllowedPositionTitle((r as any).position_title));
 
     list.sort(
       (a, b) =>
-        Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) ||
-        a.position_title.localeCompare(b.position_title, undefined, { sensitivity: "base" })
+        Number((a as any).sort_order ?? 0) - Number((b as any).sort_order ?? 0) ||
+        norm((a as any).position_title).localeCompare(norm((b as any).position_title), undefined, {
+          sensitivity: "base",
+        })
     );
 
-    const titles = list.map((r) => String(r.position_title));
-    return titles;
+    return list.map((r) => norm((r as any).position_title)).filter(Boolean);
   }, [positionTitles]);
+
+  // Offices (optional)
+  const [officeOptions, setOfficeOptions] = useState<OfficeOption[]>([]);
+  const [officeLoading, setOfficeLoading] = useState(false);
+  const [officeError, setOfficeError] = useState<string | null>(null);
+
+  // Leadership candidates (optional)
+  const [masterRows, setMasterRows] = useState<any[] | null>(null);
+  const [masterLoading, setMasterLoading] = useState(false);
+  const [masterErr, setMasterErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -156,15 +222,80 @@ export function AddToRosterDrawer({
 
   useEffect(() => {
     if (!open) return;
+    if (!pcOrgId) return;
+
+    // Load offices when opened
+    let cancelled = false;
+    (async () => {
+      setOfficeLoading(true);
+      setOfficeError(null);
+      try {
+        const res = await fetch(`/api/meta/offices?pc_org_id=${encodeURIComponent(String(pcOrgId))}`);
+        const json = await res.json().catch(() => ({}));
+
+        const list =
+          Array.isArray(json)
+            ? json
+            : Array.isArray((json as any)?.rows)
+              ? (json as any).rows
+              : Array.isArray((json as any)?.data)
+                ? (json as any).data
+                : [];
+
+        const rows: OfficeOption[] = (list ?? [])
+          .filter((o: any) => o && (o.id || o.office_id))
+          .map((o: any) => {
+            const id = String(o.id ?? o.office_id);
+            const label = String(o.label ?? o.office_name ?? o.name ?? id);
+            const sublabel = o.sublabel ? String(o.sublabel) : null;
+            return { id, label, sublabel };
+          })
+          .sort((a: OfficeOption, b: OfficeOption) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+
+        if (!cancelled) setOfficeOptions(rows);
+      } catch (e: any) {
+        if (!cancelled) {
+          setOfficeError(e?.message ?? "Failed to load offices");
+          setOfficeOptions([]);
+        }
+      } finally {
+        if (!cancelled) setOfficeLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, pcOrgId]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!pcOrgId) return;
+
+    // Load roster master (for leadership default + dropdown)
+    const t = window.setTimeout(() => {
+      void loadMasterAction({
+        pcOrgId,
+        setLoading: setMasterLoading,
+        setErr: setMasterErr,
+        setRows: (rows: any) => setMasterRows(Array.isArray(rows) ? rows : null),
+      });
+    }, 0);
+
+    return () => window.clearTimeout(t);
+  }, [open, pcOrgId]);
+
+  useEffect(() => {
+    if (!open) return;
     if (!positionOptions.length) return;
 
     // default selection: Technician if available
-    const cur = String(positionTitle ?? "").trim();
+    const cur = norm(positionTitle);
     if (cur && positionOptions.includes(cur)) return;
 
     const tech =
       positionOptions.find((t) => t === "Technician") ??
-      positionOptions.find((t) => String(t).toLowerCase() === "technician") ??
+      positionOptions.find((t) => norm(t).toLowerCase() === "technician") ??
       null;
 
     setPositionTitle(tech ?? positionOptions[0]);
@@ -192,10 +323,10 @@ export function AddToRosterDrawer({
     if (!open) didEnsureCoOptionsRef.current = false;
   }, [open]);
 
-  const fullName = String(draft.full_name ?? "").trim();
-  const emails = String(draft.emails ?? "").trim();
+  // ✅ New Person required fields: full name + affiliation ONLY
+  const fullName = norm(draft.full_name);
   const coKey = draft.co_ref_id ? String(draft.co_ref_id) : "none";
-  const canSubmitNew = !disabled && Boolean(fullName) && Boolean(emails) && Boolean(draft.co_ref_id);
+  const canSubmitNew = !disabled && Boolean(fullName) && Boolean(draft.co_ref_id);
 
   const onPickAffiliation = (newCoRefId: string) => {
     const opt = coOptions.find((o) => String(o.co_ref_id) === String(newCoRefId)) ?? null;
@@ -206,15 +337,81 @@ export function AddToRosterDrawer({
       co_code: opt?.co_code ?? null,
       co_name: opt?.co_name ?? null,
       co_type: opt?.co_type ?? null,
+
+      // reset leadership selection when affiliation changes
+      reports_to_assignment_id: null,
     }));
   };
+
+  const leadershipOptions = useMemo(() => {
+    if (!masterRows || !masterRows.length) return [] as { value: string; label: string }[];
+
+    const selectedCoRefId = norm(draft.co_ref_id);
+    const selectedCoName = norm(draft.co_name);
+    if (!selectedCoRefId && !selectedCoName) return [];
+
+    const increasesWithSeniority = sortIncreasesWithSeniority(positionTitles);
+    const childRank = getRankForTitle(positionTitle || "Technician", positionTitles);
+
+    const matchesAffiliation = (r: any) => {
+      const rCoRef = norm(r?.co_ref_id);
+      if (selectedCoRefId && rCoRef && rCoRef === selectedCoRefId) return true;
+
+      const rAff = norm(r?.affiliation ?? r?.co_name ?? r?.company_name ?? r?.contractor_name);
+      if (selectedCoName && rAff && rAff.toLowerCase() === selectedCoName.toLowerCase()) return true;
+
+      return false;
+    };
+
+    const isActive = (r: any) => {
+      const end = norm(r?.end_date);
+      const active = r?.active ?? r?.assignment_active ?? true;
+      return Boolean(active) && !end;
+    };
+
+    const candidates = (masterRows as any[])
+      .filter((r) => Boolean(norm(r?.assignment_id)))
+      .filter(isActive)
+      .filter(matchesAffiliation)
+      .filter((r) => {
+        const candTitle = norm(r?.position_title ?? r?.title);
+        const candRank = getRankForTitle(candTitle, positionTitles);
+        return increasesWithSeniority ? candRank > childRank : candRank < childRank;
+      })
+      .map((r) => {
+        const aid = norm(r?.assignment_id);
+        const name = norm(r?.full_name ?? r?.person_name ?? r?.name) || "—";
+        const title = norm(r?.position_title ?? r?.title);
+        return {
+          value: aid,
+          label: title ? `${name} — ${title}` : name,
+        };
+      })
+      .filter((o) => Boolean(o.value))
+      .sort((a: { label: string }, b: { label: string }) => a.label.localeCompare(b.label));
+
+    return candidates;
+  }, [masterRows, draft.co_ref_id, draft.co_name, positionTitle, positionTitles]);
+
+  // If exactly one leadership option exists, auto-select it (Step 3 default)
+  useEffect(() => {
+    if (!open) return;
+    if (mode !== "new") return;
+
+    const current = norm(draft.reports_to_assignment_id);
+    if (current) return;
+
+    if (leadershipOptions.length === 1) {
+      setDraft((d) => ({ ...d, reports_to_assignment_id: leadershipOptions[0]?.value ?? null }));
+    }
+  }, [open, mode, leadershipOptions, draft.reports_to_assignment_id]);
 
   const instantAddExisting = useCallback(
     async (p: PersonHit) => {
       if (!open) return;
       if (disabled) return;
 
-      const pid = String(p.person_id ?? "").trim();
+      const pid = norm(p.person_id);
       if (!pid) return;
 
       if (excludePersonIds?.has(pid)) {
@@ -267,7 +464,8 @@ export function AddToRosterDrawer({
     if (!open) return;
     if (!canSubmitNew) return;
 
-    const r = await upsertAndAddMembership({
+    // New Person uses the waterfall (minimal blast radius; does not affect Pick Existing)
+    const r = await addNewPersonWaterfall({
       pcOrgId,
       positionTitle: positionTitle || "Technician",
       startAssignment,
@@ -287,7 +485,7 @@ export function AddToRosterDrawer({
 
     onAdded?.();
     onClose();
-  }, [open, canSubmitNew, draft, fullName, onAdded, onClose, pcOrgId, toast, upsertAndAddMembership, positionTitle, startAssignment]);
+  }, [open, canSubmitNew, draft, fullName, onAdded, onClose, pcOrgId, toast, addNewPersonWaterfall, positionTitle, startAssignment]);
 
   const looksLikeQ = buildLooksLikeQuery(draft, lob);
 
@@ -295,7 +493,7 @@ export function AddToRosterDrawer({
 
   const displayedPersonIds = useMemo(() => {
     return (displayedResults ?? [])
-      .map((r) => String(r?.person_id ?? "").trim())
+      .map((r) => norm(r?.person_id))
       .filter(Boolean);
   }, [displayedResults]);
 
@@ -330,8 +528,8 @@ export function AddToRosterDrawer({
 
         const nameByOrgId = new Map<string, string>();
         for (const r of data ?? []) {
-          const oid = String((r as any)?.pc_org_id ?? "").trim();
-          const oname = String((r as any)?.pc_org_name ?? "").trim();
+          const oid = norm((r as any)?.pc_org_id);
+          const oname = norm((r as any)?.pc_org_name);
           if (oid) nameByOrgId.set(oid, oname || oid);
         }
 
@@ -394,7 +592,6 @@ export function AddToRosterDrawer({
             <div className="flex items-center gap-2">
               <span className="text-xs text-[var(--to-ink-muted)]">Position</span>
 
-              {/* ✅ dropdown (default Technician) */}
               <Select
                 className="h-9 w-56"
                 value={positionTitle}
@@ -402,7 +599,6 @@ export function AddToRosterDrawer({
                 disabled={disabled || positionTitlesLoading}
                 title={positionTitlesError ?? undefined}
               >
-                {/* Keep Technician even if the list is empty */}
                 {positionOptions.length === 0 ? (
                   <option value="Technician">Technician</option>
                 ) : (
@@ -414,7 +610,6 @@ export function AddToRosterDrawer({
                 )}
               </Select>
 
-              {/* If you want to see load state without adding UI clutter */}
               {positionTitlesError ? (
                 <span className="text-[10px] text-[var(--to-status-warning)]">{positionTitlesError}</span>
               ) : null}
@@ -496,10 +691,34 @@ export function AddToRosterDrawer({
                         setDraft((d) => ({ ...d, emails: v }));
                         looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, emails: v }, lob));
                       }}
-                      placeholder="Emails (comma-separated ok)"
+                      placeholder="Emails (optional)"
                       className="h-10"
                       disabled={disabled}
                     />
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <TextInput
+                      value={(draft as any)?.tech_id ?? ""}
+                      onChange={(e) => setDraft((d) => ({ ...d, tech_id: e.target.value }))}
+                      placeholder="Tech ID (optional)"
+                      className="h-10"
+                      disabled={disabled}
+                    />
+                    <Select
+                      value={draft.office_id ? String(draft.office_id) : "none"}
+                      onChange={(e) => setDraft((d) => ({ ...d, office_id: e.target.value === "none" ? null : e.target.value }))}
+                      className="h-10"
+                      disabled={disabled || officeLoading}
+                      title={officeError ?? undefined}
+                    >
+                      <option value="none">{officeLoading ? "Loading offices…" : "Office (optional)"}</option>
+                      {(officeOptions ?? []).map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.sublabel ? `${o.label} — ${o.sublabel}` : o.label}
+                        </option>
+                      ))}
+                    </Select>
                   </div>
 
                   <div className="grid sm:grid-cols-2 gap-3">
@@ -510,7 +729,7 @@ export function AddToRosterDrawer({
                         setDraft((d) => ({ ...d, mobile: v }));
                         looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, mobile: v }, lob));
                       }}
-                      placeholder="Mobile"
+                      placeholder="Mobile (optional)"
                       className="h-10"
                       disabled={disabled}
                     />
@@ -521,7 +740,7 @@ export function AddToRosterDrawer({
                         setDraft((d) => ({ ...d, fuse_emp_id: v }));
                         looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, fuse_emp_id: v }, lob));
                       }}
-                      placeholder="Fuse Emp ID"
+                      placeholder="Fuse Emp ID (optional)"
                       className="h-10"
                       disabled={disabled}
                     />
@@ -536,7 +755,7 @@ export function AddToRosterDrawer({
                           setDraft((d) => ({ ...d, person_nt_login: v }));
                           looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, person_nt_login: v }, lob));
                         }}
-                        placeholder="NT Login"
+                        placeholder="NT Login (optional)"
                         className="h-10"
                         disabled={disabled}
                       />
@@ -547,7 +766,7 @@ export function AddToRosterDrawer({
                           setDraft((d) => ({ ...d, person_csg_id: v }));
                           looksLikeSearch.onQueryChange(buildLooksLikeQuery({ ...draft, person_csg_id: v }, lob));
                         }}
-                        placeholder="CSG ID"
+                        placeholder="CSG ID (optional)"
                         className="h-10"
                         disabled={disabled}
                       />
@@ -557,7 +776,7 @@ export function AddToRosterDrawer({
                   <TextInput
                     value={draft.person_notes ?? ""}
                     onChange={(e) => setDraft((d) => ({ ...d, person_notes: e.target.value }))}
-                    placeholder="Notes"
+                    placeholder="Notes (optional)"
                     className="h-10"
                     disabled={disabled}
                   />
@@ -578,10 +797,45 @@ export function AddToRosterDrawer({
                       ))}
                     </Select>
 
-                    {!fullName || !emails || !draft.co_ref_id ? (
-                      <div className="text-xs text-[var(--to-ink-muted)]">Required: full name + emails + affiliation.</div>
+                    {!fullName || !draft.co_ref_id ? (
+                      <div className="text-xs text-[var(--to-ink-muted)]">Required: full name + affiliation.</div>
                     ) : null}
                   </div>
+
+                  {/* Leadership (optional): defaults if exactly one candidate */}
+                  <div className="grid gap-1">
+                    <div className="text-xs text-[var(--to-ink-muted)]">Reports to (optional)</div>
+                    <Select
+                      value={draft.reports_to_assignment_id ? String(draft.reports_to_assignment_id) : "none"}
+                      onChange={(e) =>
+                        setDraft((d) => ({
+                          ...d,
+                          reports_to_assignment_id: e.target.value === "none" ? null : e.target.value,
+                        }))
+                      }
+                      className="h-10"
+                      disabled={disabled || masterLoading}
+                      title={masterErr ?? undefined}
+                    >
+                      <option value="none">
+                        {masterLoading
+                          ? "Loading leaders…"
+                          : leadershipOptions.length
+                            ? "Select leader (optional)"
+                            : "No leader candidates"}
+                      </option>
+                      {leadershipOptions.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                    {leadershipOptions.length > 1 ? (
+                      <div className="text-[10px] text-[var(--to-ink-muted)]">Multiple leaders found — leaving NULL unless you choose.</div>
+                    ) : null}
+                  </div>
+
+
                 </div>
               )}
             </div>

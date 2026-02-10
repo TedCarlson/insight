@@ -36,22 +36,59 @@ function isFnMissingError(msg: string) {
   return /function .* does not exist/i.test(msg) || /schema cache/i.test(msg) || /not found/i.test(msg);
 }
 
+function shortId(id: unknown) {
+  if (id == null) return "—";
+  const s = String(id);
+  if (s.length <= 14) return s;
+  return `${s.slice(0, 8)}…${s.slice(-4)}`;
+}
+
+function isUuidLike(s: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+
 /**
- * 🔑 SOURCE-OF-TRUTH RESOLVER
- *
- * If the roster table shows an active assignment,
- * the module MUST agree.
- *
- * Rules:
+ * If backend only gives UUIDs, never show raw UUID as label.
+ * Prefer code/name when available.
+ */
+function pickOfficeLabel(o: any, id: string): { label: string; sublabel?: string } {
+  const candidates: Array<unknown> = [
+    o?.label,
+    o?.office_name,
+    o?.office_label,
+    o?.display_name,
+    o?.office_display_name,
+    o?.name,
+    o?.office_code,
+    o?.code,
+  ];
+
+  const first = candidates.map((v) => String(v ?? "").trim()).find((s) => s.length > 0) ?? "";
+
+  const baseLabel =
+    first && !(first === id && isUuidLike(first))
+      ? first
+      : isUuidLike(id)
+        ? shortId(id)
+        : first || shortId(id);
+
+  const sub = String(o?.sublabel ?? o?.sub_label ?? "").trim();
+  const sublabel = sub ? sub : undefined;
+
+  const code = String(o?.office_code ?? o?.code ?? "").trim();
+  if (code && baseLabel && baseLabel !== code && !isUuidLike(baseLabel)) {
+    return { label: `${code} • ${baseLabel}`, sublabel };
+  }
+
+  return { label: baseLabel, sublabel };
+}
+
+/**
+ * Source-of-truth resolver:
  *  - same person_id
  *  - end_date is NULL / empty
- *  - no guessing on assignment_id variants
- *  - DB view semantics win
  */
-function findActiveAssignment(
-  rows: RosterMasterRow[] | null,
-  personId: string | null
-) {
+function findActiveAssignment(rows: RosterMasterRow[] | null, personId: string | null) {
   if (!rows || !personId) return null;
   const pid = String(personId);
 
@@ -172,17 +209,34 @@ export function useAssignmentTab(args: {
     setOfficeError(null);
 
     try {
-      const res = await fetch(`/api/meta/offices?pc_org_id=${pcOrgId}`);
+      const res = await fetch(`/api/meta/offices?pc_org_id=${encodeURIComponent(String(pcOrgId))}`);
       const json = await res.json().catch(() => ({}));
-      const rows = Array.isArray(json?.rows) ? json.rows : [];
 
-      setOfficeOptions(
-        rows.map((o: any) => ({
-          id: String(o.id ?? o.office_id),
-          label: String(o.office_name ?? o.name ?? o.id),
-          sublabel: o.sublabel ? String(o.sublabel) : undefined,
-        }))
-      );
+      const list =
+        Array.isArray(json)
+          ? json
+          : Array.isArray((json as any)?.rows)
+            ? (json as any).rows
+            : Array.isArray((json as any)?.data)
+              ? (json as any).data
+              : [];
+
+      const rows: OfficeOption[] = (list ?? [])
+        .filter((o: any) => o && (o.id || o.office_id))
+        .map((o: any) => {
+          const id = String(o.id ?? o.office_id);
+          const picked = pickOfficeLabel(o, id);
+          return {
+            id,
+            label: picked.label,
+            sublabel: picked.sublabel,
+          };
+        })
+        .sort((a: OfficeOption, b: OfficeOption) =>
+          a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
+        );
+
+      setOfficeOptions(rows);
     } catch (e: any) {
       setOfficeError(e?.message ?? "Failed to load offices");
       setOfficeOptions([]);
@@ -194,7 +248,7 @@ export function useAssignmentTab(args: {
   /* ------------------------------ derived ------------------------------ */
 
   const positionTitleOptions = useMemo(() => {
-    return [...positionTitles].sort((a, b) => {
+    return [...positionTitles].sort((a: PositionTitleRow, b: PositionTitleRow) => {
       const ao = Number(a.sort_order ?? 0);
       const bo = Number(b.sort_order ?? 0);
       if (ao !== bo) return ao - bo;
@@ -210,11 +264,7 @@ export function useAssignmentTab(args: {
     );
   }, [positionTitleOptions]);
 
-  const masterForPerson = useMemo(
-    () => findActiveAssignment(master, personId),
-    [master, personId]
-  );
-
+  const masterForPerson = useMemo(() => findActiveAssignment(master, personId), [master, personId]);
   const canLifecycle = canManage && modifyMode === "open";
 
   /* ------------------------------ edit flow ------------------------------ */
@@ -240,6 +290,113 @@ export function useAssignmentTab(args: {
     setAssignmentErr(null);
     setAssignmentDraft(assignmentBaseline ?? masterForPerson);
   }, [assignmentBaseline, masterForPerson]);
+
+  // ✅ ANY dirty field => enable Save (no special casing)
+  const assignmentDirty = useMemo(() => {
+    if (!assignmentBaseline || !assignmentDraft) return false;
+
+    const keys = [
+      "office_id",
+      "position_title",
+      "tech_id",
+      "start_date",
+      "end_date",
+      "active",
+    ] as const;
+
+    return keys.some((k) => String((assignmentBaseline as any)?.[k] ?? "") !== String((assignmentDraft as any)?.[k] ?? ""));
+  }, [assignmentBaseline, assignmentDraft]);
+
+  // ✅ always present (prevents `reading 'ok'` crash)
+  const assignmentValidation = useMemo(() => {
+    if (!editingAssignment) return { ok: true as const, msg: "" };
+    const start = (assignmentDraft as any)?.start_date ?? null;
+    const end = (assignmentDraft as any)?.end_date ?? null;
+
+    if (!start || String(start).trim() === "") return { ok: false as const, msg: "Start date is required." };
+    if (end && String(end).trim() !== "" && String(end) < String(start))
+      return { ok: false as const, msg: "End date must be on or after start date." };
+
+    return { ok: true as const, msg: "" };
+  }, [assignmentDraft, editingAssignment]);
+
+  // ✅ save only changed fields
+  const saveAssignment = useCallback(async () => {
+    if (!assignmentDraft || !assignmentBaseline) {
+      setEditingAssignment(false);
+      return;
+    }
+
+    if (!assignmentValidation.ok) {
+      setAssignmentErr(assignmentValidation.msg);
+      return;
+    }
+
+    const aid =
+      norm((assignmentDraft as any)?.assignment_id) ??
+      norm((assignmentBaseline as any)?.assignment_id) ??
+      norm((masterForPerson as any)?.assignment_id) ??
+      norm(assignmentId);
+
+    if (!aid) {
+      setAssignmentErr("No assignment_id on this row.");
+      return;
+    }
+
+    const editableKeys = [
+      "office_id",
+      "position_title",
+      "tech_id",
+      "start_date",
+      "end_date",
+      "active",
+    ] as const;
+
+    const p_patch: any = { pc_org_id: pcOrgId };
+
+    for (const k of editableKeys) {
+      const before = (assignmentBaseline as any)?.[k] ?? null;
+      let after: any = (assignmentDraft as any)?.[k] ?? null;
+
+      if (typeof after === "string" && after.trim() === "") after = null;
+      if (k === "start_date" && after == null) {
+        setAssignmentErr("Start date is required.");
+        return;
+      }
+
+      if (String(before ?? "") !== String(after ?? "")) {
+        p_patch[k] = after;
+      }
+    }
+
+    const changed = Object.keys(p_patch).filter((k) => k !== "pc_org_id");
+    if (changed.length === 0) {
+      setEditingAssignment(false);
+      return;
+    }
+
+    setSavingAssignment(true);
+    setAssignmentErr(null);
+
+    try {
+      await callRpc("assignment_patch", { p_assignment_id: aid, p_patch }, "public");
+      setEditingAssignment(false);
+      await loadMaster();
+    } catch (e: any) {
+      setAssignmentErr(e?.message ?? "Failed to save assignment");
+    } finally {
+      setSavingAssignment(false);
+    }
+  }, [
+    assignmentDraft,
+    assignmentBaseline,
+    assignmentId,
+    assignmentValidation,
+    pcOrgId,
+    masterForPerson,
+    callRpc,
+    loadMaster,
+  ]);
 
   /* ------------------------------ lifecycle ------------------------------ */
 
@@ -289,7 +446,8 @@ export function useAssignmentTab(args: {
     loadMaster();
     loadPositionTitles();
     loadOffices();
-  }, [open, loadMaster, loadPositionTitles, loadOffices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   /* ------------------------------ api ------------------------------ */
 
@@ -312,6 +470,10 @@ export function useAssignmentTab(args: {
 
     beginEditAssignment,
     cancelEditAssignment,
+
+    assignmentDirty,
+    assignmentValidation,
+    saveAssignment,
 
     startAssignment,
     startingAssignment,

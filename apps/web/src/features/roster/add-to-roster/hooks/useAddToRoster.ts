@@ -42,8 +42,32 @@ function todayISODate(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function norm(v: unknown): string | null {
+  const s = String(v ?? "").trim();
+  return s ? s : null;
+}
+
+function newUUID(): string {
+  // Browser-safe UUID
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  // Ultra-rare fallback; should not hit in modern browsers
+  const s4 = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
+  return `${s4()}${s4()}-${s4()}-${s4()}-${s4()}-${s4()}${s4()}${s4()}`;
+}
+
+/**
+ * Only treat true "missing function" / schema-cache errors as fallback-safe.
+ * Do NOT fallback on SQL errors (ambiguous column, permission denied, etc.).
+ */
 function isFnMissingError(msg: string) {
-  return /function .* does not exist/i.test(msg) || /schema cache/i.test(msg) || /not found/i.test(msg);
+  const m = String(msg ?? "");
+  return (
+    /could not find the function/i.test(m) ||
+    /does not exist/i.test(m) ||
+    /schema cache/i.test(m) ||
+    /not found/i.test(m) ||
+    /missing in schema/i.test(m)
+  );
 }
 
 export function useAddToRoster() {
@@ -72,26 +96,20 @@ export function useAddToRoster() {
       });
 
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error ?? json?.message ?? `RPC failed: ${fn}`);
-      return json?.data ?? null;
+      if (!res.ok) throw new Error((json as any)?.error ?? (json as any)?.message ?? `RPC failed: ${fn}`);
+      return (json as any)?.data ?? null;
     },
     [supabase]
   );
 
-  // Important: try API with p_* args; fallback to PUBLIC with unprefixed args.
-  const addToRosterRpc = useCallback(
-    async (pcOrgId: string, personId: string, startDate: string) => {
+  const callRpcPreferApi = useCallback(
+    async (fn: string, apiArgs: Record<string, any>, publicArgs: Record<string, any>): Promise<any> => {
       try {
-        return await callRpc(
-          "add_to_roster",
-          { p_pc_org_id: pcOrgId, p_person_id: personId, p_start_date: startDate },
-          "api"
-        );
+        return await callRpc(fn, apiArgs, "api");
       } catch (e: any) {
         const msg = String(e?.message ?? "");
         if (!isFnMissingError(msg)) throw e;
-
-        return await callRpc("add_to_roster", { pc_org_id: pcOrgId, person_id: personId, start_date: startDate }, "public");
+        return await callRpc(fn, publicArgs, "public");
       }
     },
     [callRpc]
@@ -146,40 +164,54 @@ export function useAddToRoster() {
     return p;
   }, [coOptions, supabase]);
 
+  /**
+   * Upsert person (public) -> REQUIRES p_person_id even for inserts (DB rule)
+   * add_to_roster (api preferred)
+   * assignment_start optional (api preferred)
+   */
   const upsertAndAddMembership = useCallback(
-    async (input: { pcOrgId: string; positionTitle: string; draft: OnboardPersonDraft; startAssignment?: boolean }): Promise<Result<{ personId: string }>> => {
+    async (input: {
+      pcOrgId: string;
+      positionTitle: string;
+      draft: OnboardPersonDraft;
+      startAssignment?: boolean;
+    }): Promise<Result<{ personId: string }>> => {
       const { pcOrgId, positionTitle, draft, startAssignment = true } = input;
 
       const full_name = String(draft.full_name ?? "").trim();
       const emails = String(draft.emails ?? "").trim();
-      const co_ref_id = draft.co_ref_id ? String(draft.co_ref_id).trim() : "";
+      const co_ref_id = norm(draft.co_ref_id);
 
       if (!full_name) return { ok: false, error: "Full name is required." };
       if (!emails) return { ok: false, error: "Emails is required." };
       if (!co_ref_id) return { ok: false, error: "Affiliation is required." };
+      if (!pcOrgId) return { ok: false, error: "Missing pc_org_id." };
 
       setSaving(true);
       try {
-        let co_code = draft.co_code ? String(draft.co_code) : null;
+        let co_code = norm(draft.co_code);
 
         if (!co_code) {
           const opts = await ensureCoOptions();
-          const hit = opts.find((o) => String(o.co_ref_id) === co_ref_id) ?? null;
+          const hit = opts.find((o) => String(o.co_ref_id) === String(co_ref_id)) ?? null;
           co_code = hit?.co_code ?? null;
         }
 
-        // person_upsert is PUBLIC in your gatekeeper
-        const personRow = await callRpc(
+        // ✅ DB requires explicit person_id for inserts
+        const personId = norm(draft.person_id) ?? newUUID();
+
+        // 1) Upsert person (PUBLIC)
+        await callRpc(
           "person_upsert",
           {
-            p_person_id: draft.person_id,
+            p_person_id: personId,
             p_full_name: full_name,
             p_emails: emails,
-            p_mobile: String(draft.mobile ?? "").trim() || null,
-            p_fuse_emp_id: String(draft.fuse_emp_id ?? "").trim() || null,
-            p_person_notes: String(draft.person_notes ?? "").trim() || null,
-            p_person_nt_login: String(draft.person_nt_login ?? "").trim() || null,
-            p_person_csg_id: String(draft.person_csg_id ?? "").trim() || null,
+            p_mobile: norm(draft.mobile),
+            p_fuse_emp_id: norm(draft.fuse_emp_id),
+            p_person_notes: norm(draft.person_notes),
+            p_person_nt_login: norm(draft.person_nt_login),
+            p_person_csg_id: norm(draft.person_csg_id),
             p_active: typeof draft.active === "boolean" ? draft.active : true,
             p_role: null,
             p_co_ref_id: co_ref_id,
@@ -188,15 +220,36 @@ export function useAddToRoster() {
           "public"
         );
 
-        const personId = String(personRow?.person_id ?? personRow?.id ?? draft.person_id ?? "").trim();
-        if (!personId) return { ok: false, error: "Upsert succeeded but no person_id was returned." };
-
-        // ✅ membership: correct schema + correct arg naming
         const startDate = todayISODate();
-        await addToRosterRpc(pcOrgId, personId, startDate);
 
-        // Optional assignment start stays as-is (you already handle it elsewhere)
-        // Leave this alone for now until add_to_roster is green.
+        // 2) Start membership (prefer API p_* args; fallback to PUBLIC non-p args if api function missing)
+        await callRpcPreferApi(
+          "add_to_roster",
+          { p_pc_org_id: pcOrgId, p_person_id: personId, p_start_date: startDate },
+          { pc_org_id: pcOrgId, person_id: personId, start_date: startDate }
+        );
+
+        // 3) Optional: Start assignment (prefer API p_* args; fallback to PUBLIC non-p args if api missing)
+        if (startAssignment) {
+          const pos = norm(positionTitle) ?? "Technician";
+
+          await callRpcPreferApi(
+            "assignment_start",
+            {
+              p_pc_org_id: pcOrgId,
+              p_person_id: personId,
+              p_position_title: pos,
+              p_start_date: startDate,
+              p_office_id: null,
+            },
+            {
+              pc_org_id: pcOrgId,
+              person_id: personId,
+              position_title: pos,
+              start_date: startDate,
+            }
+          );
+        }
 
         return { ok: true, data: { personId } };
       } catch (e: any) {
@@ -205,7 +258,7 @@ export function useAddToRoster() {
         setSaving(false);
       }
     },
-    [ensureCoOptions, callRpc, addToRosterRpc]
+    [ensureCoOptions, callRpc, callRpcPreferApi]
   );
 
   return {

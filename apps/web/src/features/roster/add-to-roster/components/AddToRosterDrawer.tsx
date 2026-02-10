@@ -10,13 +10,22 @@ import { TextInput } from "@/components/ui/TextInput";
 import { useToast } from "@/components/ui/Toast";
 
 import { PersonSearch } from "@/features/roster/add-to-roster/components/PersonSearch";
-import { useAddToRoster, type OnboardPersonDraft, type CoOption } from "@/features/roster/add-to-roster/hooks/useAddToRoster";
+import {
+  useAddToRoster,
+  type OnboardPersonDraft,
+  type CoOption,
+} from "@/features/roster/add-to-roster/hooks/useAddToRoster";
 import { usePersonSearch, type PersonHit } from "@/features/roster/add-to-roster/hooks/usePersonSearch";
 import { formatPersonTitle, formatPersonSubtitle, markMatches } from "@/features/roster/add-to-roster/lib/personSearchFormat";
 
 import { createClient } from "@/shared/data/supabase/client";
 import { fetchActiveMembershipOrgByPersonIds } from "@/shared/lib/activeRoster";
 import { resolveActiveLob, lobLabel, type Lob } from "@/shared/lob";
+
+// ✅ reuse the same action already used elsewhere
+import { loadPositionTitlesAction } from "@/features/roster/hooks/rosterRowModule.actions";
+
+type PositionTitleRow = { position_title: string; sort_order?: number | null; active?: boolean | null };
 
 type Props = {
   open: boolean;
@@ -71,6 +80,17 @@ function coLabelFor(coRefId: string | null, coOptions: CoOption[]): string {
   return hit.co_type ? `${hit.co_name} (${hit.co_type})` : hit.co_name;
 }
 
+function isAllowedPositionTitle(t: string): boolean {
+  const s = String(t ?? "").trim();
+  if (!s) return false;
+
+  // Keep “Manager and below”; exclude higher leadership titles.
+  // Adjust tokens if your list differs.
+  if (/(director|sr\.?\s*director|vp|vice\s*president|president|ceo|cfo|coo|owner)/i.test(s)) return false;
+
+  return true;
+}
+
 export function AddToRosterDrawer({
   open,
   onClose,
@@ -94,9 +114,62 @@ export function AddToRosterDrawer({
   const [mode, setMode] = useState<"pick" | "new">("pick");
   const [draft, setDraft] = useState<OnboardPersonDraft>(() => emptyDraft());
 
-  // NEW: assignment controls (practical)
-  const [positionTitle, setPositionTitle] = useState<string>("Technician");
+  // Assignment controls
   const [startAssignment, setStartAssignment] = useState<boolean>(true);
+
+  // ✅ Position dropdown
+  const [positionTitle, setPositionTitle] = useState<string>("Technician");
+  const [positionTitles, setPositionTitles] = useState<PositionTitleRow[]>([]);
+  const [positionTitlesLoading, setPositionTitlesLoading] = useState(false);
+  const [positionTitlesError, setPositionTitlesError] = useState<string | null>(null);
+
+  const positionOptions = useMemo(() => {
+    const list = [...(positionTitles ?? [])]
+      .filter((r) => r && typeof r.position_title === "string")
+      .filter((r) => isAllowedPositionTitle(r.position_title));
+
+    list.sort(
+      (a, b) =>
+        Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) ||
+        a.position_title.localeCompare(b.position_title, undefined, { sensitivity: "base" })
+    );
+
+    const titles = list.map((r) => String(r.position_title));
+    return titles;
+  }, [positionTitles]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    // Load position titles when opened
+    const t = window.setTimeout(() => {
+      void loadPositionTitlesAction({
+        pcOrgId,
+        setLoading: setPositionTitlesLoading,
+        setError: setPositionTitlesError,
+        setRows: setPositionTitles,
+      });
+    }, 0);
+
+    return () => window.clearTimeout(t);
+  }, [open, pcOrgId]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!positionOptions.length) return;
+
+    // default selection: Technician if available
+    const cur = String(positionTitle ?? "").trim();
+    if (cur && positionOptions.includes(cur)) return;
+
+    const tech =
+      positionOptions.find((t) => t === "Technician") ??
+      positionOptions.find((t) => String(t).toLowerCase() === "technician") ??
+      null;
+
+    setPositionTitle(tech ?? positionOptions[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, positionOptions.join("|")]);
 
   const [activeOrgNameByPersonId, setActiveOrgNameByPersonId] = useState<Map<string, string>>(() => new Map());
 
@@ -320,13 +393,31 @@ export function AddToRosterDrawer({
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <span className="text-xs text-[var(--to-ink-muted)]">Position</span>
-              <TextInput
+
+              {/* ✅ dropdown (default Technician) */}
+              <Select
+                className="h-9 w-56"
                 value={positionTitle}
                 onChange={(e) => setPositionTitle(e.target.value)}
-                className="h-9 w-48"
-                disabled={disabled}
-                placeholder="Technician"
-              />
+                disabled={disabled || positionTitlesLoading}
+                title={positionTitlesError ?? undefined}
+              >
+                {/* Keep Technician even if the list is empty */}
+                {positionOptions.length === 0 ? (
+                  <option value="Technician">Technician</option>
+                ) : (
+                  positionOptions.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))
+                )}
+              </Select>
+
+              {/* If you want to see load state without adding UI clutter */}
+              {positionTitlesError ? (
+                <span className="text-[10px] text-[var(--to-status-warning)]">{positionTitlesError}</span>
+              ) : null}
             </div>
 
             <button
@@ -473,7 +564,12 @@ export function AddToRosterDrawer({
 
                   <div className="grid gap-1">
                     <div className="text-xs text-[var(--to-ink-muted)]">Affiliation</div>
-                    <Select value={coKey} onChange={(e) => onPickAffiliation(e.target.value)} className="h-10" disabled={disabled || coLoading}>
+                    <Select
+                      value={coKey}
+                      onChange={(e) => onPickAffiliation(e.target.value)}
+                      className="h-10"
+                      disabled={disabled || coLoading}
+                    >
                       <option value="none">{coLoading ? "Loading…" : "Select affiliation"}</option>
                       {(coOptions ?? []).map((o) => (
                         <option key={String(o.co_ref_id)} value={String(o.co_ref_id)}>
@@ -494,7 +590,9 @@ export function AddToRosterDrawer({
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold">Looks-like candidates</div>
-                <div className="text-xs text-[var(--to-ink-muted)]">{mode === "pick" ? "Based on your search" : "Based on what you typed"}</div>
+                <div className="text-xs text-[var(--to-ink-muted)]">
+                  {mode === "pick" ? "Based on your search" : "Based on what you typed"}
+                </div>
               </div>
 
               <CandidatesList
@@ -528,7 +626,8 @@ function CandidatesList(props: {
   const { query, loading, error, results, coOptions, onAdd, disabled, activeOrgNameByPersonId } = props;
   const q = String(query ?? "").trim();
 
-  if (!q || q.length < 2) return <div className="text-xs text-[var(--to-ink-muted)]">Type 2+ characters to see candidates.</div>;
+  if (!q || q.length < 2)
+    return <div className="text-xs text-[var(--to-ink-muted)]">Type 2+ characters to see candidates.</div>;
   if (loading) return <div className="text-xs text-[var(--to-ink-muted)]">Searching…</div>;
   if (error) return <div className="text-xs text-[var(--to-status-warning)]">{error}</div>;
   if (!results.length) return <div className="text-xs text-[var(--to-ink-muted)]">No matches.</div>;

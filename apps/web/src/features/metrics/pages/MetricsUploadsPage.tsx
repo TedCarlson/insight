@@ -9,8 +9,8 @@ import { Toolbar } from "@/components/ui/Toolbar";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 import { supabaseServer } from "@/shared/data/supabase/server";
 
-import { UploadMetricsCard } from "./UploadMetricsCard";
-import { ImportedMetricsRowsCardClient, type MetricsRawRow } from "./ImportedMetricsRowsCardClient";
+import { UploadMetricsCard } from "../components/UploadMetricsCard";
+import { ImportedMetricsRowsCardClient, type MetricsRawRow } from "../components/ImportedMetricsRowsCardClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

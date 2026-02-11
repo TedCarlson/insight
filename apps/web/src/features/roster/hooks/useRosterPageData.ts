@@ -32,7 +32,8 @@ export function useRosterPageData(args: {
   setDetailsOpen: (v: boolean) => void;
   setModifyModeLocked: () => void;
 }) {
-  const { validatedOrgId, supabase, selectedRow, setSelectedRow, closeQuick, setDetailsOpen, setModifyModeLocked } = args;
+  const { validatedOrgId, supabase, selectedRow, setSelectedRow, closeQuick, setDetailsOpen, setModifyModeLocked } =
+    args;
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -70,18 +71,21 @@ export function useRosterPageData(args: {
       setErr(null);
 
       try {
-        // diagnostics only
-        try {
-          const activeSet = await fetchActiveRosterPersonIdSet(supabase, orgId);
-          setActiveSetSize(activeSet?.size ?? 0);
-        } catch {
-          setActiveSetSize(null);
-        }
+        // Active roster MUST be current memberships only.
+        // We read the canonical membership set from v_roster_active and filter roster_current_full by it.
+        const activeSet = await fetchActiveRosterPersonIdSet(supabase, orgId);
+        setActiveSetSize(activeSet?.size ?? 0);
 
         const data = await api.rosterCurrentFull(orgId);
+        const rawRows = Array.isArray(data) ? data : [];
 
-        // do NOT depend on activeSet for basic roster view
-        const rows = (data ?? []).filter((r: any) => Boolean(String(r?.person_id ?? "").trim()));
+        // Only show person rows that have an active membership.
+        const rows = rawRows.filter((r: any) => {
+          const pid = String(r?.person_id ?? "").trim();
+          if (!pid) return false;
+          return activeSet.has(pid);
+        });
+
         setRoster(rows as any);
 
         if (selectedRow) {
@@ -90,8 +94,10 @@ export function useRosterPageData(args: {
           if (next) setSelectedRow(next);
         }
       } catch (e: any) {
+        // Fail closed: if we can't validate active memberships, do not show the roster.
         setErr(e?.message ?? String(e ?? "Failed to load roster"));
         setRoster([]);
+        setActiveSetSize(null);
       } finally {
         setLoading(false);
       }

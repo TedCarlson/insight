@@ -35,10 +35,13 @@ export async function rosterCurrentFull(
 
   const rows = (Array.isArray(data) ? data : []) as unknown as RosterCurrentFullRow[];
 
-  // Filter out historical rows to prevent multi-row renders for the same person.
+  // ----------------------------
+  // Helpers
+  // ----------------------------
   const todayIso = new Date().toISOString().slice(0, 10);
   const isIsoDate = (s: any) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
+  // Existing "current assignment" filter (kept).
   const isCurrent = (r: any) => {
     if (r?.assignment_active === true) return true;
     if (r?.assignment_active === false) return false;
@@ -55,11 +58,91 @@ export async function rosterCurrentFull(
     return true;
   };
 
+  const pickMembershipBool = (r: any): boolean | null => {
+    const candidates = [
+      r?.membership_active,
+      r?.person_pc_org_active,
+      r?.pc_org_active,
+      r?.person_pc_org_record_active,
+      r?.membership_record_active,
+    ];
+
+    for (const v of candidates) {
+      if (v === true) return true;
+      if (v === false) return false;
+    }
+    return null; // not present / not usable
+  };
+
+  const pickMembershipEnd = (r: any): string | null => {
+    const end =
+      r?.membership_end_date ??
+      r?.person_pc_org_end_date ??
+      r?.pc_org_end_date ??
+      r?.membershipEndDate ??
+      null;
+    if (typeof end === "string") {
+      const s = end.trim();
+      return s ? s : null;
+    }
+    return null;
+  };
+
+  const pickMembershipStatus = (r: any): string | null => {
+    const status =
+      r?.membership_status ??
+      r?.person_pc_org_status ??
+      r?.pc_org_status ??
+      r?.membershipStatus ??
+      null;
+    if (typeof status === "string") {
+      const s = status.trim();
+      return s ? s : null;
+    }
+    return null;
+  };
+
+  // STRICT-BUT-SAFE membership gate:
+  // 1) If an explicit membership boolean exists, it MUST be true.
+  // 2) Regardless, end_date must be null/empty and status must not be inactive.
+  const isActiveMembershipStrictSafe = (r: any) => {
+    const mBool = pickMembershipBool(r);
+    if (mBool === false) return false; // explicit false => out
+    if (mBool === true) {
+      // still verify end/status aren't contradicting
+    } else {
+      // mBool is null (not provided): fall back to end/status checks
+    }
+
+    const end = pickMembershipEnd(r);
+    if (end && (isIsoDate(end) || end.length > 0)) return false;
+
+    const status = pickMembershipStatus(r);
+    if (status && status.toLowerCase() === "inactive") return false;
+
+    // If boolean exists, require it to be true. If not provided, allow via end/status.
+    if (mBool === null) return true;
+    return mBool === true;
+  };
+
+  // ----------------------------
+  // Scope + current filtering
+  // ----------------------------
   const scoped = rows.filter((r: any) => String(r?.pc_org_id ?? "") === String(pc_org_id ?? ""));
   const currentOnly = scoped.filter(isCurrent);
 
+  // Membership gate on person rows.
+  const membershipScoped = currentOnly.filter((r: any) => {
+    const pid = String(r?.person_id ?? "").trim();
+    if (!pid) return true; // keep non-person rows (slots/placeholders)
+    return isActiveMembershipStrictSafe(r);
+  });
+
+  // ----------------------------
+  // De-dupe: choose the best row per person
+  // ----------------------------
   const byPerson = new Map<string, RosterCurrentFullRow>();
-  for (const r of currentOnly) {
+  for (const r of membershipScoped) {
     const pid = String((r as any)?.person_id ?? "").trim();
     if (!pid) continue;
 
@@ -75,7 +158,7 @@ export async function rosterCurrentFull(
   }
 
   const personRows = Array.from(byPerson.values());
-  const nonPersonRows = currentOnly.filter((r: any) => !String(r?.person_id ?? "").trim());
+  const nonPersonRows = membershipScoped.filter((r: any) => !String(r?.person_id ?? "").trim());
   return [...personRows, ...nonPersonRows];
 }
 

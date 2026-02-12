@@ -114,7 +114,6 @@ function toWarning(code: string, message: string, detail?: any) {
 export async function POST(req: Request) {
   try {
     const cookieStore = await cookies();
-    const res = NextResponse.json({ ok: true });
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -125,10 +124,8 @@ export async function POST(req: Request) {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            res.cookies.set(name, value, options);
-          });
+        setAll() {
+          // no-op: we are not mutating auth cookies here
         },
       },
     });
@@ -200,22 +197,27 @@ export async function POST(req: Request) {
     const techIdHeaderIndex = headers.findIndex((h) => h.toLowerCase() === "techid" || h.toLowerCase() === "tech id");
     if (techIdHeaderIndex < 0) return json(400, { ok: false, error: 'missing required column "TechId"' });
 
-    const anchorDate =
+    // -------------------------
+    // metric_date (NEW COLUMN)
+    // - This is the "anchor date" user selected (today or picked_date)
+    // - fiscal_end_date is derived from fiscal_month_dim using this anchor
+    // -------------------------
+    const metric_date =
       mode === "date"
         ? pickedDate
         : isoDateOnlyNY(new Date());
 
-    if (!anchorDate || !/^\d{4}-\d{2}-\d{2}$/.test(anchorDate)) {
+    if (!metric_date || !/^\d{4}-\d{2}-\d{2}$/.test(metric_date)) {
       return json(400, { ok: false, error: "invalid picked_date", hint: "Expected YYYY-MM-DD" });
     }
 
-    const month = await resolveFiscalMonthByAnchorDate(supabase, anchorDate);
+    const month = await resolveFiscalMonthByAnchorDate(supabase, metric_date);
     if (!month) {
       return json(400, {
         ok: false,
         error: "could not resolve fiscal month",
         hint: "No matching row in fiscal_month_dim for the selected date.",
-        detail: { anchorDate },
+        detail: { metric_date },
       });
     }
 
@@ -237,7 +239,7 @@ export async function POST(req: Request) {
               detected_fiscal_end_date: detectedMonth.end_date,
               detected_date: detectedDateNY,
               mode,
-              anchorDate,
+              metric_date,
             }
           )
         );
@@ -266,7 +268,6 @@ export async function POST(req: Request) {
       row_count_total++;
 
       const raw = dropCols2and3(headers, r);
-
       normalizedTechIds.push({ tech_id, raw });
     }
 
@@ -298,6 +299,7 @@ export async function POST(req: Request) {
       return json(200, {
         ok: true,
         mode,
+        metric_date, // NEW: echo back for UI confirmation/debug
         fiscal_end_date,
         detected_generated_at,
         detected_title: title,
@@ -333,6 +335,10 @@ export async function POST(req: Request) {
       return {
         batch_id,
         pc_org_id,
+
+        // ✅ NEW COLUMN (required by your new table shape)
+        metric_date,
+
         fiscal_end_date: fiscalEndForKey,
         tech_id,
         unique_row_key,
@@ -368,6 +374,7 @@ export async function POST(req: Request) {
       ok: true,
       loaded: true,
       batch_id,
+      metric_date, // NEW: return it on confirm too
       fiscal_end_date: fiscalEndForKey,
       row_count_loaded,
       warning_flags,

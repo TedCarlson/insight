@@ -46,19 +46,26 @@ export default function MetricsConsoleRow({ kpiKey, state, setState }: Props) {
   }
 
   function patchCfg(classType: ClassType, patch: Record<string, unknown>) {
-    setState((s) => ({
-      ...s,
-      classConfigByClass: {
-        ...s.classConfigByClass,
-        [classType]: {
-          ...s.classConfigByClass[classType],
-          [kpiKey]: {
-            ...s.classConfigByClass[classType][kpiKey],
-            ...patch,
+    setState((s) => {
+      const existing = s.classConfigByClass?.[classType]?.[kpiKey] ?? {};
+
+      return {
+        ...s,
+        classConfigByClass: {
+          ...s.classConfigByClass,
+          [classType]: {
+            ...s.classConfigByClass[classType],
+            [kpiKey]: {
+              class_type: classType,
+              kpi_key: kpiKey,
+              enabled: existing.enabled ?? false,
+              ...existing,
+              ...patch,
+            },
           },
         },
-      },
-    }));
+      };
+    });
   }
 
   function patchRubric(

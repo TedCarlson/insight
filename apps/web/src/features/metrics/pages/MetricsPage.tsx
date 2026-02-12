@@ -1,4 +1,4 @@
-// apps/web/src/app/metrics/page.tsx
+// apps/web/src/features/metrics/pages/MetricsPage.tsx
 import Link from "next/link";
 import { redirect } from "next/navigation";
 

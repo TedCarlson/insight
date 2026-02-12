@@ -1,3 +1,4 @@
+// apps/web/src/api/metrics/remove-last-batch/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";

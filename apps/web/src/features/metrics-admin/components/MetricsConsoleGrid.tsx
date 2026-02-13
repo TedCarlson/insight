@@ -1,8 +1,12 @@
 "use client";
 
+// apps/web/src/features/metrics-admin/components/MetricsConsoleGrid.tsx
 import * as React from "react";
 import MetricsConsoleRow from "@/features/metrics-admin/components/MetricsConsoleRow";
 import MetricsColorsDrawer from "@/features/metrics-admin/components/MetricsColorsDrawer";
+
+type ClassType = "P4P" | "SMART" | "TECH";
+type BandKey = "EXCEEDS" | "MEETS" | "NEEDS_IMPROVEMENT" | "MISSES" | "NO_DATA";
 
 type InitialPayload = {
   kpiDefs: any[];
@@ -10,24 +14,8 @@ type InitialPayload = {
   rubricRows: any[];
 };
 
-type MsoOption = {
-  mso_id: string;
-  mso_name: string | null;
-  mso_lob: string | null;
-};
-
 type Props = {
   initial: InitialPayload;
-  initialMsoId: string | null;
-  msoOptions: MsoOption[];
-};
-
-type ClassType = "P4P" | "SMART" | "TECH";
-
-type GridState = {
-  kpiDefsByKey: Record<string, any>;
-  classConfigByClass: Record<ClassType, Record<string, any>>;
-  rubricByClass: Record<ClassType, Record<string, Record<string, any>>>;
 };
 
 type Snapshot = {
@@ -36,248 +24,215 @@ type Snapshot = {
   rubricRows: any[];
 };
 
-function shortId(id: string) {
-  const s = String(id ?? "");
-  if (s.length <= 8) return s;
-  return `${s.slice(0, 4)}…${s.slice(-4)}`;
+type GridState = {
+  kpiOrder: string[];
+  kpiDefsByKey: Record<string, any>;
+  classConfigByClass: Record<ClassType, Record<string, any>>;
+  rubricByClass: Record<ClassType, Record<string, Record<string, any>>>;
+};
+
+const CLASSES: ClassType[] = ["P4P", "SMART", "TECH"];
+const BANDS: BandKey[] = ["EXCEEDS", "MEETS", "NEEDS_IMPROVEMENT", "MISSES", "NO_DATA"];
+
+function str(v: unknown) {
+  return String(v ?? "").trim();
 }
 
-function normalizeClassConfigRow(row: any) {
-  const out = { ...(row ?? {}) };
-  if (out.weight_percent === undefined && out.weight !== undefined) out.weight_percent = out.weight;
+function safeKey(v: unknown) {
+  return str(v).toLowerCase();
+}
+
+function upper(v: unknown) {
+  return str(v).toUpperCase();
+}
+
+function numOrNull(v: unknown) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeClassConfigRow(r: any) {
+  const out = { ...(r ?? {}) };
+  // Back-compat: some DB rows may be threshold_value/weight.
   if (out.threshold === undefined && out.threshold_value !== undefined) out.threshold = out.threshold_value;
+  if (out.weight_percent === undefined && out.weight !== undefined) out.weight_percent = out.weight;
   return out;
 }
 
-function normalizeInitial(initial: InitialPayload): InitialPayload {
-  return {
-    kpiDefs: Array.isArray(initial.kpiDefs) ? initial.kpiDefs : [],
-    classConfig: Array.isArray(initial.classConfig) ? initial.classConfig.map(normalizeClassConfigRow) : [],
-    rubricRows: Array.isArray(initial.rubricRows) ? initial.rubricRows : [],
-  };
-}
-
-function buildStateFromInitial(initialRaw: InitialPayload): GridState {
-  const initial = normalizeInitial(initialRaw);
-
+function buildStateFromInitial(initial: InitialPayload): GridState {
   const kpiDefsByKey: Record<string, any> = {};
+  const kpiOrder: string[] = [];
+
   for (const d of initial.kpiDefs ?? []) {
-    const key = String(d?.kpi_key ?? "").trim();
-    if (!key) continue;
-    kpiDefsByKey[key] = d;
-  }
-
-  const classConfigByClass: Record<ClassType, Record<string, any>> = {
-    P4P: {},
-    SMART: {},
-    TECH: {},
-  };
-
-  for (const row of initial.classConfig ?? []) {
-    const ct = String(row?.class_type ?? "").toUpperCase() as ClassType;
-    const k = String(row?.kpi_key ?? "").trim();
+    const k = str(d?.kpi_key);
     if (!k) continue;
-    if (ct !== "P4P" && ct !== "SMART" && ct !== "TECH") continue;
-    classConfigByClass[ct][k] = normalizeClassConfigRow(row);
+    if (!kpiDefsByKey[k]) kpiOrder.push(k);
+    kpiDefsByKey[k] = d;
   }
 
-  const rubricByClass: Record<ClassType, Record<string, Record<string, any>>> = {
-    P4P: {},
-    SMART: {},
-    TECH: {},
-  };
+  const classConfigByClass: any = { P4P: {}, SMART: {}, TECH: {} };
+  for (const r of initial.classConfig ?? []) {
+    const ct = upper(r?.class_type) as ClassType;
+    const k = str(r?.kpi_key);
+    if (!ct || !k) continue;
+    if (!classConfigByClass[ct]) classConfigByClass[ct] = {};
+    classConfigByClass[ct][k] = normalizeClassConfigRow(r);
+  }
 
+  const rubricByClass: any = { P4P: {}, SMART: {}, TECH: {} };
+  // Normalize rubric rows into class->kpi->band
   for (const r of initial.rubricRows ?? []) {
-    const ct = String(r?.class_type ?? "").toUpperCase() as ClassType;
-    const k = String(r?.kpi_key ?? "").trim();
-    const band = String(r?.band_key ?? "").trim();
-    if (!k || !band) continue;
-    if (ct !== "P4P" && ct !== "SMART" && ct !== "TECH") continue;
-
-    rubricByClass[ct][k] = rubricByClass[ct][k] ?? {};
-    rubricByClass[ct][k][band] = r;
+    const cls = upper(r?.class_type) as ClassType;
+    const k = str(r?.kpi_key);
+    const b = upper(r?.band_key) as BandKey;
+    if (!cls || !k || !b) continue;
+    if (!rubricByClass[cls]) rubricByClass[cls] = {};
+    if (!rubricByClass[cls][k]) rubricByClass[cls][k] = {};
+    rubricByClass[cls][k][b] = r;
   }
 
-  return { kpiDefsByKey, classConfigByClass, rubricByClass };
+  // Ensure rubric shells exist for each KPI/band so editors always render stable rows
+  for (const cls of CLASSES) {
+    for (const k of kpiOrder) {
+      if (!rubricByClass[cls][k]) rubricByClass[cls][k] = {};
+      for (const band of BANDS) {
+        if (!rubricByClass[cls][k][band]) {
+          rubricByClass[cls][k][band] = {
+            class_type: cls,
+            kpi_key: k,
+            band_key: band,
+            min_value: null,
+            max_value: null,
+            score_value: null,
+            color_hex: null,
+          };
+        }
+      }
+    }
+  }
+
+  return { kpiOrder, kpiDefsByKey, classConfigByClass, rubricByClass };
 }
 
-function snapshotFromPayload(payloadRaw: InitialPayload): Snapshot {
-  const payload = normalizeInitial(payloadRaw);
+function snapshotFromPayload(p: InitialPayload): Snapshot {
   return {
-    kpiDefs: Array.isArray(payload.kpiDefs) ? payload.kpiDefs : [],
-    classConfig: Array.isArray(payload.classConfig) ? payload.classConfig : [],
-    rubricRows: Array.isArray(payload.rubricRows) ? payload.rubricRows : [],
+    kpiDefs: Array.isArray(p?.kpiDefs) ? p.kpiDefs : [],
+    classConfig: Array.isArray(p?.classConfig) ? p.classConfig.map(normalizeClassConfigRow) : [],
+    rubricRows: Array.isArray(p?.rubricRows) ? p.rubricRows : [],
   };
 }
 
-function safeKey(s: unknown) {
-  return String(s ?? "").trim();
-}
+function flattenStateToPayload(state: GridState): Snapshot {
+  const kpiDefs = Object.values(state.kpiDefsByKey ?? {});
+  const classConfig: any[] = [];
 
-function stableStringify(v: any) {
-  const replacer = (_k: string, val: any) => (val === undefined ? "__UNDEF__" : val);
-  try {
-    return JSON.stringify(v, replacer);
-  } catch {
-    return String(v);
+  for (const cls of CLASSES) {
+    const byKpi = state.classConfigByClass?.[cls] ?? {};
+    for (const k of Object.keys(byKpi)) {
+      classConfig.push({
+        ...byKpi[k],
+        class_type: cls,
+        kpi_key: k,
+      });
+    }
   }
+
+  const rubricRows: any[] = [];
+  for (const cls of CLASSES) {
+    const byKpi = state.rubricByClass?.[cls] ?? {};
+    for (const k of Object.keys(byKpi)) {
+      const byBand = byKpi[k] ?? {};
+      for (const band of Object.keys(byBand)) {
+        const row = byBand[band];
+        rubricRows.push({
+          ...row,
+          class_type: cls,
+          kpi_key: k,
+          band_key: band,
+        });
+      }
+    }
+  }
+
+  return { kpiDefs, classConfig, rubricRows };
 }
 
-function pick<T extends Record<string, any>>(obj: T, keys: string[]) {
-  const out: Record<string, any> = {};
-  for (const k of keys) out[k] = obj?.[k];
-  return out;
+function indexBy<T extends Record<string, any>>(rows: T[], keyFn: (r: T) => string) {
+  const m = new Map<string, T>();
+  for (const r of rows ?? []) m.set(keyFn(r), r);
+  return m;
 }
 
 function keyOfKpiDef(r: any) {
   return safeKey(r?.kpi_key);
 }
-function keyOfClassCfg(r: any) {
+function keyOfCfg(r: any) {
   return `${safeKey(r?.class_type)}|${safeKey(r?.kpi_key)}`;
 }
 function keyOfRubric(r: any) {
   return `${safeKey(r?.class_type)}|${safeKey(r?.kpi_key)}|${safeKey(r?.band_key)}`;
 }
 
-function indexBy<T>(rows: T[], keyFn: (r: T) => string) {
-  const m = new Map<string, T>();
-  for (const r of rows ?? []) {
-    const k = keyFn(r);
-    if (!k) continue;
-    m.set(k, r);
-  }
-  return m;
+function shallowPick(obj: any, fields: string[]) {
+  const out: any = {};
+  for (const f of fields) out[f] = obj?.[f] ?? null;
+  return out;
 }
 
-function flattenStateToPayload(state: GridState): Snapshot {
-  const kpiDefs: any[] = Object.keys(state.kpiDefsByKey ?? {})
-    .sort()
-    .map((k) => state.kpiDefsByKey[k])
-    .filter(Boolean);
-
-  const classConfig: any[] = [];
-  (["P4P", "SMART", "TECH"] as ClassType[]).forEach((ct) => {
-    const cfgByKpi = state.classConfigByClass?.[ct] ?? {};
-    Object.keys(cfgByKpi).forEach((kpiKey) => {
-      const row = cfgByKpi[kpiKey];
-      if (!row) return;
-      classConfig.push(normalizeClassConfigRow(row));
-    });
-  });
-
-  const rubricRows: any[] = [];
-  (["P4P", "SMART", "TECH"] as ClassType[]).forEach((ct) => {
-    const byKpi = state.rubricByClass?.[ct] ?? {};
-    Object.keys(byKpi).forEach((kpiKey) => {
-      const byBand = byKpi[kpiKey] ?? {};
-      Object.keys(byBand).forEach((bandKey) => {
-        const row = byBand[bandKey];
-        if (!row) return;
-        rubricRows.push(row);
-      });
-    });
-  });
-
-  return { kpiDefs, classConfig, rubricRows };
-}
-
-function buildDiff(currentRaw: Snapshot, baselineRaw: Snapshot) {
-  const current: Snapshot = {
-    kpiDefs: currentRaw.kpiDefs ?? [],
-    classConfig: (currentRaw.classConfig ?? []).map(normalizeClassConfigRow),
-    rubricRows: currentRaw.rubricRows ?? [],
-  };
-  const baseline: Snapshot = {
-    kpiDefs: baselineRaw.kpiDefs ?? [],
-    classConfig: (baselineRaw.classConfig ?? []).map(normalizeClassConfigRow),
-    rubricRows: baselineRaw.rubricRows ?? [],
-  };
-
-  const kpiFields = ["kpi_key", "label", "customer_label"];
-  const cfgFields = ["class_type", "kpi_key", "enabled", "weight_percent", "threshold", "grade_value"];
+// Build a minimal diff payload: only changed rows, including null-clears.
+function buildDiff(current: Snapshot, baseline: Snapshot): Snapshot {
+  const cfgFields = ["class_type", "kpi_key", "enabled", "weight_percent", "threshold", "threshold_value", "weight", "grade_value"];
   const rubFields = ["class_type", "kpi_key", "band_key", "min_value", "max_value", "score_value", "color_hex"];
+  const defFields = ["kpi_key", "label", "customer_label", "direction", "unit", "min_value", "max_value", "raw_label_identifier", "no_data_behavior"];
 
-  const baseKpi = indexBy(baseline.kpiDefs, keyOfKpiDef);
-  const baseCfg = indexBy(baseline.classConfig, keyOfClassCfg);
-  const baseRub = indexBy(baseline.rubricRows, keyOfRubric);
+  const baseDef = indexBy(baseline.kpiDefs ?? [], keyOfKpiDef);
+  const baseCfg = indexBy(baseline.classConfig ?? [], keyOfCfg);
+  const baseRub = indexBy(baseline.rubricRows ?? [], keyOfRubric);
 
   const kpiDefsChanged: any[] = [];
   for (const row of current.kpiDefs ?? []) {
-    const key = keyOfKpiDef(row);
-    if (!key) continue;
-
-    const cur = pick(row, kpiFields);
-    const prev = pick(baseKpi.get(key) as any, kpiFields);
-
-    if (stableStringify(cur) !== stableStringify(prev)) {
-      kpiDefsChanged.push(cur);
-    }
+    const k = keyOfKpiDef(row);
+    if (!k) continue;
+    const cur = shallowPick(row, defFields);
+    const prev = baseDef.get(k);
+    const prevPick = prev ? shallowPick(prev, defFields) : null;
+    if (!prevPick || JSON.stringify(cur) !== JSON.stringify(prevPick)) kpiDefsChanged.push(cur);
   }
 
   const classConfigChanged: any[] = [];
   for (const row of current.classConfig ?? []) {
-    const key = keyOfClassCfg(row);
-    if (!key) continue;
-
-    const cur = pick(normalizeClassConfigRow(row), cfgFields);
-    const prev = pick(normalizeClassConfigRow(baseCfg.get(key) as any), cfgFields);
-
-    if (stableStringify(cur) !== stableStringify(prev)) {
-      classConfigChanged.push(cur);
-    }
+    const k = keyOfCfg(row);
+    if (!k) continue;
+    const cur = shallowPick(row, cfgFields);
+    const prev = baseCfg.get(k);
+    const prevPick = prev ? shallowPick(prev, cfgFields) : null;
+    if (!prevPick || JSON.stringify(cur) !== JSON.stringify(prevPick)) classConfigChanged.push(cur);
   }
 
   const rubricRowsChanged: any[] = [];
   for (const row of current.rubricRows ?? []) {
-    const key = keyOfRubric(row);
-    if (!key) continue;
-
-    const cur = pick(row, rubFields);
-    const prev = pick(baseRub.get(key) as any, rubFields);
-
-    if (stableStringify(cur) !== stableStringify(prev)) {
-      rubricRowsChanged.push(cur);
-    }
+    const k = keyOfRubric(row);
+    if (!k) continue;
+    const cur = shallowPick(row, rubFields);
+    const prev = baseRub.get(k);
+    const prevPick = prev ? shallowPick(prev, rubFields) : null;
+    if (!prevPick || JSON.stringify(cur) !== JSON.stringify(prevPick)) rubricRowsChanged.push(cur);
   }
 
   return { kpiDefs: kpiDefsChanged, classConfig: classConfigChanged, rubricRows: rubricRowsChanged };
 }
 
-async function fetchSnapshotForMso(msoId: string): Promise<Snapshot> {
-  const res = await fetch(`/api/admin/metrics-config?mso_id=${encodeURIComponent(msoId)}`, {
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store",
-  });
-
-  if (!res.ok) {
-    const j = await res.json().catch(() => null);
-    const msg = j?.error ? String(j.error) : "Failed to load snapshot";
-    const detail = j?.detail ? ` — ${String(j.detail)}` : "";
-    throw new Error(`${msg}${detail}`);
-  }
-
-  const snap = (await res.json().catch(() => null)) as Snapshot | null;
-  if (!snap || !Array.isArray((snap as any).kpiDefs) || !Array.isArray((snap as any).classConfig) || !Array.isArray((snap as any).rubricRows)) {
-    throw new Error("Snapshot response payload was invalid");
-  }
-
-  return {
-    kpiDefs: (snap as any).kpiDefs ?? [],
-    classConfig: ((snap as any).classConfig ?? []).map(normalizeClassConfigRow),
-    rubricRows: (snap as any).rubricRows ?? [],
-  };
-}
-
-export default function MetricsConsoleGrid({ initial, initialMsoId, msoOptions }: Props) {
-  const [selectedMsoId, setSelectedMsoId] = React.useState<string | null>(initialMsoId);
+export default function MetricsConsoleGrid({ initial }: Props) {
   const [state, setState] = React.useState<GridState>(() => buildStateFromInitial(initial));
   const [colorsOpen, setColorsOpen] = React.useState(false);
 
   const baselineRef = React.useRef<Snapshot>(snapshotFromPayload(initial));
 
   const [saving, setSaving] = React.useState(false);
-  const [loadingMso, setLoadingMso] = React.useState(false);
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const [saveOkAt, setSaveOkAt] = React.useState<number | null>(null);
 
@@ -309,58 +264,11 @@ export default function MetricsConsoleGrid({ initial, initialMsoId, msoOptions }
     setSaveOkAt(null);
   }
 
-  async function handleSelectMso(next: string | null) {
-    if (saving || loadingMso) return;
-
-    if (hasChanges) {
-      const ok = window.confirm("You have unsaved changes. Switching MSO will discard them. Continue?");
-      if (!ok) return;
-    }
-
-    setSaveError(null);
-    setSaveOkAt(null);
-    setSelectedMsoId(next);
-
-    if (!next) {
-      const current = flattenStateToPayload(state);
-      const nextInitial: InitialPayload = {
-        kpiDefs: current.kpiDefs,
-        classConfig: current.classConfig,
-        rubricRows: [],
-      };
-      setState(buildStateFromInitial(nextInitial));
-      baselineRef.current = snapshotFromPayload(nextInitial);
-      return;
-    }
-
-    try {
-      setLoadingMso(true);
-      const snap = await fetchSnapshotForMso(next);
-
-      const nextInitial: InitialPayload = {
-        kpiDefs: snap.kpiDefs ?? [],
-        classConfig: snap.classConfig ?? [],
-        rubricRows: snap.rubricRows ?? [],
-      };
-
-      setState(buildStateFromInitial(nextInitial));
-      baselineRef.current = snapshotFromPayload(nextInitial);
-    } catch (e: any) {
-      setSaveError(e?.message ?? "Failed to load MSO snapshot");
-    } finally {
-      setLoadingMso(false);
-    }
-  }
-
   async function handleSave() {
     try {
       setSaving(true);
       setSaveError(null);
       setSaveOkAt(null);
-
-      if (!selectedMsoId) {
-        throw new Error("Missing MSO scope. Select an MSO to lock scope.");
-      }
 
       const current = flattenStateToPayload(state);
       const diff = buildDiff(current, baselineRef.current);
@@ -375,11 +283,7 @@ export default function MetricsConsoleGrid({ initial, initialMsoId, msoOptions }
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           op: "SAVE_GRID",
-          mso_id: selectedMsoId,
-          payload: {
-            ...diff,
-            mso_id: selectedMsoId,
-          },
+          payload: diff,
         }),
       });
 
@@ -390,15 +294,16 @@ export default function MetricsConsoleGrid({ initial, initialMsoId, msoOptions }
         throw new Error(`${msg}${detail}`);
       }
 
-      const snap = (await res.json().catch(() => null)) as Snapshot | null;
-      if (!snap || !Array.isArray((snap as any).kpiDefs) || !Array.isArray((snap as any).classConfig) || !Array.isArray((snap as any).rubricRows)) {
+      const snap = (await res.json().catch(() => null)) as any;
+
+      if (!snap || !Array.isArray(snap.kpiDefs) || !Array.isArray(snap.classConfig) || !Array.isArray(snap.rubricRows)) {
         throw new Error("Save succeeded but response payload was invalid");
       }
 
       const nextInitial: InitialPayload = {
-        kpiDefs: (snap as any).kpiDefs ?? [],
-        classConfig: ((snap as any).classConfig ?? []).map(normalizeClassConfigRow),
-        rubricRows: (snap as any).rubricRows ?? [],
+        kpiDefs: snap.kpiDefs ?? [],
+        classConfig: (snap.classConfig ?? []).map(normalizeClassConfigRow),
+        rubricRows: snap.rubricRows ?? [],
       };
 
       setState(buildStateFromInitial(nextInitial));
@@ -411,7 +316,7 @@ export default function MetricsConsoleGrid({ initial, initialMsoId, msoOptions }
     }
   }
 
-  const canCommit = !!selectedMsoId && hasChanges && !saving && !loadingMso;
+  const canCommit = hasChanges && !saving;
 
   return (
     <section className="space-y-3">
@@ -423,43 +328,12 @@ export default function MetricsConsoleGrid({ initial, initialMsoId, msoOptions }
         </div>
 
         <div className="flex items-center gap-2">
-          {/* MSO Scope Selector */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">MSO</span>
-            <select
-              className="h-9 rounded-md border bg-background px-2 text-sm"
-              value={selectedMsoId ?? ""}
-              onChange={(e) => handleSelectMso(e.target.value ? e.target.value : null)}
-              disabled={saving || loadingMso}
-              title="Select MSO to lock rubric scope"
-            >
-              <option value="">{msoOptions?.length ? "Select MSO…" : "No MSOs found"}</option>
-              {(msoOptions ?? []).map((o) => {
-                const label = o.mso_name?.trim()
-                  ? `${o.mso_name}${o.mso_lob ? ` • ${o.mso_lob}` : ""}`
-                  : `MSO • ${shortId(o.mso_id)}`;
-
-                return (
-                  <option key={o.mso_id} value={o.mso_id}>
-                    {label}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-
           {hasChanges ? (
             <div
               className="text-xs text-amber-800 border border-amber-200 bg-amber-50 px-2 py-1 rounded-md"
               title="You have edits that are not yet persisted. Use Commit to lock them in."
             >
               Unsaved changes
-            </div>
-          ) : null}
-
-          {loadingMso ? (
-            <div className="text-xs text-slate-700 border border-slate-200 bg-slate-50 px-2 py-1 rounded-md">
-              Loading MSO…
             </div>
           ) : null}
 
@@ -479,9 +353,7 @@ export default function MetricsConsoleGrid({ initial, initialMsoId, msoOptions }
             onClick={handleSave}
             disabled={!canCommit}
             title={
-              !selectedMsoId
-                ? "Select an MSO to lock scope"
-                : !hasChanges
+              !hasChanges
                 ? "No changes to commit"
                 : "Commit changes (writes only changed rows; null clears are persisted). Response rehydrates the grid to verify canonical DB state."
             }
@@ -493,7 +365,7 @@ export default function MetricsConsoleGrid({ initial, initialMsoId, msoOptions }
             type="button"
             className="px-3 py-1.5 rounded-md text-sm border hover:bg-muted disabled:opacity-50"
             onClick={handleRevert}
-            disabled={saving || loadingMso || !hasChanges}
+            disabled={saving || !hasChanges}
             title={!hasChanges ? "Nothing to revert" : "Revert unsaved edits back to the last loaded/saved state"}
           >
             Revert
@@ -503,7 +375,7 @@ export default function MetricsConsoleGrid({ initial, initialMsoId, msoOptions }
             type="button"
             className="px-3 py-1.5 rounded-md text-sm border hover:bg-muted"
             onClick={() => setColorsOpen(true)}
-            disabled={saving || loadingMso}
+            disabled={saving}
             title="Manage band colors"
           >
             Colors

@@ -15,48 +15,61 @@ export function useBandStyles(): UseBandStylesReturn {
   const [error, setError] = React.useState<string | null>(null);
   const [activePresetKey, setActivePresetKey] = React.useState<string | null>(null);
 
-  async function refresh() {
+  const refresh = React.useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const res = await fetch("/api/admin/metrics-colors");
+      const res = await fetch("/api/admin/metrics-colors", { method: "GET" });
 
-      if (!res.ok) throw new Error("Failed to load selection");
+      if (!res.ok) {
+        const j = await res.json().catch(() => null);
+        const msg = j?.error ? String(j.error) : "Failed to load selection";
+        throw new Error(msg);
+      }
 
-      const json = await res.json();
-      setActivePresetKey(json.activePresetKey ?? null);
+      const json = await res.json().catch(() => null);
+      setActivePresetKey(json?.activePresetKey ?? null);
     } catch (err: any) {
-      setError(err?.message ?? "Unknown error");
+      setError(err?.message ?? "Failed to load selection");
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  async function savePreset(presetKey: string) {
-    try {
-      setLoading(true);
-      setError(null);
+  const savePreset = React.useCallback(
+    async (presetKey: string) => {
+      try {
+        setLoading(true);
+        setError(null);
 
-      const res = await fetch("/api/admin/metrics-colors", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ preset_key: presetKey }),
-      });
+        const res = await fetch("/api/admin/metrics-colors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ preset_key: presetKey }),
+        });
 
-      if (!res.ok) throw new Error("Failed to save preset");
+        if (!res.ok) {
+          const j = await res.json().catch(() => null);
+          const msg = j?.error ? String(j.error) : "Failed to save selection";
+          const detail = j?.detail ? ` — ${String(j.detail)}` : "";
+          throw new Error(`${msg}${detail}`);
+        }
 
-      await refresh();
-    } catch (err: any) {
-      setError(err?.message ?? "Failed to save preset");
-    } finally {
-      setLoading(false);
-    }
-  }
+        // Pull canonical DB state back in
+        await refresh();
+      } catch (err: any) {
+        setError(err?.message ?? "Failed to save selection");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [refresh]
+  );
 
   React.useEffect(() => {
-    refresh();
-  }, []);
+    void refresh();
+  }, [refresh]);
 
   return {
     loading,

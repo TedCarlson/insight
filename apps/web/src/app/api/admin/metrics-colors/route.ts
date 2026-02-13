@@ -1,12 +1,15 @@
+// apps/web/src/app/api/admin/metrics-colors/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/shared/data/supabase/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 export const runtime = "nodejs";
 
 const TABLE = "metrics_band_style_selection";
+const GLOBAL_SELECTION_KEY = "GLOBAL";
 
 // -------------------------------------------------------------
-// Owner Gate
+// Owner Gate (auth via session client)
 // -------------------------------------------------------------
 async function ownerGate() {
   const sb = await supabaseServer();
@@ -19,30 +22,28 @@ async function ownerGate() {
     return { ok: false as const, sb, status: 401, error: "Unauthorized" };
   }
 
-  const { data: isOwner } = await sb.rpc("is_owner");
-
-  if (!isOwner) {
+  const { data: isOwner, error } = await sb.rpc("is_owner");
+  if (error || !isOwner) {
     return { ok: false as const, sb, status: 403, error: "Forbidden" };
   }
 
-  return { ok: true as const, sb };
+  return { ok: true as const };
 }
 
 // -------------------------------------------------------------
-// GET — return active preset key
+// GET — return active preset key (global row)
 // -------------------------------------------------------------
 export async function GET() {
   const gate = await ownerGate();
-  if (!gate.ok) {
-    return NextResponse.json({ error: gate.error }, { status: gate.status });
-  }
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status });
 
-  const { sb } = gate;
+  // IMPORTANT: supabaseAdmin is a FUNCTION in this repo, so call it.
+  const admin = await supabaseAdmin();
 
-  const { data, error } = await sb
+  const { data, error } = await admin
     .from(TABLE)
-    .select("preset_key")
-    .limit(1)
+    .select("preset_key,selection_key")
+    .eq("selection_key", GLOBAL_SELECTION_KEY)
     .maybeSingle();
 
   if (error) {
@@ -56,38 +57,42 @@ export async function GET() {
 }
 
 // -------------------------------------------------------------
-// POST — overwrite preset
+// POST — overwrite global selection (delete+insert avoids PK-update issues)
 // -------------------------------------------------------------
 export async function POST(req: NextRequest) {
   const gate = await ownerGate();
-  if (!gate.ok) {
-    return NextResponse.json({ error: gate.error }, { status: gate.status });
-  }
+  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status });
 
-  const { sb } = gate;
+  const admin = await supabaseAdmin();
 
   const body = await req.json().catch(() => null);
+  const presetKey = String(body?.preset_key ?? "").trim();
 
-  if (!body?.preset_key) {
+  if (!presetKey) {
     return NextResponse.json({ error: "Missing preset_key" }, { status: 400 });
   }
 
-  // Clear table (global only = one row ever)
-  const { error: deleteError } = await sb.from(TABLE).delete().neq("preset_key", "");
+  // Clear existing GLOBAL row (if any)
+  const { error: delErr } = await admin.from(TABLE).delete().eq("selection_key", GLOBAL_SELECTION_KEY);
 
-  if (deleteError) {
-    console.error(deleteError);
+  if (delErr) {
+    console.error("Selection delete error:", delErr);
     return NextResponse.json({ error: "Failed to clear selection" }, { status: 500 });
   }
 
-  const { error: insertError } = await sb.from(TABLE).insert([
-    { preset_key: body.preset_key },
+  // Insert new GLOBAL row
+  const { error: insErr } = await admin.from(TABLE).insert([
+    {
+      selection_key: GLOBAL_SELECTION_KEY,
+      preset_key: presetKey,
+      updated_at: new Date().toISOString(),
+    },
   ]);
 
-  if (insertError) {
-    console.error(insertError);
+  if (insErr) {
+    console.error("Selection save error:", insErr);
     return NextResponse.json({ error: "Failed to save selection" }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, activePresetKey: presetKey });
 }

@@ -1,19 +1,17 @@
+// apps/web/src/features/metrics-admin/pages/MetricsAdminPage.tsx
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/shared/data/supabase/server";
-import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 import MetricsConsoleGrid from "@/features/metrics-admin/components/MetricsConsoleGrid";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type InitialPayload = {
   kpiDefs: any[];
   classConfig: any[];
   rubricRows: any[];
-};
-
-type MsoOption = {
-  mso_id: string;
-  mso_name: string | null;
-  mso_lob: string | null;
 };
 
 export default async function MetricsAdminPage() {
@@ -38,35 +36,6 @@ export default async function MetricsAdminPage() {
   if (ownerError || !isOwnerData) {
     redirect("/");
   }
-
-  // -------------------------------------------------------------------
-  // MSO Options (source of truth = "mso" table, same as Admin Catalogue)
-  // -------------------------------------------------------------------
-  const admin = supabaseAdmin();
-
-  const { data: msoRows, error: msoErr } = await admin
-    .from("mso")
-    .select("mso_id,mso_name,mso_lob")
-    .order("mso_name", { ascending: true });
-
-  if (msoErr) {
-    console.error("Failed to load MSO options:", {
-      message: msoErr.message,
-      code: (msoErr as any).code,
-      details: (msoErr as any).details,
-      hint: (msoErr as any).hint,
-    });
-  }
-
-  const msoOptions: MsoOption[] =
-    (msoRows ?? []).map((r: any) => ({
-      mso_id: String(r?.mso_id ?? "").trim(),
-      mso_name: r?.mso_name ?? null,
-      mso_lob: r?.mso_lob ?? null,
-    })) ?? [];
-
-  const filteredOptions = msoOptions.filter((o) => o.mso_id);
-  const initialMsoId: string | null = filteredOptions.length === 1 ? filteredOptions[0].mso_id : null;
 
   // -------------------------------------------------------------------
   // Fetch KPI Definitions (global)
@@ -104,36 +73,28 @@ export default async function MetricsAdminPage() {
   }
 
   // -------------------------------------------------------------------
-  // Fetch Rubric Rows (MSO scoped)
-  // If there is exactly one MSO, preload it. Otherwise start empty and
-  // the client selector will load by MSO.
+  // Fetch Rubric Rows (GLOBAL)
   // -------------------------------------------------------------------
-  let rubricRows: any[] = [];
-  if (initialMsoId) {
-    const { data: rubData, error: rubricError } = await supabase
-      .from("metrics_class_kpi_rubric")
-      .select("*")
-      .eq("mso_id", initialMsoId)
-      .order("class_type")
-      .order("kpi_key")
-      .order("band_key");
+  const { data: rubData, error: rubricError } = await supabase
+    .from("metrics_class_kpi_rubric")
+    .select("*")
+    .order("class_type")
+    .order("kpi_key")
+    .order("band_key");
 
-    if (rubricError) {
-      console.error("Failed to load rubric rows:", {
-        message: rubricError.message,
-        code: (rubricError as any).code,
-        details: (rubricError as any).details,
-        hint: (rubricError as any).hint,
-      });
-    } else {
-      rubricRows = rubData ?? [];
-    }
+  if (rubricError) {
+    console.error("Failed to load rubric rows:", {
+      message: rubricError.message,
+      code: (rubricError as any).code,
+      details: (rubricError as any).details,
+      hint: (rubricError as any).hint,
+    });
   }
 
   const initial: InitialPayload = {
     kpiDefs: kpiDefs ?? [],
     classConfig: classConfig ?? [],
-    rubricRows: rubricRows ?? [],
+    rubricRows: rubData ?? [],
   };
 
   return (
@@ -145,7 +106,7 @@ export default async function MetricsAdminPage() {
         </p>
       </header>
 
-      <MetricsConsoleGrid initial={initial} initialMsoId={initialMsoId} msoOptions={filteredOptions} />
+      <MetricsConsoleGrid initial={initial} />
     </div>
   );
 }

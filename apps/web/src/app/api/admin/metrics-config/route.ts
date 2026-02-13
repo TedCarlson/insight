@@ -4,6 +4,16 @@ import { supabaseServer } from "@/shared/data/supabase/server";
 import { computeRubricDefaults } from "@/features/metrics-admin/lib/spillDefaults";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store",
+};
+
+// -----------------------------------------------------
+// AUTH GATE
+// -----------------------------------------------------
 
 async function ownerGate() {
   const sb = await supabaseServer();
@@ -15,11 +25,12 @@ async function ownerGate() {
   if (!user) return { ok: false as const, sb, status: 401, error: "Unauthorized" };
 
   const { data: isOwner, error: ownerError } = await sb.rpc("is_owner");
-
   if (ownerError || !isOwner) return { ok: false as const, sb, status: 403, error: "Forbidden" };
 
   return { ok: true as const, sb, user };
 }
+
+// -----------------------------------------------------
 
 function str(v: unknown) {
   return String(v ?? "").trim();
@@ -38,6 +49,10 @@ function numOrNull(v: unknown) {
   return Number.isFinite(n) ? n : null;
 }
 
+// -----------------------------------------------------
+// SESSION PC ORG (still required)
+// -----------------------------------------------------
+
 async function resolvePcOrgIdFromSession(sb: any, authUserId: string): Promise<string | null> {
   const { data: prof, error } = await sb
     .from("user_profile")
@@ -50,35 +65,23 @@ async function resolvePcOrgIdFromSession(sb: any, authUserId: string): Promise<s
   return pc && pc.trim() ? pc : null;
 }
 
-/**
- * MSO is derived from PC Org for this surface.
- * We DO NOT accept/require mso_id from caller anymore.
- */
-async function resolveMsoIdFromPcOrg(sb: any, pcOrgId: string): Promise<string | null> {
-  const { data, error } = await sb
-    .from("metrics_class_meta")
-    .select("mso_id")
-    .eq("pc_org_id", pcOrgId)
-    .limit(1)
-    .maybeSingle();
+// -----------------------------------------------------
+// SNAPSHOT (RUBRIC IS GLOBAL NOW)
+// -----------------------------------------------------
 
-  if (error) return null;
-  const mso = data?.mso_id ? String(data.mso_id) : null;
-  return mso && mso.trim() ? mso : null;
-}
-
-async function fetchSnapshot(sb: any, pcOrgId: string, msoId: string) {
+async function fetchSnapshot(sb: any, pcOrgId: string) {
   const [kpiSnap, cfgSnap, rubSnap] = await Promise.all([
     sb.from("metrics_kpi_def").select("*").order("kpi_key", { ascending: true }),
+
     sb
       .from("metrics_class_kpi_config")
       .select("*")
       .order("class_type", { ascending: true })
       .order("kpi_key", { ascending: true }),
+
     sb
       .from("metrics_class_kpi_rubric")
       .select("*")
-      .eq("mso_id", msoId)
       .order("class_type", { ascending: true })
       .order("kpi_key", { ascending: true })
       .order("band_key", { ascending: true }),
@@ -90,7 +93,6 @@ async function fetchSnapshot(sb: any, pcOrgId: string, msoId: string) {
     rubricRows: rubSnap.data ?? [],
     _meta: {
       pc_org_id: pcOrgId,
-      mso_id: msoId,
     },
   };
 }
@@ -98,9 +100,11 @@ async function fetchSnapshot(sb: any, pcOrgId: string, msoId: string) {
 // -----------------------------------------------------
 // GET
 // -----------------------------------------------------
+
 export async function GET(req: NextRequest) {
   const gate = await ownerGate();
-  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status });
+  if (!gate.ok)
+    return NextResponse.json({ error: gate.error }, { status: gate.status, headers: NO_STORE_HEADERS });
 
   const sb = gate.sb;
 
@@ -108,32 +112,22 @@ export async function GET(req: NextRequest) {
   if (!pcOrgId) {
     return NextResponse.json(
       { error: "No PC Org selected", detail: "Select a PC Org in your session to use Metrics Admin." },
-      { status: 400 }
+      { status: 400, headers: NO_STORE_HEADERS }
     );
   }
 
-  const msoId = await resolveMsoIdFromPcOrg(sb, pcOrgId);
-  if (!msoId) {
-    return NextResponse.json(
-      {
-        error: "MSO not mapped for selected PC Org",
-        detail: "metrics_class_meta must contain a row mapping pc_org_id -> mso_id for this org.",
-        hint: { pc_org_id: pcOrgId },
-      },
-      { status: 400 }
-    );
-  }
-
-  const snap = await fetchSnapshot(sb, pcOrgId, msoId);
-  return NextResponse.json(snap);
+  const snap = await fetchSnapshot(sb, pcOrgId);
+  return NextResponse.json(snap, { headers: NO_STORE_HEADERS });
 }
 
 // -----------------------------------------------------
 // POST
 // -----------------------------------------------------
+
 export async function POST(req: NextRequest) {
   const gate = await ownerGate();
-  if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: gate.status });
+  if (!gate.ok)
+    return NextResponse.json({ error: gate.error }, { status: gate.status, headers: NO_STORE_HEADERS });
 
   const sb = gate.sb;
   const body = await req.json().catch(() => null);
@@ -143,32 +137,22 @@ export async function POST(req: NextRequest) {
   if (!pcOrgId) {
     return NextResponse.json(
       { error: "No PC Org selected", detail: "Select a PC Org in your session to use Metrics Admin." },
-      { status: 400 }
+      { status: 400, headers: NO_STORE_HEADERS }
     );
   }
 
-  const msoId = await resolveMsoIdFromPcOrg(sb, pcOrgId);
-  if (!msoId) {
-    return NextResponse.json(
-      {
-        error: "MSO not mapped for selected PC Org",
-        detail: "metrics_class_meta must contain a row mapping pc_org_id -> mso_id for this org.",
-        hint: { pc_org_id: pcOrgId },
-      },
-      { status: 400 }
-    );
-  }
-
-  // -----------------------------------------------------
+  // =====================================================
   // SAVE GRID
-  // -----------------------------------------------------
+  // =====================================================
+
   if (op === "SAVE_GRID") {
     const payload = body?.payload;
-    if (!payload) return NextResponse.json({ error: "Missing payload" }, { status: 400 });
+    if (!payload) return NextResponse.json({ error: "Missing payload" }, { status: 400, headers: NO_STORE_HEADERS });
 
-    // -------------------------------
-    // KPI defs (metrics_kpi_def)
-    // -------------------------------
+    // -------------------------------------------------
+    // KPI DEFINITIONS (preserve DB NOT NULL fields on partial edits)
+    // -------------------------------------------------
+
     if (Array.isArray(payload.kpiDefs) && payload.kpiDefs.length) {
       const incoming = payload.kpiDefs
         .map((d: any) => ({
@@ -182,45 +166,38 @@ export async function POST(req: NextRequest) {
           raw_label_identifier: d?.raw_label_identifier ?? undefined,
           no_data_behavior: d?.no_data_behavior ?? undefined,
         }))
-        .filter((d: any) => d.kpi_key);
+        .filter((r: any) => r.kpi_key);
 
       if (incoming.length) {
-        const keys = incoming.map((d: any) => d.kpi_key);
+        const keys = incoming.map((r: any) => r.kpi_key);
 
         const { data: existingRows, error: existingErr } = await sb
           .from("metrics_kpi_def")
-          .select(
-            "kpi_key,label,customer_label,direction,unit,min_value,max_value,is_active,raw_label_identifier,no_data_behavior"
-          )
+          .select("kpi_key,label,customer_label,direction,unit,min_value,max_value,is_active,raw_label_identifier,no_data_behavior")
           .in("kpi_key", keys);
 
         if (existingErr) {
-          return NextResponse.json({ error: "Failed to read existing KPI defs" }, { status: 500 });
+          return NextResponse.json(
+            { error: "Failed to read existing KPI defs", detail: existingErr.message },
+            { status: 500, headers: NO_STORE_HEADERS }
+          );
         }
 
         const byKey = new Map<string, any>();
         for (const r of existingRows ?? []) byKey.set(String(r.kpi_key), r);
 
-        const upsertRows: any[] = [];
-        for (const d of incoming) {
+        const upRows = incoming.map((d: any) => {
           const prev = byKey.get(d.kpi_key);
 
           const label = d.label ?? prev?.label;
           const direction = d.direction ?? prev?.direction;
           const unit = d.unit ?? prev?.unit;
 
-          // DB NOT NULL safety for new keys
           if (!label || !direction || !unit) {
-            return NextResponse.json(
-              {
-                error: "KPI def missing required fields",
-                detail: `kpi_key=${d.kpi_key} requires label, direction, and unit (DB NOT NULL).`,
-              },
-              { status: 400 }
-            );
+            throw new Error(`KPI def missing required fields for kpi_key=${d.kpi_key} (requires label, direction, unit).`);
           }
 
-          upsertRows.push({
+          return {
             kpi_key: d.kpi_key,
             label,
             customer_label: d.customer_label ?? prev?.customer_label ?? null,
@@ -232,24 +209,23 @@ export async function POST(req: NextRequest) {
             no_data_behavior: d.no_data_behavior ?? prev?.no_data_behavior ?? null,
             is_active: prev?.is_active ?? true,
             updated_at: new Date().toISOString(),
-          });
-        }
+          };
+        });
 
-        const { error: upErr } = await sb.from("metrics_kpi_def").upsert(upsertRows, { onConflict: "kpi_key" });
-
+        const { error: upErr } = await sb.from("metrics_kpi_def").upsert(upRows, { onConflict: "kpi_key" });
         if (upErr) {
-          return NextResponse.json({ error: "Failed to upsert KPI defs", detail: upErr.message }, { status: 500 });
+          return NextResponse.json(
+            { error: "Failed to upsert KPI defs", detail: upErr.message },
+            { status: 500, headers: NO_STORE_HEADERS }
+          );
         }
       }
     }
 
-    // -------------------------------
-    // Class config (metrics_class_kpi_config)
-    // Map UI -> DB:
-    // - weight_percent -> weight
-    // - threshold -> threshold_value
-    // - grade_value -> grade_value
-    // -------------------------------
+    // -------------------------------------------------
+    // CLASS CONFIG
+    // -------------------------------------------------
+
     if (Array.isArray(payload.classConfig) && payload.classConfig.length) {
       const rows = payload.classConfig
         .map((c: any) => {
@@ -257,94 +233,79 @@ export async function POST(req: NextRequest) {
           const kpi_key = str(c?.kpi_key);
           if (!class_type || !kpi_key) return null;
 
-          const enabled = !!c?.enabled;
-
-          // weight is NOT NULL in DB; default to 0
-          const weight = numOrNull(c?.weight_percent ?? c?.weight);
-          const threshold_value = numOrNull(c?.threshold ?? c?.threshold_value);
-
-          // decimals supported
-          const grade_value = numOrNull(c?.grade_value);
-
           return {
             class_type,
             kpi_key,
-            enabled,
-            weight: weight ?? 0,
-            threshold_value,
-            grade_value,
+            enabled: !!c?.enabled,
+            weight: numOrNull(c?.weight_percent ?? c?.weight) ?? 0,
+            threshold_value: numOrNull(c?.threshold ?? c?.threshold_value),
+            grade_value: numOrNull(c?.grade_value),
+            stretch_value: numOrNull(c?.stretch_value),
             updated_at: new Date().toISOString(),
           };
         })
         .filter(Boolean);
 
       if (rows.length) {
-        const { error: cfgErr } = await sb
-          .from("metrics_class_kpi_config")
-          .upsert(rows, { onConflict: "class_type,kpi_key" });
+        const { error } = await sb.from("metrics_class_kpi_config").upsert(rows, { onConflict: "class_type,kpi_key" });
 
-        if (cfgErr) {
+        if (error) {
           return NextResponse.json(
-            {
-              error: "Failed to upsert class config",
-              detail: cfgErr.message,
-              hint: "Verify metrics_class_kpi_config has columns weight, threshold_value, grade_value.",
-            },
-            { status: 500 }
+            { error: "Failed to upsert class config", detail: error.message },
+            { status: 500, headers: NO_STORE_HEADERS }
           );
         }
       }
     }
 
-    // -------------------------------
-    // Rubric (metrics_class_kpi_rubric) — derived MSO scoped
-    // DB PK: (mso_id, class_type, kpi_key, band_key)
-    // Includes optional color_hex (persist formatting by band row)
-    // -------------------------------
+    // -------------------------------------------------
+    // RUBRIC (GLOBAL)
+    // -------------------------------------------------
+
     if (Array.isArray(payload.rubricRows) && payload.rubricRows.length) {
       const rows = payload.rubricRows
         .map((r: any) => {
           const class_type = upper(r?.class_type);
           const kpi_key = str(r?.kpi_key);
-          const band_key = str(r?.band_key);
+          const band_key = upper(r?.band_key);
           if (!class_type || !kpi_key || !band_key) return null;
 
-          const color_hex = r?.color_hex == null ? null : str(r?.color_hex) || null;
-
           return {
-            mso_id: msoId,
             class_type,
             kpi_key,
             band_key,
             min_value: numOrNull(r?.min_value),
             max_value: numOrNull(r?.max_value),
             score_value: numOrNull(r?.score_value),
-            color_hex,
             updated_at: new Date().toISOString(),
           };
         })
         .filter(Boolean);
 
       if (rows.length) {
-        const { error: rubErr } = await sb
+        const { error } = await sb
           .from("metrics_class_kpi_rubric")
-          .upsert(rows, { onConflict: "mso_id,class_type,kpi_key,band_key" });
+          .upsert(rows, { onConflict: "class_type,kpi_key,band_key" });
 
-        if (rubErr) {
-          return NextResponse.json({ error: "Failed to upsert rubric rows", detail: rubErr.message }, { status: 500 });
+        if (error) {
+          return NextResponse.json(
+            { error: "Failed to upsert rubric rows", detail: error.message },
+            { status: 500, headers: NO_STORE_HEADERS }
+          );
         }
       }
     }
   }
 
-  // -----------------------------------------------------
-  // LOAD DEFAULTS (derived MSO scoped rubric upsert)
-  // -----------------------------------------------------
+  // =====================================================
+  // LOAD DEFAULTS (writes to GLOBAL rubric)
+  // =====================================================
+
   if (op === "LOAD_DEFAULTS") {
     const p = body?.payload;
 
     if (!p?.classType || !p?.kpiKey || !p?.kpiDef || !p?.classConfig) {
-      return NextResponse.json({ error: "Missing load-defaults payload" }, { status: 400 });
+      return NextResponse.json({ error: "Missing load-defaults payload" }, { status: 400, headers: NO_STORE_HEADERS });
     }
 
     const classType = upper(p.classType);
@@ -356,7 +317,7 @@ export async function POST(req: NextRequest) {
     if (threshold === null) {
       return NextResponse.json(
         { error: "Missing threshold for load-defaults", detail: "threshold/threshold_value is required" },
-        { status: 400 }
+        { status: 400, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -371,28 +332,29 @@ export async function POST(req: NextRequest) {
       grade_value: grade_value ?? null,
     });
 
-    const upRows = Object.entries(computed).map(([band_key, r]: any) => ({
-      mso_id: msoId,
+    const rows = Object.entries(computed).map(([band_key, r]: any) => ({
       class_type: classType,
       kpi_key: kpiKey,
       band_key,
       min_value: r.min_value ?? null,
       max_value: r.max_value ?? null,
       score_value: r.score_value ?? null,
-      // do not clobber existing colors when loading defaults
       updated_at: new Date().toISOString(),
     }));
 
-    const { error: rubErr } = await sb
+    const { error } = await sb
       .from("metrics_class_kpi_rubric")
-      .upsert(upRows, { onConflict: "mso_id,class_type,kpi_key,band_key" });
+      .upsert(rows, { onConflict: "class_type,kpi_key,band_key" });
 
-    if (rubErr) {
-      return NextResponse.json({ error: "Failed to load defaults into rubric", detail: rubErr.message }, { status: 500 });
+    if (error) {
+      return NextResponse.json(
+        { error: "Failed to load defaults into rubric", detail: error.message },
+        { status: 500, headers: NO_STORE_HEADERS }
+      );
     }
   }
 
-  // Always return fresh snapshot (derived MSO scoped rubric)
-  const snap = await fetchSnapshot(sb, pcOrgId, msoId);
-  return NextResponse.json(snap);
+  // Always return fresh snapshot
+  const snap = await fetchSnapshot(sb, pcOrgId);
+  return NextResponse.json(snap, { headers: NO_STORE_HEADERS });
 }

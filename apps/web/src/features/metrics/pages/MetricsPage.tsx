@@ -42,11 +42,11 @@ export default async function MetricsHomePage() {
 
   return (
     <PageShell>
-      <PageHeader title="Metrics" subtitle="Upload raw reports and derive weighted scores/ranks (Phase 2)." />
+      <PageHeader title="Metrics" subtitle="Uploads + reporting surfaces (Tech → rollups)." />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <SectionCard title="Uploads" href="/metrics/uploads" />
-        <SectionCard title="Scorecards (coming soon)" href="/metrics" />
+        <SectionCard title="Reports" href="/metrics/reports" />
       </div>
 
       <Card>
@@ -73,7 +73,8 @@ export default async function MetricsHomePage() {
           </div>
 
           <div className="text-xs text-[var(--to-ink-muted)]">
-            This page is the landing hub. Use <span className="font-medium">Uploads</span> to stage/verify and load raw reports.
+            Use <span className="font-medium">Uploads</span> to stage/load raw reports. Use{" "}
+            <span className="font-medium">Reports</span> for Tech scorecards and rollups.
           </div>
         </div>
       </Card>

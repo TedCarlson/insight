@@ -1,7 +1,16 @@
+// apps/web/src/features/metrics/components/reports/kpiSlicer/KpiSlicerProvider.tsx
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
+
 import type { BandKey } from "@/features/metrics-reports/lib/score";
 import type { KpiDef } from "@/features/metrics/lib/reports/kpis";
 
@@ -47,6 +56,7 @@ function Overlay({
   rows,
   kpis,
   preset,
+  initialKpiKey,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -54,12 +64,39 @@ function Overlay({
   rows: RowLike[];
   kpis: KpiDef[];
   preset: Record<string, any>;
+  initialKpiKey?: string | null;
 }) {
   const [activeKpiKey, setActiveKpiKey] = useState<string>(kpis[0]?.key ?? "TNPS");
   const [bands, setBands] = useState<Record<SliceBand, boolean>>({
     NEEDS_IMPROVEMENT: true,
     MISSES: true,
   });
+
+  // sync active KPI when opened (so clicking a KPI header opens that KPI)
+  useEffect(() => {
+    if (!isOpen) return;
+    const next = initialKpiKey ?? kpis[0]?.key;
+    if (next) setActiveKpiKey(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialKpiKey]);
+
+  // ESC close + prevent background scroll
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isOpen, onClose]);
 
   const activeDef = useMemo(() => {
     const found = kpis.find((k) => k.key === activeKpiKey);
@@ -104,164 +141,194 @@ function Overlay({
 
   return (
     <div className="fixed inset-0 z-[80]">
+      {/* backdrop */}
       <button
         aria-label="Close slicer"
-        className="absolute inset-0 bg-black/30"
+        className="absolute inset-0 bg-black/40"
         onClick={onClose}
       />
 
-      <div className="absolute left-1/2 top-10 w-[min(980px,calc(100vw-24px))] -translate-x-1/2">
-        <div className="rounded-2xl border bg-[var(--to-surface)] shadow-xl overflow-hidden">
+      {/* panel */}
+      <div className="absolute inset-0 p-2 sm:p-4 flex items-start justify-center">
+        <div
+          className={cls(
+            "rounded-2xl border bg-[var(--to-surface)] shadow-xl overflow-hidden",
+            "w-[calc(100vw-1rem)] sm:w-full",
+            "max-w-3xl",
+            "max-h-[85vh]",
+            "flex flex-col"
+          )}
+          style={{ borderColor: "var(--to-border)" }}
+        >
+          {/* sticky header */}
           <div
-            className="flex items-start justify-between gap-4 border-b px-5 py-4"
+            className="sticky top-0 z-10 bg-[var(--to-surface)] border-b"
             style={{ borderColor: "var(--to-border)" }}
           >
-            <div>
-              <div className="text-base font-semibold">{title}</div>
-              <div className="text-xs text-[var(--to-ink-muted)] mt-0.5">
-                KPI slicer • Needs Improvement / Misses
+            <div className="px-3 sm:px-4 py-2.5 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold leading-5">{title}</div>
+                <div className="text-[11px] text-[var(--to-ink-muted)] leading-4 truncate">
+                  KPI slicer • Needs Improvement / Misses
+                </div>
               </div>
+
+              <button
+                onClick={onClose}
+                className="to-btn to-btn--secondary h-8 px-3 text-xs inline-flex items-center"
+                style={{ borderColor: "var(--to-border)" }}
+              >
+                Close
+              </button>
             </div>
 
-            <button
-              onClick={onClose}
-              className="rounded-lg border px-3 py-1.5 text-sm hover:opacity-80"
-              style={{ borderColor: "var(--to-border)" }}
-            >
-              Close
-            </button>
-          </div>
+            {/* controls (still in header so they stay visible) */}
+            <div className="px-3 sm:px-4 pb-3 grid gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-xs font-medium text-[var(--to-ink-muted)] mr-1">
+                  KPI
+                </div>
 
-          <div className="px-5 py-4 grid gap-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="text-xs font-medium text-[var(--to-ink-muted)] mr-2">
-                KPI
+                {kpis.map((k) => {
+                  const active = k.key === activeDef?.key;
+                  return (
+                    <button
+                      key={k.key}
+                      onClick={() => setActiveKpiKey(k.key)}
+                      className={cls(
+                        "rounded-xl border px-3 py-1.5 text-sm font-semibold",
+                        active && "shadow-sm"
+                      )}
+                      style={{
+                        borderColor: "var(--to-border)",
+                        background: active ? "var(--to-row-hover)" : "transparent",
+                      }}
+                    >
+                      {k.label}
+                    </button>
+                  );
+                })}
               </div>
 
-              {kpis.map((k) => {
-                const active = k.key === activeDef?.key;
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="text-xs font-medium text-[var(--to-ink-muted)] mr-1">
+                  Rubric slice
+                </div>
+
+                {(["NEEDS_IMPROVEMENT", "MISSES"] as SliceBand[]).map((b) => (
+                  <label key={b} className="inline-flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={bands[b]}
+                      onChange={(e) =>
+                        setBands((prev) => ({ ...prev, [b]: e.target.checked }))
+                      }
+                    />
+                    <span className="font-medium">
+                      {b === "NEEDS_IMPROVEMENT" ? "Needs Improvement" : "Misses"}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* scroll body */}
+          <div className="flex-1 overflow-auto px-3 sm:px-4 py-3">
+            <div className="grid gap-3">
+              {(["NEEDS_IMPROVEMENT", "MISSES"] as SliceBand[]).map((b) => {
+                const list = matches[b];
+                if (!bands[b]) return null;
+
+                const label = b === "NEEDS_IMPROVEMENT" ? "Needs Improvement" : "Misses";
+
                 return (
-                  <button
-                    key={k.key}
-                    onClick={() => setActiveKpiKey(k.key)}
-                    className={cls(
-                      "rounded-xl border px-3 py-1.5 text-sm font-semibold",
-                      active && "shadow-sm"
-                    )}
-                    style={{
-                      borderColor: "var(--to-border)",
-                      background: active ? "var(--to-row-hover)" : "transparent",
-                    }}
+                  <div
+                    key={b}
+                    className="rounded-xl border p-3 sm:p-4"
+                    style={{ borderColor: "var(--to-border)" }}
                   >
-                    {k.label}
-                  </button>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-semibold">{label}</div>
+                      <div className="text-xs text-[var(--to-ink-muted)]">
+                        {list.length} tech{list.length === 1 ? "" : "s"}
+                      </div>
+                    </div>
+
+                    {list.length === 0 ? (
+                      <div className="text-sm text-[var(--to-ink-muted)] mt-3">
+                        No techs in this slice.
+                      </div>
+                    ) : (
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="text-xs text-[var(--to-ink-muted)] sticky top-0 bg-[var(--to-surface)]">
+                            <tr>
+                              <th className="text-left py-2 pr-3">Tech • Name</th>
+                              <th className="text-left py-2 pr-3">Reports To</th>
+                              <th className="text-right py-2 pr-3">Rank</th>
+                              <th className="text-right py-2">Value</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {list.map((r) => {
+                              const v = activeDef ? r[activeDef.valueField] : null;
+                              const name = r.__full_name ?? "—";
+                              const rpt = r.__reports_to_name ?? "—";
+                              const tech = String(r.tech_id);
+
+                              return (
+                                <tr
+                                  key={`${b}-${tech}`}
+                                  className="border-t"
+                                  style={{ borderColor: "var(--to-border)" }}
+                                >
+                                  <td className="py-2 pr-3">
+                                    <span className="font-mono tabular-nums">{tech}</span>
+                                    <span className="mx-2 text-[var(--to-ink-muted)]">•</span>
+                                    <span className="truncate">{name}</span>
+                                  </td>
+
+                                  <td className="py-2 pr-3">{rpt}</td>
+
+                                  <td className="py-2 pr-3 text-right font-mono tabular-nums">
+                                    {r.rank_in_pc ?? "—"}
+                                  </td>
+
+                                  <td className="py-2 text-right font-mono tabular-nums">
+                                    {v ?? "—"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="text-xs font-medium text-[var(--to-ink-muted)] mr-2">
-                Rubric slice
-              </div>
-
-              {(["NEEDS_IMPROVEMENT", "MISSES"] as SliceBand[]).map((b) => (
-                <label key={b} className="inline-flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={bands[b]}
-                    onChange={(e) =>
-                      setBands((prev) => ({ ...prev, [b]: e.target.checked }))
-                    }
-                  />
-                  <span className="font-medium">
-                    {b === "NEEDS_IMPROVEMENT" ? "Needs Improvement" : "Misses"}
-                  </span>
-                </label>
-              ))}
-            </div>
           </div>
 
+          {/* sticky footer */}
           <div
-            className="border-t px-5 py-4 grid gap-4"
+            className="sticky bottom-0 z-10 bg-[var(--to-surface)] border-t"
             style={{ borderColor: "var(--to-border)" }}
           >
-            {(["NEEDS_IMPROVEMENT", "MISSES"] as SliceBand[]).map((b) => {
-              const list = matches[b];
-              if (!bands[b]) return null;
+            <div className="px-3 sm:px-4 py-2 flex items-center justify-between gap-2">
+              <div className="text-[11px] text-[var(--to-ink-muted)] truncate">
+                Tip: scroll inside the panel • ESC closes
+              </div>
 
-              const label =
-                b === "NEEDS_IMPROVEMENT" ? "Needs Improvement" : "Misses";
-
-              return (
-                <div
-                  key={b}
-                  className="rounded-xl border p-4"
-                  style={{ borderColor: "var(--to-border)" }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold">{label}</div>
-                    <div className="text-xs text-[var(--to-ink-muted)]">
-                      {list.length} tech{list.length === 1 ? "" : "s"}
-                    </div>
-                  </div>
-
-                  {list.length === 0 ? (
-                    <div className="text-sm text-[var(--to-ink-muted)] mt-3">
-                      No techs in this slice.
-                    </div>
-                  ) : (
-                    <div className="mt-3 overflow-x-auto">
-                      <table className="min-w-full text-sm">
-                        <thead className="text-xs text-[var(--to-ink-muted)]">
-                          <tr>
-                            <th className="text-left py-2 pr-3">Tech • Name</th>
-                            <th className="text-left py-2 pr-3">Reports To</th>
-                            <th className="text-right py-2 pr-3">Rank</th>
-                            <th className="text-right py-2">Value</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {list.map((r) => {
-                            const v = activeDef ? r[activeDef.valueField] : null;
-                            const name = r.__full_name ?? "—";
-                            const rpt = r.__reports_to_name ?? "—";
-                            const tech = String(r.tech_id);
-
-                            return (
-                              <tr
-                                key={`${b}-${tech}`}
-                                className="border-t"
-                                style={{ borderColor: "var(--to-border)" }}
-                              >
-                                <td className="py-2 pr-3">
-                                  <span className="font-mono tabular-nums">
-                                    {tech}
-                                  </span>
-                                  <span className="mx-2 text-[var(--to-ink-muted)]">
-                                    •
-                                  </span>
-                                  <span className="truncate">{name}</span>
-                                </td>
-
-                                <td className="py-2 pr-3">{rpt}</td>
-
-                                <td className="py-2 pr-3 text-right font-mono tabular-nums">
-                                  {r.rank_in_pc ?? "—"}
-                                </td>
-
-                                <td className="py-2 text-right font-mono tabular-nums">
-                                  {v ?? "—"}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+              <button
+                type="button"
+                className="to-btn to-btn--secondary h-8 px-3 text-xs inline-flex items-center"
+                onClick={onClose}
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -283,8 +350,10 @@ export function KpiSlicerProvider({
   preset: Record<string, any>;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [initialKpiKey, setInitialKpiKey] = useState<string | null>(null);
 
-  const openForKpi = useCallback((_kpiKey: string) => {
+  const openForKpi = useCallback((kpiKey: string) => {
+    setInitialKpiKey(kpiKey);
     setIsOpen(true);
   }, []);
 
@@ -300,6 +369,7 @@ export function KpiSlicerProvider({
         rows={rows}
         kpis={kpis}
         preset={preset}
+        initialKpiKey={initialKpiKey}
       />
     </KpiSlicerCtx.Provider>
   );

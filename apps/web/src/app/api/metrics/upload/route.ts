@@ -32,7 +32,6 @@ function normalizeTechId(v: any): string | null {
 
 function parseGeneratedAtFromTitle(title: string | null): string | null {
   if (!title) return null;
-  // Example: "Keystone Metrics 12/26/2025 8:52:24"
   const m = title.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2}:\d{2})/);
   if (!m) return null;
   const mdY = m[1];
@@ -50,8 +49,12 @@ function parseGeneratedAtFromTitle(title: string | null): string | null {
 async function resolveFiscalMonthByAnchorDate(
   supabase: any,
   anchorDateYYYYMMDD: string
-): Promise<{ fiscal_month_id: string; end_date: string; start_date: string; label?: string | null } | null> {
-  // We resolve the fiscal month container by asking fiscal_month_dim for the month that contains the anchor date.
+): Promise<{
+  fiscal_month_id: string;
+  end_date: string;
+  start_date: string;
+  label?: string | null;
+} | null> {
   const { data, error } = await supabase
     .from("fiscal_month_dim")
     .select("fiscal_month_id, start_date, end_date, label")
@@ -89,11 +92,6 @@ function buildUniqueKey(techId: string, orgId: string, fiscalEndDate: string, ba
 }
 
 function dropCols2and3(headers: string[], row: any[]): Record<string, any> {
-  // Columns are 1-based in user speak:
-  // col1 TechId
-  // col2 TechName (drop)
-  // col3 Supervisor (drop)
-  // Keep everything else exactly as delivered.
   const out: Record<string, any> = {};
   for (let i = 0; i < headers.length; i++) {
     const colIndex1Based = i + 1;
@@ -125,7 +123,7 @@ export async function POST(req: Request) {
           return cookieStore.getAll();
         },
         setAll() {
-          // no-op: we are not mutating auth cookies here
+          // no-op
         },
       },
     });
@@ -194,18 +192,13 @@ export async function POST(req: Request) {
     }
 
     const headers = headerRow.map((h) => String(h ?? "").trim());
-    const techIdHeaderIndex = headers.findIndex((h) => h.toLowerCase() === "techid" || h.toLowerCase() === "tech id");
+    const techIdHeaderIndex = headers.findIndex(
+      (h) => h.toLowerCase() === "techid" || h.toLowerCase() === "tech id"
+    );
     if (techIdHeaderIndex < 0) return json(400, { ok: false, error: 'missing required column "TechId"' });
 
-    // -------------------------
-    // metric_date (NEW COLUMN)
-    // - This is the "anchor date" user selected (today or picked_date)
-    // - fiscal_end_date is derived from fiscal_month_dim using this anchor
-    // -------------------------
-    const metric_date =
-      mode === "date"
-        ? pickedDate
-        : isoDateOnlyNY(new Date());
+    // metric_date (anchor date)
+    const metric_date = mode === "date" ? pickedDate : isoDateOnlyNY(new Date());
 
     if (!metric_date || !/^\d{4}-\d{2}-\d{2}$/.test(metric_date)) {
       return json(400, { ok: false, error: "invalid picked_date", hint: "Expected YYYY-MM-DD" });
@@ -222,7 +215,6 @@ export async function POST(req: Request) {
     }
 
     const fiscal_end_date = month.end_date;
-
     const warning_flags: any[] = [];
 
     if (detected_generated_at) {
@@ -246,10 +238,7 @@ export async function POST(req: Request) {
       }
     } else {
       warning_flags.push(
-        toWarning(
-          "MISSING_GENERATED_AT",
-          "Could not parse a generated timestamp from row 1 title (informational)."
-        )
+        toWarning("MISSING_GENERATED_AT", "Could not parse a generated timestamp from row 1 title (informational).")
       );
     }
 
@@ -266,7 +255,6 @@ export async function POST(req: Request) {
       if (!tech_id) continue;
 
       row_count_total++;
-
       const raw = dropCols2and3(headers, r);
       normalizedTechIds.push({ tech_id, raw });
     }
@@ -276,12 +264,16 @@ export async function POST(req: Request) {
     }
 
     if (!confirm) {
-      // Stage only: create a batch record, store warning flags, but do not write rows yet.
+      // Stage batch
       const { data: batch, error: batchErr } = await supabase
         .from("metrics_raw_batch")
         .insert({
           pc_org_id,
           fiscal_end_date,
+
+          // ✅ ADD THIS (requires DB column on metrics_raw_batch)
+          metric_date,
+
           source_title: title,
           source_generated_at: detected_generated_at,
           source_filename: filename,
@@ -299,7 +291,7 @@ export async function POST(req: Request) {
       return json(200, {
         ok: true,
         mode,
-        metric_date, // NEW: echo back for UI confirmation/debug
+        metric_date,
         fiscal_end_date,
         detected_generated_at,
         detected_title: title,
@@ -316,7 +308,7 @@ export async function POST(req: Request) {
     // Confirm/load: ensure batch belongs to org and is staged
     const { data: batchRow, error: batchGetErr } = await supabase
       .from("metrics_raw_batch")
-      .select("batch_id, pc_org_id, fiscal_end_date, status")
+      .select("batch_id, pc_org_id, fiscal_end_date, status, metric_date")
       .eq("batch_id", incomingBatchId)
       .maybeSingle();
 
@@ -336,7 +328,7 @@ export async function POST(req: Request) {
         batch_id,
         pc_org_id,
 
-        // ✅ NEW COLUMN (required by your new table shape)
+        // metric_date on rows (your raw row shape)
         metric_date,
 
         fiscal_end_date: fiscalEndForKey,
@@ -359,12 +351,14 @@ export async function POST(req: Request) {
       row_count_loaded = toInsert.length;
     }
 
+    // ✅ persist metric_date on batch at load time as well
     const { error: upErr } = await supabase
       .from("metrics_raw_batch")
       .update({
         status: "loaded",
         row_count: row_count_loaded,
         warning_flags,
+        metric_date,
       })
       .eq("batch_id", batch_id);
 
@@ -374,7 +368,7 @@ export async function POST(req: Request) {
       ok: true,
       loaded: true,
       batch_id,
-      metric_date, // NEW: return it on confirm too
+      metric_date,
       fiscal_end_date: fiscalEndForKey,
       row_count_loaded,
       warning_flags,

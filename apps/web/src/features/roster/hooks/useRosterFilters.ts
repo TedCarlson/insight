@@ -24,7 +24,9 @@ function isTechnicianRow(r: any): boolean {
 export function useRosterFilters(args: { roster: RosterRow[]; validatedOrgId: string | null }) {
   const { roster, validatedOrgId } = args;
 
-  const [roleFilter, setRoleFilter] = useState<RoleFilter>("technician");
+  // IMPORTANT:
+  // Default to "all" so current memberships show even when assignment/tech_id is not set yet.
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [query, setQuery] = useState("");
   const [affKey, setAffKey] = useState("all");
   const [supervisorKey, setSupervisorKey] = useState("all");
@@ -175,11 +177,11 @@ export function useRosterFilters(args: { roster: RosterRow[]; validatedOrgId: st
   }, [filteredRoster]);
 
   const anyFiltersActive =
-    Boolean(query.trim()) || roleFilter !== "technician" || effAffKey !== "all" || effSupervisorKey !== "all";
+    Boolean(query.trim()) || roleFilter !== "all" || effAffKey !== "all" || effSupervisorKey !== "all";
 
   const clearFilters = () => {
     setQuery("");
-    setRoleFilter("technician");
+    setRoleFilter("all");
     setAffKey("all");
     setSupervisorKey("all");
   };

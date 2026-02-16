@@ -41,8 +41,14 @@ export async function rosterCurrentFull(
   const todayIso = new Date().toISOString().slice(0, 10);
   const isIsoDate = (s: any) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-  // Existing "current assignment" filter (kept).
+  // Existing "current assignment" filter (UPDATED to allow membership-only rows).
   const isCurrent = (r: any) => {
+    // ✅ IMPORTANT: roster must show current memberships even if assignment doesn't exist yet.
+    // If there's no assignment_id at all, keep the row (membership-only).
+    const hasAssignmentId = !!String(r?.assignment_id ?? "").trim();
+    if (!hasAssignmentId) return true;
+
+    // Normal assignment-current logic below (unchanged)
     if (r?.assignment_active === true) return true;
     if (r?.assignment_active === false) return false;
 
@@ -180,10 +186,7 @@ export async function rosterMaster(ctx: ApiModuleCtx, pc_org_id: string): Promis
   );
 }
 
-export async function rosterRowModule(
-  ctx: ApiModuleCtx,
-  assignment_id: string
-): Promise<RosterRowModuleRow | null> {
+export async function rosterRowModule(ctx: ApiModuleCtx, assignment_id: string): Promise<RosterRowModuleRow | null> {
   const data = await ctx.rpcWithFallback<any>("roster_row_module_get", [
     { p_assignment_id: assignment_id },
     { assignment_id },

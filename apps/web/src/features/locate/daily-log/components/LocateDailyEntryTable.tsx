@@ -126,6 +126,7 @@ export function LocateDailyEntryTable(props: Props) {
             <div>State</div>
             <div>Headcount</div>
             <div>Working</div>
+            <div>OJC</div>
             <div>{ticketsLabel}</div>
             <div>Project</div>
             <div>Emergency</div>
@@ -167,6 +168,8 @@ export function LocateDailyEntryTable(props: Props) {
                 const backlogStart = getBacklogStart(r.state_code);
                 const backlogEnd = projectedBacklogEnd(r.state_code, r.inputs);
 
+                const ojcVal = (r.inputs as any).ojc ?? "";
+
                 return (
                   <DataTableRow key={r.state_code} gridStyle={gridStyle}>
                     <div className="flex items-center gap-1">
@@ -202,6 +205,21 @@ export function LocateDailyEntryTable(props: Props) {
                           updateRow(r.state_code, {
                             manpower_count: e.target.value === "" ? "" : Number(e.target.value),
                           })
+                        }
+                        disabled={submitting}
+                      />
+                    </div>
+
+                    {/* OJC (On Job Count) */}
+                    <div>
+                      <input
+                        inputMode="numeric"
+                        className="to-input h-9 w-[110px] text-sm"
+                        value={ojcVal === 0 ? "" : ojcVal}
+                        onChange={(e) =>
+                          updateRow(r.state_code, {
+                            ojc: e.target.value === "" ? "" : Number(e.target.value),
+                          } as any)
                         }
                         disabled={submitting}
                       />
@@ -304,17 +322,24 @@ export function LocateDailyEntryTable(props: Props) {
                       {estSla === null ? (
                         <span className="text-xs text-[var(--to-ink-muted)]">—</span>
                       ) : (
-                        <span
-                          className="rounded-full px-2 py-1 text-xs font-medium"
-                          style={{
-                            border: "1px solid var(--to-border)",
-                            background: slaPillStyle(estSla).bg,
-                            color: slaPillStyle(estSla).fg,
-                          }}
-                          title={`Estimated SLA (lead): capacity ${working * TARGET_TICKETS_PER_TECH} ÷ demand ${ticketsReceivedAM}`}
-                        >
-                          {estSla}%
-                        </span>
+                        (() => {
+                          const style = slaPillStyle(estSla);
+                          return (
+                            <span
+                              className="rounded-full px-2 py-1 text-xs font-medium"
+                              style={{
+                                border: "1px solid var(--to-border)",
+                                background: style.bg,
+                                color: style.fg,
+                              }}
+                              title={`Estimated SLA (lead): capacity ${
+                                working * TARGET_TICKETS_PER_TECH
+                              } ÷ demand ${ticketsReceivedAM}`}
+                            >
+                              {estSla}%
+                            </span>
+                          );
+                        })()
                       )}
                     </div>
                   </DataTableRow>

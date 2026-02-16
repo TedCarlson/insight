@@ -22,7 +22,6 @@ function firstEmail(emails: unknown): string | null {
   const s = emails.trim();
   if (!s) return null;
 
-  // allow JSON array encoded as string
   if (s.startsWith("[") && s.endsWith("]")) {
     try {
       const parsed = JSON.parse(s);
@@ -32,7 +31,6 @@ function firstEmail(emails: unknown): string | null {
     }
   }
 
-  // allow "a@b.com, c@d.com"
   const parts = s
     .split(/[,\s;]+/g)
     .map((x) => x.trim())
@@ -56,6 +54,12 @@ async function hasAnyRole(admin: any, auth_user_id: string, roleKeys: string[]) 
   const roles = (data ?? []).map((r: any) => String(r?.role_key ?? "")).filter(Boolean);
   return roles.some((rk: string) => roleKeys.includes(rk));
 }
+
+/**
+ * Canonical "big gates" for the app.
+ * Everything else is future-only and should NOT show up as a column in the console yet.
+ */
+const CORE_PERMISSION_KEYS = ["roster_manage", "route_lock_manage", "metrics_manage"] as const;
 
 export async function GET(req: Request) {
   try {
@@ -91,21 +95,26 @@ export async function GET(req: Request) {
       }
     }
 
-    // permission keys (columns)
+    // Permission keys (columns) — HARD LIMITED TO CORE KEYS
     const permsRes = await admin
       .from("permission_def")
       .select("permission_key")
-      .order("permission_key", { ascending: true });
+      .in("permission_key", [...CORE_PERMISSION_KEYS]);
 
     if (permsRes.error) {
       return NextResponse.json({ ok: false, error: permsRes.error.message }, { status: 500 });
     }
 
-    const permissionKeys = (permsRes.data ?? [])
-      .map((r: any) => String(r.permission_key))
-      .filter(Boolean);
+    const present = new Set(
+      (permsRes.data ?? [])
+        .map((r: any) => String(r.permission_key))
+        .filter(Boolean)
+    );
 
-    // pc org options for delegation mode (always send; UI uses it only when scope=pc_org)
+    // Keep canonical ordering
+    const permissionKeys = CORE_PERMISSION_KEYS.filter((k) => present.has(k));
+
+    // pc org options for delegation mode
     const pcOrgsRes = await admin
       .from("pc_org")
       .select("pc_org_id, pc_org_name")
@@ -121,7 +130,7 @@ export async function GET(req: Request) {
       pc_org_name: String(r.pc_org_name ?? ""),
     }));
 
-    // USERS: start from user_profile (your app overlay)
+    // USERS: start from user_profile
     const from = pageIndex * pageSize;
     const to = from + pageSize - 1;
 
@@ -202,7 +211,8 @@ export async function GET(req: Request) {
           .from("pc_org_permission_grant")
           .select("auth_user_id, permission_key")
           .eq("pc_org_id", pc_org_id)
-          .in("auth_user_id", users.map((u) => u.auth_user_id));
+          .in("auth_user_id", users.map((u) => u.auth_user_id))
+          .in("permission_key", permissionKeys);
 
         if (res.error) return NextResponse.json({ ok: false, error: res.error.message }, { status: 500 });
 
@@ -218,7 +228,8 @@ export async function GET(req: Request) {
         const res = await admin
           .from("admin_permission_grant")
           .select("auth_user_id, permission_key")
-          .in("auth_user_id", users.map((u) => u.auth_user_id));
+          .in("auth_user_id", users.map((u) => u.auth_user_id))
+          .in("permission_key", permissionKeys);
 
         if (res.error) return NextResponse.json({ ok: false, error: res.error.message }, { status: 500 });
 

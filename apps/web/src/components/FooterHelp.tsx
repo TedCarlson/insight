@@ -21,7 +21,7 @@ export default function FooterHelp() {
       </div>
 
       {canSeeAdmin ? (
-        <Link href="/admin" className="inline-flex items-center gap-2 underline">
+        <Link href="/admin" prefetch={false} className="inline-flex items-center gap-2 underline">
           <ShieldCheck className="h-4 w-4" />
           Admin
         </Link>

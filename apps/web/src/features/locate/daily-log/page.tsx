@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 
 import { PageHeader, PageShell } from "@/components/ui/PageShell";
-import LocateDailyCallLogClient from "@/features/locate/daily-log/components/LocateDailyCallLogClient";
+import { LocateDailyCallLogClient } from "@/features/locate/daily-log/components/LocateDailyCallLogClient";
 
 export default async function LocateDailyLogPage() {
   const cookieStore = await cookies();

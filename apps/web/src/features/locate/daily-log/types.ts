@@ -14,6 +14,7 @@ export type TicketInputs = {
   tickets_closed_pm: number | "";
   project_tickets: number | "";
   emergency_tickets: number | "";
+  ojc: number | "";
 };
 
 export type GridRow = {
@@ -32,6 +33,7 @@ export type DailyRowFromApi = {
   tickets_closed_pm: number;
   project_tickets: number;
   emergency_tickets: number;
+  ojc: number;
 
   backlog_start: number;
   backlog_end: number;

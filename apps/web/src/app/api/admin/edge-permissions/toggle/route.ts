@@ -11,12 +11,19 @@ function isUuid(v: string) {
   return UUID_RE.test(v);
 }
 
+/**
+ * Canonical "big gates" ONLY.
+ * If it isn't one of these, the console cannot toggle it.
+ */
+const CORE_PERMISSION_KEYS = ["roster_manage", "route_lock_manage", "metrics_manage"] as const;
+type CorePermissionKey = (typeof CORE_PERMISSION_KEYS)[number];
+
 type Body = {
   scope: "global" | "pc_org";
   pcOrgId?: string | null;
 
   targetAuthUserId: string;
-  permissionKey: string;
+  permissionKey: string; // validate -> CorePermissionKey
   enabled: boolean;
 };
 
@@ -36,6 +43,10 @@ async function hasAnyRole(admin: any, auth_user_id: string, roleKeys: string[]) 
   return roles.some((rk: string) => roleKeys.includes(rk));
 }
 
+function isCorePermissionKey(k: string): k is CorePermissionKey {
+  return (CORE_PERMISSION_KEYS as readonly string[]).includes(k);
+}
+
 export async function POST(req: Request) {
   try {
     const sb = await supabaseServer();
@@ -47,6 +58,7 @@ export async function POST(req: Request) {
     const admin = supabaseAdmin();
     const actorId = userData.user.id;
 
+    // gate: owner OR elevated role
     const owner = await isOwner(sb);
     const elevated = owner || (await hasAnyRole(admin, actorId, ["admin", "dev", "director", "vp"]));
     if (!elevated) return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
@@ -60,17 +72,28 @@ export async function POST(req: Request) {
 
     const scope = body.scope;
     const target = String(body.targetAuthUserId ?? "").trim();
-    const key = String(body.permissionKey ?? "").trim();
+    const keyRaw = String(body.permissionKey ?? "").trim();
     const enabled = body.enabled === true;
 
     if (!target || !isUuid(target)) {
       return NextResponse.json({ ok: false, error: "invalid_target" }, { status: 400 });
     }
-    if (!key) {
+
+    if (!keyRaw) {
       return NextResponse.json({ ok: false, error: "missing_permission_key" }, { status: 400 });
     }
 
-    // Optionally: validate key exists
+    // HARD LIMIT to core keys
+    if (!isCorePermissionKey(keyRaw)) {
+      return NextResponse.json(
+        { ok: false, error: "permission_key_not_allowed", allowed: CORE_PERMISSION_KEYS },
+        { status: 400 }
+      );
+    }
+
+    const key: CorePermissionKey = keyRaw;
+
+    // Optional: validate key exists in permission_def (helps catch typos / DB drift)
     const keyCheck = await admin.from("permission_def").select("permission_key").eq("permission_key", key).maybeSingle();
     if (keyCheck.error) return NextResponse.json({ ok: false, error: keyCheck.error.message }, { status: 500 });
     if (!keyCheck.data) return NextResponse.json({ ok: false, error: "unknown_permission_key" }, { status: 400 });
@@ -88,7 +111,6 @@ export async function POST(req: Request) {
             { pc_org_id: pcOrgId, auth_user_id: target, permission_key: key, created_by: actorId },
             { onConflict: "pc_org_id,auth_user_id,permission_key" }
           );
-
         if (up.error) return NextResponse.json({ ok: false, error: up.error.message }, { status: 500 });
 
         const aud = await admin.from("pc_org_permission_grant_audit").insert({
@@ -99,7 +121,6 @@ export async function POST(req: Request) {
           action: "GRANT",
           source: "admin-console",
         });
-
         if (aud.error) return NextResponse.json({ ok: false, error: aud.error.message }, { status: 500 });
       } else {
         const del = await admin
@@ -108,7 +129,6 @@ export async function POST(req: Request) {
           .eq("pc_org_id", pcOrgId)
           .eq("auth_user_id", target)
           .eq("permission_key", key);
-
         if (del.error) return NextResponse.json({ ok: false, error: del.error.message }, { status: 500 });
 
         const aud = await admin.from("pc_org_permission_grant_audit").insert({
@@ -119,7 +139,6 @@ export async function POST(req: Request) {
           action: "REVOKE",
           source: "admin-console",
         });
-
         if (aud.error) return NextResponse.json({ ok: false, error: aud.error.message }, { status: 500 });
       }
 
@@ -130,11 +149,7 @@ export async function POST(req: Request) {
     if (enabled) {
       const up = await admin
         .from("admin_permission_grant")
-        .upsert(
-          { auth_user_id: target, permission_key: key, created_by: actorId },
-          { onConflict: "auth_user_id,permission_key" }
-        );
-
+        .upsert({ auth_user_id: target, permission_key: key, created_by: actorId }, { onConflict: "auth_user_id,permission_key" });
       if (up.error) return NextResponse.json({ ok: false, error: up.error.message }, { status: 500 });
 
       const aud = await admin.from("admin_permission_grant_audit").insert({
@@ -144,7 +159,6 @@ export async function POST(req: Request) {
         action: "GRANT",
         source: "admin-console",
       });
-
       if (aud.error) return NextResponse.json({ ok: false, error: aud.error.message }, { status: 500 });
     } else {
       const del = await admin.from("admin_permission_grant").delete().eq("auth_user_id", target).eq("permission_key", key);
@@ -157,7 +171,6 @@ export async function POST(req: Request) {
         action: "REVOKE",
         source: "admin-console",
       });
-
       if (aud.error) return NextResponse.json({ ok: false, error: aud.error.message }, { status: 500 });
     }
 

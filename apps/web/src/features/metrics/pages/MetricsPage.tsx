@@ -14,7 +14,11 @@ function cls(...parts: Array<string | false | undefined>) {
 function SectionCard({ title, href }: { title: string; href: string }) {
   return (
     <Card>
-      <Link href={href} className={cls("to-btn", "to-btn--secondary", "px-4", "py-3", "w-full", "text-center")}>
+      <Link
+        href={href}
+        prefetch={false}
+        className={cls("to-btn", "to-btn--secondary", "px-4", "py-3", "w-full", "text-center")}
+      >
         {title}
       </Link>
     </Card>

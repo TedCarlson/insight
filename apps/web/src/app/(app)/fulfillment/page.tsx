@@ -59,7 +59,11 @@ export default function FulfillmentHomePage() {
       <Card>
         <div className="grid gap-3 sm:grid-cols-3">
           {isScoped ? (
-            <Link href="/roster" className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}>
+            <Link
+              href="/roster"
+              prefetch={false}
+              className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}
+            >
               Roster
             </Link>
           ) : (
@@ -67,7 +71,11 @@ export default function FulfillmentHomePage() {
           )}
 
           {isScoped ? (
-            <Link href="/route-lock" className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}>
+            <Link
+              href="/route-lock"
+              prefetch={false}
+              className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}
+            >
               Route Lock
             </Link>
           ) : (
@@ -75,7 +83,11 @@ export default function FulfillmentHomePage() {
           )}
 
           {isScoped ? (
-            <Link href="/metrics" className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}>
+            <Link
+              href="/metrics"
+              prefetch={false}
+              className={cls("to-btn", "to-btn--secondary", "px-4 py-3", "text-center")}
+            >
               Metrics
             </Link>
           ) : (

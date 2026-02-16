@@ -128,10 +128,10 @@ export default function RosterPage() {
   const modifyToggleVars =
     effectiveModifyMode === "open"
       ? ({
-        ["--to-toggle-active-bg" as any]: "rgba(249, 115, 22, 0.16)",
-        ["--to-toggle-active-border" as any]: "var(--to-status-warning)",
-        ["--to-toggle-active-ink" as any]: "var(--to-status-warning)",
-      } as CSSProperties)
+          ["--to-toggle-active-bg" as any]: "rgba(249, 115, 22, 0.16)",
+          ["--to-toggle-active-border" as any]: "var(--to-status-warning)",
+          ["--to-toggle-active-ink" as any]: "var(--to-status-warning)",
+        } as CSSProperties)
       : undefined;
 
   const addToRosterDisabled =
@@ -206,15 +206,15 @@ export default function RosterPage() {
                   style={
                     rosterStats.clean
                       ? {
-                        background: "rgba(34, 197, 94, 0.14)",
-                        borderColor: "var(--to-status-success)",
-                        color: "var(--to-status-success)",
-                      }
+                          background: "rgba(34, 197, 94, 0.14)",
+                          borderColor: "var(--to-status-success)",
+                          color: "var(--to-status-success)",
+                        }
                       : {
-                        background: "rgba(249, 115, 22, 0.16)",
-                        borderColor: "var(--to-status-warning)",
-                        color: "var(--to-status-warning)",
-                      }
+                          background: "rgba(249, 115, 22, 0.16)",
+                          borderColor: "var(--to-status-warning)",
+                          color: "var(--to-status-warning)",
+                        }
                   }
                 >
                   {rosterStats.clean ? "Ready" : "Incomplete"}
@@ -399,6 +399,7 @@ export default function RosterPage() {
           row={selectedRow}
           canManage={canEditRoster}
           modifyMode={modifyMode} // or effectiveModifyMode if you prefer
+          orgMeta={orgMeta ?? null}
         />
       ) : null}
     </PageShell>

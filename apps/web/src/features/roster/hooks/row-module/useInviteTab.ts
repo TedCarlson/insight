@@ -31,8 +31,9 @@ export function useInviteTab(args: {
    * This is safe because it happens at most once per key change (guarded by lastKey state).
    */
   const identityKey = useMemo(() => {
-    const rid =
-      String((row as any)?.person_id ?? (row as any)?.assignment_id ?? (row as any)?.tech_id ?? (row as any)?.id ?? "");
+    const rid = String(
+      (row as any)?.person_id ?? (row as any)?.assignment_id ?? (row as any)?.tech_id ?? (row as any)?.id ?? ""
+    );
     return `${assignmentId ?? ""}::${rid}::${inferredEmail}`;
   }, [row, assignmentId, inferredEmail]);
 

@@ -45,16 +45,23 @@ export async function POST() {
     if (!pc_org_id) return json(400, { ok: false, error: "no org selected" });
 
     const { data: isOwner } = await supabase.rpc("is_owner");
-    let hasRosterManage = false;
 
     if (!isOwner) {
+      // Canonical gate for Metrics writes: metrics_manage (preferred) OR roster_manage (legacy)
       const apiClient: any = (supabase as any).schema ? (supabase as any).schema("api") : supabase;
-      const { data } = await apiClient.rpc("has_pc_org_permission", {
+      const { data: allowed, error: permErr } = await apiClient.rpc("has_any_pc_org_permission", {
         p_pc_org_id: pc_org_id,
-        p_permission_key: "roster_manage",
+        p_permission_keys: ["metrics_manage", "roster_manage"],
       });
-      hasRosterManage = Boolean(data);
-      if (!hasRosterManage) return json(403, { ok: false, error: "forbidden" });
+
+      if (permErr) return json(403, { ok: false, error: "forbidden", detail: permErr.message });
+      if (!allowed) {
+        return json(403, {
+          ok: false,
+          error: "forbidden",
+          required_any_of: ["metrics_manage", "roster_manage"],
+        });
+      }
     }
 
     const { data: latest, error: latestErr } = await supabase

@@ -7,9 +7,14 @@ export async function resolveCoDisplay(
   const co_ref_id = input.co_ref_id ?? null;
   const co_code = input.co_code ?? null;
 
+  // ✅ Replace missing *_admin_v views with real tables
+  // Tables confirmed in repo usage:
+  // - company(company_id, company_name, company_code)
+  // - contractor(contractor_id, contractor_name, contractor_code)
+
   if (co_ref_id) {
     const company = await ctx.supabase
-      .from("company_admin_v")
+      .from("company")
       .select("company_id, company_name")
       .eq("company_id", co_ref_id)
       .maybeSingle();
@@ -19,7 +24,7 @@ export async function resolveCoDisplay(
     }
 
     const contractor = await ctx.supabase
-      .from("contractor_admin_v")
+      .from("contractor")
       .select("contractor_id, contractor_name")
       .eq("contractor_id", co_ref_id)
       .maybeSingle();
@@ -31,7 +36,7 @@ export async function resolveCoDisplay(
 
   if (co_code) {
     const companyByCode = await ctx.supabase
-      .from("company_admin_v")
+      .from("company")
       .select("company_code, company_name")
       .eq("company_code", co_code)
       .maybeSingle();
@@ -41,7 +46,7 @@ export async function resolveCoDisplay(
     }
 
     const contractorByCode = await ctx.supabase
-      .from("contractor_admin_v")
+      .from("contractor")
       .select("contractor_code, contractor_name")
       .eq("contractor_code", co_code)
       .maybeSingle();

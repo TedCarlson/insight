@@ -11,6 +11,7 @@ type PostBody = {
   rows: Array<{
     state_code: string;
     manpower_count: number;
+    ojc: number;
     tickets_total: number; // AM received OR PM closed
     project_tickets: number; // independent (not subset)
     emergency_tickets: number; // independent (not subset)
@@ -70,11 +71,10 @@ export async function GET(req: NextRequest) {
 
   const admin = supabaseAdmin();
 
+  // ✅ Use the working view that includes OJC + computed backlog fields
   const { data, error } = await admin
-    .from("locate_daily_call_log_v")
-    .select(
-      "log_date,state_code,state_name,manpower_count,tickets_received_am,tickets_closed_pm,project_tickets,emergency_tickets,backlog_start,backlog_end,avg_received_per_tech,avg_closed_per_tech,updated_at"
-    )
+    .from("locate_daily_call_log_v2")
+    .select("*")
     .eq("log_date", date)
     .order("state_name", { ascending: true });
 
@@ -114,6 +114,7 @@ export async function POST(req: NextRequest) {
     .map((r) => ({
       state_code: String(r.state_code ?? "").trim().toUpperCase(),
       manpower_count: n(r.manpower_count),
+      ojc: n((r as any).ojc),
       tickets_total: n(r.tickets_total),
       project_tickets: n(r.project_tickets),
       emergency_tickets: n(r.emergency_tickets),
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest) {
   }
 
   for (const r of normalized) {
-    if (r.manpower_count < 0 || r.tickets_total < 0 || r.project_tickets < 0 || r.emergency_tickets < 0) {
+    if (r.manpower_count < 0 || r.ojc < 0 || r.tickets_total < 0 || r.project_tickets < 0 || r.emergency_tickets < 0) {
       return NextResponse.json(
         { ok: false, error: "invalid_numbers", details: { state_code: r.state_code } },
         { status: 400 }
@@ -168,6 +169,7 @@ export async function POST(req: NextRequest) {
       log_date,
       state_code: r.state_code,
       manpower_count: r.manpower_count,
+      ojc: r.ojc,
       tickets_received_am,
       tickets_closed_pm,
       project_tickets: r.project_tickets,

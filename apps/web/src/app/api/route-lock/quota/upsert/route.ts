@@ -83,13 +83,9 @@ async function guardSelectedOrgQuotaWrite(): Promise<GuardOk | GuardFail> {
   const pc_org_id = String(profile?.selected_pc_org_id ?? "").trim();
   if (!pc_org_id) return { ok: false, status: 409, error: "no selected org" };
 
-  // Optional: require active
-  // if (String(profile?.status ?? "") !== "active") return { ok: false, status: 403, error: "forbidden" };
-
   // ✅ Baseline org scope (session-aware)
-  const { data: canAccess, error: accessErr } = await (sb as any).schema("api").rpc("can_access_pc_org", {
-    p_pc_org_id: pc_org_id,
-  });
+  const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
+  const { data: canAccess, error: accessErr } = await apiClient.rpc("can_access_pc_org", { p_pc_org_id: pc_org_id });
 
   if (accessErr || !canAccess) return { ok: false, status: 403, error: "forbidden" };
 
@@ -107,18 +103,17 @@ async function guardSelectedOrgQuotaWrite(): Promise<GuardOk | GuardFail> {
   const roleAllowed = await hasAnyRole(admin, userId, ["admin", "dev", "director", "manager", "vp"]);
   if (roleAllowed) return { ok: true, pc_org_id, auth_user_id: userId };
 
-  // ✅ Canonical grants check (api schema)
-  // For quota writes, we specifically allow route_lock_manage (canonical) and roster_manage (legacy compatibility).
-  const { data: grants, error: grantErr } = await (admin as any)
-    .schema("api")
+  // ✅ Grants check (SERVICE ROLE read; correct schema + correct column names)
+  // For quota writes, allow route_lock_manage (canonical) and roster_manage (legacy compatibility).
+  const { data: grants, error: grantErr } = await admin
     .from("pc_org_permission_grant")
     .select("permission_key, expires_at, revoked_at")
     .eq("pc_org_id", pc_org_id)
-    .eq("grantee_user_id", userId)
+    .eq("auth_user_id", userId)
     .is("revoked_at", null)
     .in("permission_key", ["route_lock_manage", "roster_manage"]);
 
-  if (grantErr) return { ok: false, status: 403, error: "forbidden" };
+  if (grantErr) return { ok: false, status: 500, error: grantErr.message };
 
   const nowIso = new Date().toISOString();
   const allowed = (grants ?? []).some((g: { expires_at?: unknown }) => {
@@ -140,116 +135,94 @@ export async function POST(req: Request) {
     const rows = (body?.rows ?? []) as QuotaUpsertRow[];
 
     if (!Array.isArray(rows) || rows.length === 0) {
-      return NextResponse.json({ ok: false, error: "No rows provided" }, { status: 400 });
+      return NextResponse.json({ ok: false, error: "no_rows" }, { status: 400 });
     }
 
-    const clean = rows.map((r) => ({
-      pc_org_id: guard.pc_org_id,
-      route_id: asUuid(r.route_id),
-      fiscal_month_id: asUuid(r.fiscal_month_id),
-      qh_sun: int0(r.qh_sun),
-      qh_mon: int0(r.qh_mon),
-      qh_tue: int0(r.qh_tue),
-      qh_wed: int0(r.qh_wed),
-      qh_thu: int0(r.qh_thu),
-      qh_fri: int0(r.qh_fri),
-      qh_sat: int0(r.qh_sat),
-    }));
+    // Normalize + validate
+    const clean = rows
+      .map((r) => ({
+        quota_id: asUuid(r?.quota_id) ?? undefined,
+        route_id: asUuid(r?.route_id),
+        fiscal_month_id: asUuid(r?.fiscal_month_id),
+        qh_sun: int0(r?.qh_sun),
+        qh_mon: int0(r?.qh_mon),
+        qh_tue: int0(r?.qh_tue),
+        qh_wed: int0(r?.qh_wed),
+        qh_thu: int0(r?.qh_thu),
+        qh_fri: int0(r?.qh_fri),
+        qh_sat: int0(r?.qh_sat),
+      }))
+      .filter((r) => r.route_id && r.fiscal_month_id) as Array<{
+      quota_id?: string;
+      route_id: string;
+      fiscal_month_id: string;
+      qh_sun: number;
+      qh_mon: number;
+      qh_tue: number;
+      qh_wed: number;
+      qh_thu: number;
+      qh_fri: number;
+      qh_sat: number;
+    }>;
 
-    if (clean.some((r) => !r.route_id || !r.fiscal_month_id)) {
-      return NextResponse.json(
-        { ok: false, error: "Invalid route_id or fiscal_month_id (must be UUIDs)" },
-        { status: 400 }
-      );
+    if (clean.length === 0) {
+      return NextResponse.json({ ok: false, error: "invalid_rows" }, { status: 400 });
     }
 
     const admin = supabaseAdmin();
 
-    // Verify routes belong to selected org
-    const routeIds = Array.from(new Set(clean.map((r) => r.route_id!)));
-    const { data: allowedRoutes, error: routesErr } = await admin
-      .from("route")
-      .select("route_id")
-      .eq("pc_org_id", guard.pc_org_id)
-      .in("route_id", routeIds);
-
-    if (routesErr) return NextResponse.json({ ok: false, error: routesErr.message }, { status: 500 });
-
-    const allowedSet = new Set((allowedRoutes ?? []).map((x: { route_id?: unknown }) => String(x.route_id ?? "")));
-    const rejected = routeIds.filter((id) => !allowedSet.has(String(id)));
-    if (rejected.length) {
-      return NextResponse.json(
-        { ok: false, error: "One or more routes are not in your selected org", rejected_route_ids: rejected },
-        { status: 403 }
-      );
-    }
-
     // Manual upsert: select existing quota_id for (pc_org_id, route_id, fiscal_month_id), then update/insert.
-    const saved: Array<Record<string, any> | null> = [];
+    const results: Array<{ ok: boolean; route_id: string; fiscal_month_id: string; quota_id?: string; error?: string }> =
+      [];
 
     for (const r of clean) {
-      const { data: existing, error: findErr } = await admin
+      const { data: found, error: findErr } = await admin
         .from("quota")
         .select("quota_id")
         .eq("pc_org_id", guard.pc_org_id)
-        .eq("route_id", r.route_id!)
-        .eq("fiscal_month_id", r.fiscal_month_id!)
+        .eq("route_id", r.route_id)
+        .eq("fiscal_month_id", r.fiscal_month_id)
         .maybeSingle();
 
       if (findErr) {
-        return NextResponse.json(
-          { ok: false, error: "Failed to check existing quota row", details: findErr.message },
-          { status: 500 }
-        );
+        results.push({ ok: false, route_id: r.route_id, fiscal_month_id: r.fiscal_month_id, error: findErr.message });
+        continue;
       }
 
-      if (existing?.quota_id) {
-        const { data: upd, error: updErr } = await admin
-          .from("quota")
-          .update({
-            qh_sun: r.qh_sun,
-            qh_mon: r.qh_mon,
-            qh_tue: r.qh_tue,
-            qh_wed: r.qh_wed,
-            qh_thu: r.qh_thu,
-            qh_fri: r.qh_fri,
-            qh_sat: r.qh_sat,
-          })
-          .eq("quota_id", existing.quota_id)
-          .select("quota_id, pc_org_id, route_id, fiscal_month_id")
-          .maybeSingle();
+      const quota_id = (found?.quota_id ? String(found.quota_id) : r.quota_id) ?? null;
 
-        if (updErr) return NextResponse.json({ ok: false, error: updErr.message }, { status: 500 });
-        saved.push(upd ?? null);
-      } else {
-        const { data: ins, error: insErr } = await admin
-          .from("quota")
-          .insert({
-            pc_org_id: guard.pc_org_id,
-            route_id: r.route_id!,
-            fiscal_month_id: r.fiscal_month_id!,
-            qh_sun: r.qh_sun,
-            qh_mon: r.qh_mon,
-            qh_tue: r.qh_tue,
-            qh_wed: r.qh_wed,
-            qh_thu: r.qh_thu,
-            qh_fri: r.qh_fri,
-            qh_sat: r.qh_sat,
-          })
-          .select("quota_id, pc_org_id, route_id, fiscal_month_id")
-          .maybeSingle();
+      const payload = {
+        quota_id: quota_id ?? undefined,
+        pc_org_id: guard.pc_org_id,
+        route_id: r.route_id,
+        fiscal_month_id: r.fiscal_month_id,
+        qh_sun: r.qh_sun,
+        qh_mon: r.qh_mon,
+        qh_tue: r.qh_tue,
+        qh_wed: r.qh_wed,
+        qh_thu: r.qh_thu,
+        qh_fri: r.qh_fri,
+        qh_sat: r.qh_sat,
+      };
 
-        if (insErr) return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
-        saved.push(ins ?? null);
+      const { data: up, error: upErr } = await admin.from("quota").upsert(payload).select("quota_id").maybeSingle();
+
+      if (upErr) {
+        results.push({ ok: false, route_id: r.route_id, fiscal_month_id: r.fiscal_month_id, error: upErr.message });
+        continue;
       }
+
+      results.push({
+        ok: true,
+        route_id: r.route_id,
+        fiscal_month_id: r.fiscal_month_id,
+        quota_id: up?.quota_id ? String(up.quota_id) : quota_id ?? undefined,
+      });
     }
 
-    return NextResponse.json({
-      ok: true,
-      saved,
-      debug: { selected_pc_org_id: guard.pc_org_id, auth_user_id: guard.auth_user_id, rows: clean.length },
-    });
+    const okCount = results.filter((r) => r.ok).length;
+    return NextResponse.json({ ok: okCount === results.length, results });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e ?? "Unknown error") }, { status: 500 });
+    return NextResponse.json({ ok: false, error: String(e?.message ?? e) }, { status: 500 });
   }
 }

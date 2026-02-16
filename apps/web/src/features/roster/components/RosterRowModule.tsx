@@ -19,7 +19,7 @@ import { type TabKey, buildTitle } from "./rosterRowModule.helpers";
 import { useRosterRowModule } from "../hooks/row-module/useRosterRowModule";
 import { usePersonTab } from "../hooks/row-module/usePersonTab";
 import { useAssignmentTab } from "../hooks/row-module/useAssignmentTab";
-import { useOrgTab } from "../hooks/row-module/useOrgTab";
+import { useOrgTab, type OrgMeta } from "../hooks/row-module/useOrgTab";
 import { useLeadershipTab } from "../hooks/row-module/useLeadershipTab";
 import { useInviteTab } from "../hooks/row-module/useInviteTab";
 
@@ -54,9 +54,12 @@ export function RosterRowModule(props: {
   pcOrgName?: string | null;
   row: RosterRow | null;
 
-  // ✅ NEW: permission + modify mode (passed down from RosterPage)
+  // ✅ permission + modify mode (passed down from RosterPage)
   canManage?: boolean; // roster_manage OR owner
   modifyMode?: "open" | "locked";
+
+  // ✅ org meta for the selected PC-ORG (from roster page hook)
+  orgMeta?: OrgMeta | null;
 }) {
   const rowKey = String(
     (props.row as any)?.person_id ?? (props.row as any)?.assignment_id ?? (props.row as any)?.tech_id ?? ""
@@ -75,6 +78,8 @@ function RosterRowModuleInner({
 
   canManage = false,
   modifyMode = "locked",
+
+  orgMeta = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -84,6 +89,8 @@ function RosterRowModuleInner({
 
   canManage?: boolean;
   modifyMode?: "open" | "locked";
+
+  orgMeta?: OrgMeta | null;
 }) {
   const [tab, setTab] = useState<TabKey>("person");
 
@@ -101,7 +108,6 @@ function RosterRowModuleInner({
     personId: personId ? String(personId) : null,
   });
 
-  // ✅ FIX: new hook signature requires canManage + modifyMode
   const assignment = useAssignmentTab({
     open,
     tab,
@@ -167,7 +173,11 @@ function RosterRowModuleInner({
     }).length;
   }, [assignment, leadership]);
 
-  const endOrgBlocked = activeAssignmentCount > 0 && activeLeadershipCount > 0;
+  const endOrgBlocked =
+    !canManage ||
+    modifyMode === "locked" ||
+    activeAssignmentCount > 0 ||
+    activeLeadershipCount > 0;
 
   const { refreshCurrent, refreshing } = useRosterRowModule({
     tab,
@@ -179,6 +189,7 @@ function RosterRowModuleInner({
     loadingDrill: (leadership as any).loadingDrill,
   });
 
+  // ✅ PASS orgMeta into hook so it can expose mso/div/region
   const org = useOrgTab({
     row,
     pcOrgId,
@@ -187,6 +198,7 @@ function RosterRowModuleInner({
     onClose,
     refreshCurrent,
     endOrgBlocked,
+    orgMeta,
   });
 
   const personEmails =
@@ -244,7 +256,11 @@ function RosterRowModuleInner({
     null;
 
   const endOrgBlockedTitle = endOrgBlocked
-    ? "Cannot end org association while an active Assignment AND Leadership relationship exist. End/close those first."
+    ? !canManage
+      ? "You do not have permission to end org associations (roster_manage required)."
+      : modifyMode === "locked"
+        ? "Roster is locked (read-only)."
+        : "End assignments and leadership first (then you can end org association)."
     : "End Org association";
 
   const setLeadershipDraftReportsToAssignmentId = (v: string) => {
@@ -263,7 +279,6 @@ function RosterRowModuleInner({
     }
   };
 
-  // ✅ lifecycle handlers (safe: only pass if present)
   const startAssignment =
     typeof (assignment as any)?.startAssignment === "function" ? (assignment as any).startAssignment : undefined;
   const endAssignment =
@@ -346,6 +361,12 @@ function RosterRowModuleInner({
               inviteErr={(invite as any).inviteErr}
               inviteOk={(invite as any).inviteOk}
               sendInvite={(invite as any).sendInvite}
+              status={(invite as any).status}
+              statusLoading={(invite as any).statusLoading}
+              statusErr={(invite as any).statusErr}
+              loadStatus={(invite as any).loadStatus}
+              inviteButtonLabel={(invite as any).inviteButtonLabel}
+              inviteDisabledReason={(invite as any).inviteDisabledReason}
             />
           ) : null}
 
@@ -354,6 +375,10 @@ function RosterRowModuleInner({
               row={row}
               pcOrgName={pcOrgName}
               orgStartDate={orgStartDate}
+              // ✅ THREAD THE META VALUES INTO THE ORG TAB
+              msoName={(org as any).msoName ?? null}
+              divisionName={(org as any).divisionName ?? null}
+              regionName={(org as any).regionName ?? null}
               endOrgBlocked={endOrgBlocked}
               endOrgBlockedTitle={endOrgBlockedTitle}
               endPcOrgCascade={(org as any).endPcOrgCascade}
@@ -384,10 +409,8 @@ function RosterRowModuleInner({
               officeLoading={(assignment as any).officeLoading}
               officeError={(assignment as any).officeError}
               loadOffices={(assignment as any).loadOffices}
-              // ✅ gates come from module props (not the hook)
               canManage={Boolean(canManage)}
               modifyMode={(modifyMode ?? "locked") as "open" | "locked"}
-              // ✅ lifecycle from hook (if present)
               startAssignment={startAssignment}
               endAssignment={endAssignment}
               startingAssignment={startingAssignment}

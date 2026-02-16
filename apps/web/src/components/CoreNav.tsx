@@ -118,13 +118,14 @@ export default function CoreNav({ lob }: CoreNavProps) {
     <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur">
       <div className="flex w-full items-center justify-between px-6 py-3">
         <div className="flex items-center gap-4">
-          <Link href={homeHref} className="text-sm font-semibold">
+          <Link href={homeHref} prefetch={false} className="text-sm font-semibold">
             TeamOptix
           </Link>
 
           <nav className="flex items-center gap-2">
             <Link
               href={homeHref}
+              prefetch={false}
               className={
                 homeActive
                   ? "rounded-md px-2 py-1 text-sm font-medium text-foreground"
@@ -177,11 +178,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
 
           <span className="hidden sm:inline text-xs text-muted-foreground">{email}</span>
 
-          <button
-            type="button"
-            onClick={onSignOut}
-            className="rounded-md border px-3 py-2 text-sm hover:bg-muted"
-          >
+          <button type="button" onClick={onSignOut} className="rounded-md border px-3 py-2 text-sm hover:bg-muted">
             Sign out
           </button>
         </div>

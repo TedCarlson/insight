@@ -23,13 +23,6 @@ function dbg<T>(value: T): T | null {
   return debugEnabled() ? value : null;
 }
 
-async function hasAnyRole(admin: any, auth_user_id: string, roleKeys: string[]): Promise<boolean> {
-  const { data, error } = await admin.from("user_roles").select("role_key").eq("auth_user_id", auth_user_id);
-  if (error) return false;
-  const roles = (data ?? []).map((r: { role_key?: unknown }) => String(r?.role_key ?? ""));
-  return roles.some((rk: string) => roleKeys.includes(rk));
-}
-
 function isoDateOnly(d: Date) {
   return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
 }
@@ -37,13 +30,12 @@ function isoDateOnly(d: Date) {
 /**
  * Guard for Quota Lookups (routes + fiscal months).
  *
- * Key principle: DO NOT read api.pc_org_permission_grant directly from Edge routes.
- * Table reads are brittle and can fail with "permission denied" depending on schema/RLS/config.
- * Instead, use boolean RPCs:
- * - can_access_pc_org(p_pc_org_id)  -> baseline org access (eligibility + derived leadership + owners)
- * - has_any_pc_org_permission(p_pc_org_id, p_permission_keys[]) -> grant-based permission check
+ * Key principle (manager-centric + stable UI):
+ * - Lookups are READ dependencies for UI dropdowns.
+ * - They must require only baseline org access (can_access_pc_org).
+ * - Do NOT require manage permissions here (those belong on write endpoints).
  */
-async function guardSelectedOrgQuotaAccess(): Promise<GuardOk | GuardFail> {
+async function guardSelectedOrgLookupAccess(): Promise<GuardOk | GuardFail> {
   const sb = await supabaseServer();
   const admin = supabaseAdmin();
 
@@ -74,7 +66,7 @@ async function guardSelectedOrgQuotaAccess(): Promise<GuardOk | GuardFail> {
   // Session-aware API client
   const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
 
-  // Baseline org access (eligibility/grants/derived leadership via DB)
+  // Baseline org access (eligibility/grants/derived leadership/owners via DB)
   const { data: canAccess, error: accessErr } = await apiClient.rpc("can_access_pc_org", { p_pc_org_id: pc_org_id });
   if (accessErr || !canAccess) {
     return {
@@ -85,40 +77,11 @@ async function guardSelectedOrgQuotaAccess(): Promise<GuardOk | GuardFail> {
     };
   }
 
-  // Owner bypass
-  const { data: ownerRow, error: ownerErr } = await admin
-    .from("app_owners")
-    .select("auth_user_id")
-    .eq("auth_user_id", userId)
-    .maybeSingle();
-
-  if (ownerErr) {
-    return { ok: false, status: 500, error: ownerErr.message, debug: dbg({ step: "owner_check_error", ownerErr }) };
-  }
-  if (ownerRow?.auth_user_id) return { ok: true, pc_org_id, auth_user_id: userId, apiClient };
-
-  // Role bypass (ITG management)
-  const roleAllowed = await hasAnyRole(admin, userId, ["admin", "dev", "director", "manager", "vp"]);
-  if (roleAllowed) return { ok: true, pc_org_id, auth_user_id: userId, apiClient };
-
-  // Grants check via boolean RPC (no direct table read)
-  const { data: allowedByGrant, error: grantRpcErr } = await apiClient.rpc("has_any_pc_org_permission", {
-    p_pc_org_id: pc_org_id,
-    p_permission_keys: ["route_lock_manage", "roster_manage"],
-  });
-
-  if (grantRpcErr) {
-    return { ok: false, status: 403, error: "forbidden", debug: dbg({ step: "grant_rpc_error", grantRpcErr }) };
-  }
-  if (!allowedByGrant) {
-    return { ok: false, status: 403, error: "forbidden", debug: dbg({ step: "no_matching_grant" }) };
-  }
-
   return { ok: true, pc_org_id, auth_user_id: userId, apiClient };
 }
 
 async function handler() {
-  const guard = await guardSelectedOrgQuotaAccess();
+  const guard = await guardSelectedOrgLookupAccess();
   if (!guard.ok) {
     return NextResponse.json(
       { ok: false, error: guard.error, debug: dbg(guard.debug ?? null) },
@@ -150,13 +113,16 @@ async function handler() {
   const windowStartISO = isoDateOnly(windowStart);
   const windowEndISO = isoDateOnly(endDefault);
 
+  // NOTE: These are lookups. They should succeed for anyone with baseline PC access.
   const { data: routes, error: routesErr } = await admin
     .from("route_admin_v")
     .select("route_id, route_name")
     .eq("pc_org_id", guard.pc_org_id)
     .order("route_name", { ascending: true });
 
-  if (routesErr) return NextResponse.json({ ok: false, error: routesErr.message }, { status: 500 });
+  if (routesErr) {
+    return NextResponse.json({ ok: false, error: routesErr.message, debug: dbg({ step: "routes_read_error", routesErr }) }, { status: 500 });
+  }
 
   const { data: months, error: monthsErr } = await admin
     .from("fiscal_month_dim")
@@ -165,7 +131,9 @@ async function handler() {
     .lte("start_date", windowEndISO)
     .order("start_date", { ascending: false });
 
-  if (monthsErr) return NextResponse.json({ ok: false, error: monthsErr.message }, { status: 500 });
+  if (monthsErr) {
+    return NextResponse.json({ ok: false, error: monthsErr.message, debug: dbg({ step: "months_read_error", monthsErr }) }, { status: 500 });
+  }
 
   return NextResponse.json({
     ok: true,

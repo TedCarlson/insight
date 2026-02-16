@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocateDailyLogData } from "../hooks/useLocateDailyLogData";
 import { useLocateDailyLogState } from "../hooks/useLocateDailyLogState";
 import { LocateDailyCallLogView } from "./LocateDailyCallLogView";
-import type { DailyRowFromApi, GridRow, StateResource } from "../types";
+import type { DailyRowFromApi, GridRow } from "../types";
 
 type SubmitRow = {
   state_code: string;
@@ -12,47 +12,60 @@ type SubmitRow = {
   tickets_total: number;
   project_tickets: number;
   emergency_tickets: number;
+  ojc: number;
 };
 
-export default function LocateDailyCallLogClient() {
+type LastSubmittedMap = Record<string, DailyRowFromApi>;
+
+function keyForDraft(logDate: string, frame: string) {
+  return `locate_daily_log_draft:${logDate}:${frame}`;
+}
+
+export const LocateDailyCallLogClient = () => {
   const data = useLocateDailyLogData();
+
+  const {
+    loading,
+    submitting,
+    savingBaseline,
+    out,
+    setOut,
+    serverRows,
+    stateByCode,
+    loadStatesAndDay,
+    submitDailyLog,
+    saveBaseline,
+  } = data;
+
   const state = useLocateDailyLogState({
-    serverRows: data.serverRows,
-    stateByCode: data.stateByCode,
+    serverRows,
+    stateByCode,
   });
 
-  // "Last submitted rows" (client-side preview)
-  const [lastSubmittedRows, setLastSubmittedRows] = useState<DailyRowFromApi[]>([]);
+  const { logDate, frame, makeInputs, setRows, resetDirty, setDirtyFromRows } = state;
 
-  const lastSubmittedByCode = useMemo(() => {
-    const m: Record<string, DailyRowFromApi> = {};
-    for (const r of lastSubmittedRows) m[String(r.state_code).toUpperCase()] = r;
-    return m;
-  }, [lastSubmittedRows]);
+  const draftKey = useMemo(() => keyForDraft(logDate, frame), [logDate, frame]);
 
-  // Draft key scoped to date + frame
-  const draftKey = useMemo(() => {
-    return `locate:daily-log:draft:${state.logDate}:${state.frame}`;
-  }, [state.logDate, state.frame]);
+  const [lastSubmittedByCode, setLastSubmittedByCode] = useState<LastSubmittedMap>({});
+  const lastSubmittedRows = useMemo(() => Object.values(lastSubmittedByCode), [lastSubmittedByCode]);
 
-  // LocalStorage helpers (stable)
   const clearDraft = useCallback((key: string) => {
     try {
       localStorage.removeItem(key);
     } catch {
-      // noop
+      /* noop */
     }
   }, []);
 
-  const saveDraft = useCallback((key: string, rows: GridRow[]) => {
+  const saveDraftLocal = useCallback((key: string, rows: GridRow[]) => {
     try {
       localStorage.setItem(key, JSON.stringify(rows));
     } catch {
-      // noop
+      /* noop */
     }
   }, []);
 
-  const loadDraft = useCallback((key: string): GridRow[] | null => {
+  const loadDraftLocal = useCallback((key: string): GridRow[] | null => {
     try {
       const raw = localStorage.getItem(key);
       if (!raw) return null;
@@ -63,77 +76,97 @@ export default function LocateDailyCallLogClient() {
     }
   }, []);
 
-  // Refs to avoid dependency churn for unload persistence
-  const rowsRef = useRef<GridRow[]>([]);
-  const dirtyRef = useRef<boolean>(false);
-  const draftKeyRef = useRef<string>(draftKey);
+  // ✅ Memoized so callbacks can depend on it (React Compiler + exhaustive-deps)
+  const toPreviewRow = useCallback(
+    (payload: SubmitRow): DailyRowFromApi => {
+      const code = String(payload.state_code).toUpperCase();
+      const stateRes = stateByCode[code];
 
-  // Pin ONLY what we need from state (prevents eslint from insisting on `state`)
-  const logDate = state.logDate;
-  const frame = state.frame;
+      const manpower = Number(payload.manpower_count ?? 0);
+      const total = Number(payload.tickets_total ?? 0);
+      const proj = Number(payload.project_tickets ?? 0);
+      const emer = Number(payload.emergency_tickets ?? 0);
+      const ojc = Number(payload.ojc ?? 0);
 
-  const makeInputs = state.makeInputs;
-  const setRows = state.setRows;
-  const resetDirty = state.resetDirty;
-  const setDirtyFromRows = state.setDirtyFromRows;
+      const existing = serverRows[code];
+      const backlogStart = Number(existing?.backlog_start ?? 0);
 
-  const isDirtyAny = state.isDirtyAny; // stable via useCallback in hook
+      const ticketsReceivedAM = frame === "AM" ? total : Number(existing?.tickets_received_am ?? 0);
+      const ticketsClosedPM = frame === "PM" ? total : Number(existing?.tickets_closed_pm ?? 0);
 
-  // Keep refs updated
-  useEffect(() => {
-    rowsRef.current = state.rows;
-  }, [state.rows]);
+      const backlogEnd =
+        frame === "AM"
+          ? backlogStart + ticketsReceivedAM + proj
+          : backlogStart + ticketsReceivedAM + proj - ticketsClosedPM;
 
-  useEffect(() => {
-    dirtyRef.current = isDirtyAny();
-  }, [isDirtyAny, state.rows]); // rows change is what affects dirtiness
+      const avgReceived = manpower > 0 ? ticketsReceivedAM / manpower : 0;
+      const avgClosed = manpower > 0 ? ticketsClosedPM / manpower : 0;
 
-  useEffect(() => {
-    draftKeyRef.current = draftKey;
-  }, [draftKey]);
+      return {
+        log_date: logDate,
+        state_code: code,
+        state_name: stateRes?.state_name ?? code,
 
-  // Load function from data (should be stable from hook)
-  const loadStatesAndDay = data.loadStatesAndDay;
+        manpower_count: manpower,
+        tickets_received_am: ticketsReceivedAM,
+        tickets_closed_pm: ticketsClosedPM,
+        project_tickets: proj,
+        emergency_tickets: emer,
+        ojc,
 
-  /**
-   * Main load effect:
-   * - build blank grid (no server-row prefill)
-   * - then load draft ONLY if it exists for that date/frame
-   */
+        backlog_start: backlogStart,
+        backlog_end: backlogEnd,
+
+        avg_received_per_tech: avgReceived,
+        avg_closed_per_tech: avgClosed,
+        updated_at: new Date().toISOString(),
+      };
+    },
+    [frame, logDate, serverRows, stateByCode]
+  );
+
+  // ✅ Load day + states ONCE per date change (kills the repeat GET spam)
   useEffect(() => {
     let cancelled = false;
 
     async function run() {
-      const result = await loadStatesAndDay(logDate);
-      if (!result || cancelled) return;
+      const r = await loadStatesAndDay(logDate);
+      if (!r || cancelled) return;
 
-      const { statesList } = result;
+      const nextRows: GridRow[] = r.statesList
+        .filter((s) => s.is_active !== false)
+        .map((s) => {
+          const code = String(s.state_code).toUpperCase();
+          const existing = r.serverRows[code];
 
-      const blankGrid: GridRow[] = statesList.map((x: StateResource) => {
-        const code = String(x.state_code).toUpperCase();
-        const inputs = makeInputs(Number(x.default_manpower ?? 0));
+          return {
+            state_code: code,
+            state_name: s.state_name,
+            inputs: existing
+              ? {
+                  manpower_count: Number(existing.manpower_count ?? 0) || "",
+                  tickets_received_am: Number(existing.tickets_received_am ?? 0) || "",
+                  tickets_closed_pm: Number(existing.tickets_closed_pm ?? 0) || "",
+                  project_tickets: Number(existing.project_tickets ?? 0) || "",
+                  emergency_tickets: Number(existing.emergency_tickets ?? 0) || "",
+                  ojc: Number((existing as any).ojc ?? 0) || "",
+                }
+              : makeInputs(s.default_manpower ?? 0),
+          };
+        });
 
-        // Default: blank/null (only cache if user dirties)
-        inputs.manpower_count = "";
-        inputs.tickets_received_am = "";
-        inputs.tickets_closed_pm = "";
-        inputs.project_tickets = "";
-        inputs.emergency_tickets = "";
-
-        return {
-          state_name: x.state_name,
-          state_code: code,
-          inputs,
-        };
-      });
-
-      setRows(blankGrid);
+      setRows(nextRows);
       resetDirty();
 
-      const draft = loadDraft(draftKey);
+      const draft = loadDraftLocal(draftKey);
       if (draft && draft.length) {
-        setRows(draft);
-        setDirtyFromRows(draft);
+        const seed = makeInputs(0);
+        const hydrated = draft.map((row) => ({
+          ...row,
+          inputs: { ...seed, ...(row as any).inputs }, // ensures ojc exists for older drafts
+        }));
+        setRows(hydrated);
+        setDirtyFromRows(hydrated);
       } else {
         clearDraft(draftKey);
       }
@@ -144,183 +177,142 @@ export default function LocateDailyCallLogClient() {
       cancelled = true;
     };
   }, [
-    loadStatesAndDay,
     logDate,
-    frame, // included because key changes with frame; keeps behavior explicit
     draftKey,
+    loadStatesAndDay,
     makeInputs,
     setRows,
     resetDirty,
     setDirtyFromRows,
-    loadDraft,
+    loadDraftLocal,
     clearDraft,
   ]);
 
-  /**
-   * Persist on unmount / route change
-   */
+  // Draft persistence (safe: only depends on primitive draftKey and state.rows)
   useEffect(() => {
-    return () => {
-      const key = draftKeyRef.current;
-      if (dirtyRef.current) saveDraft(key, rowsRef.current);
-      else clearDraft(key);
-    };
-  }, [saveDraft, clearDraft]);
+    saveDraftLocal(draftKey, state.rows);
+  }, [draftKey, saveDraftLocal, state.rows]);
 
-  /**
-   * Persist on refresh/close
-   */
-  useEffect(() => {
-    function onBeforeUnload() {
-      const key = draftKeyRef.current;
-      if (dirtyRef.current) saveDraft(key, rowsRef.current);
-      else clearDraft(key);
-    }
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [saveDraft, clearDraft]);
-
-  function toPreviewRow(payload: SubmitRow): DailyRowFromApi {
-    const code = String(payload.state_code).toUpperCase();
-    const stateRes = data.stateByCode[code];
-
-    const manpower = Number(payload.manpower_count ?? 0);
-    const total = Number(payload.tickets_total ?? 0);
-    const proj = Number(payload.project_tickets ?? 0);
-    const emer = Number(payload.emergency_tickets ?? 0);
-
-    const existing = data.serverRows[code];
-    const backlogStart = Number(existing?.backlog_start ?? 0);
-
-    return {
-      log_date: logDate,
-      state_code: code,
-      state_name: String(stateRes?.state_name ?? code),
-
-      manpower_count: manpower,
-      tickets_received_am: frame === "AM" ? total : Number(existing?.tickets_received_am ?? 0),
-      tickets_closed_pm: frame === "PM" ? total : Number(existing?.tickets_closed_pm ?? 0),
-      project_tickets: proj,
-      emergency_tickets: emer,
-
-      backlog_start: backlogStart,
-      backlog_end: 0,
-
-      avg_received_per_tech: 0,
-      avg_closed_per_tech: 0,
-
-      updated_at: new Date().toISOString(),
-    };
-  }
-
-  async function onSubmitBatch() {
-    data.setOut("");
+  const onSubmit = useCallback(async () => {
+    setOut("");
 
     const errs = state.validate();
     if (errs.length) {
-      data.setOut(errs.join("\n"));
+      setOut(errs[0]);
       return;
     }
 
     const payloadRows = state.buildPayloadRows() as SubmitRow[];
-
-    const r = await data.submitDailyLog({
-      logDate,
-      frame,
-      payloadRows,
-    });
-
+    const r = await submitDailyLog({ logDate, frame, payloadRows });
     if (!r.ok) return;
 
-    // Snapshot
-    setLastSubmittedRows(payloadRows.map(toPreviewRow));
+    setLastSubmittedByCode((prev) => {
+      const next = { ...prev };
+      for (const p of payloadRows) {
+        const row = toPreviewRow(p);
+        next[String(row.state_code).toUpperCase()] = row;
+      }
+      return next;
+    });
 
-    // Submit success: clear draft + clear entry back to blank/null
     clearDraft(draftKey);
-    resetDirty();
 
     setRows((prev) =>
-      prev.map((row) => ({
-        ...row,
-        inputs: {
-          ...row.inputs,
-          manpower_count: "",
-          tickets_received_am: "",
-          tickets_closed_pm: "",
-          project_tickets: "",
-          emergency_tickets: "",
-        },
-      }))
-    );
-  }
-
-  async function onSaveBaseline() {
-    if (!state.editing) return;
-
-    const r = await data.saveBaseline(
-      {
-        state_code: state.editing.state_code,
-        default_manpower: state.editing.default_manpower,
-        backlog_seed: state.editing.backlog_seed,
-      },
-      logDate
+      prev.map((rr) => {
+        const code = String(rr.state_code).toUpperCase();
+        const wasSubmitted = payloadRows.some((p) => String(p.state_code).toUpperCase() === code);
+        if (!wasSubmitted) return rr;
+        return { ...rr, inputs: makeInputs(stateByCode[code]?.default_manpower ?? 0) };
+      })
     );
 
-    if (r.ok) state.setEditing(null);
-  }
+    resetDirty();
+  }, [
+    setOut,
+    state,
+    submitDailyLog,
+    logDate,
+    frame,
+    toPreviewRow,
+    clearDraft,
+    draftKey,
+    setRows,
+    makeInputs,
+    resetDirty,
+    stateByCode,
+  ]);
 
-  async function onSaveLastSubmittedRow(payloadRow: {
-    state_code: string;
-    manpower_count: number;
-    tickets_total: number;
-    project_tickets: number;
-    emergency_tickets: number;
-  }) {
-    data.setOut("");
+  const onClearLastSubmitted = useCallback(() => {
+    setLastSubmittedByCode({});
+  }, []);
 
-    const r = await data.submitDailyLog({
-      logDate,
-      frame,
-      payloadRows: [payloadRow],
-    });
+  const onSaveLastSubmittedRow = useCallback(
+    async (payloadRow: {
+      state_code: string;
+      manpower_count: number;
+      tickets_total: number;
+      project_tickets: number;
+      emergency_tickets: number;
+      ojc?: number;
+    }) => {
+      setOut("");
 
-    if (!r.ok) return;
+      const normalized: SubmitRow = {
+        state_code: payloadRow.state_code,
+        manpower_count: Number(payloadRow.manpower_count ?? 0),
+        tickets_total: Number(payloadRow.tickets_total ?? 0),
+        project_tickets: Number(payloadRow.project_tickets ?? 0),
+        emergency_tickets: Number(payloadRow.emergency_tickets ?? 0),
+        ojc: Number(payloadRow.ojc ?? 0),
+      };
 
-    const updated = toPreviewRow(payloadRow as SubmitRow);
-    const next = { ...lastSubmittedByCode, [String(payloadRow.state_code).toUpperCase()]: updated };
-    setLastSubmittedRows(Object.values(next));
-  }
+      const r = await submitDailyLog({
+        logDate,
+        frame,
+        payloadRows: [normalized],
+      });
+
+      if (!r.ok) return;
+
+      const updated = toPreviewRow(normalized);
+      setLastSubmittedByCode((prev) => ({
+        ...prev,
+        [String(updated.state_code).toUpperCase()]: updated,
+      }));
+    },
+    [setOut, submitDailyLog, logDate, frame, toPreviewRow]
+  );
 
   return (
     <LocateDailyCallLogView
-      loading={data.loading}
-      submitting={data.submitting}
-      savingBaseline={data.savingBaseline}
-      out={data.out}
-      serverRows={data.serverRows}
-      stateByCode={data.stateByCode}
-      logDate={logDate}
+      loading={loading}
+      submitting={submitting}
+      savingBaseline={savingBaseline}
+      out={out}
+      setOut={setOut}
+      logDate={state.logDate}
       setLogDate={state.setLogDate}
-      frame={frame}
+      frame={state.frame}
       setFrame={state.setFrame}
       filter={state.filter}
       setFilter={state.setFilter}
-      rows={state.rows}
-      setRows={setRows}
-      filteredRows={state.filteredRows}
-      lastSubmittedRows={lastSubmittedRows}
-      onClearLastSubmitted={() => setLastSubmittedRows([])}
-      onSaveLastSubmittedRow={onSaveLastSubmittedRow}
-      editing={state.editing}
-      setEditing={state.setEditing}
       ticketsLabel={state.ticketsLabel}
       gridStyle={state.gridStyle}
+      rows={state.filteredRows}
+      serverRows={serverRows}
+      stateByCode={stateByCode}
       updateRow={state.updateRow}
+      editing={state.editing}
+      setEditing={state.setEditing}
       openBaselineModalFor={state.openBaselineModalFor}
-      projectedBacklogEnd={state.projectedBacklogEnd}
-      getBacklogStart={state.getBacklogStart}
-      onSubmitBatch={onSubmitBatch}
-      onSaveBaseline={onSaveBaseline}
+      saveBaseline={saveBaseline}
+      onSubmit={onSubmit}
+      isDirtyAny={state.isDirtyAny}
+      lastSubmittedRows={lastSubmittedRows}
+      onClearLastSubmitted={onClearLastSubmitted}
+      onSaveLastSubmittedRow={onSaveLastSubmittedRow}
     />
   );
-}
+};
+
+export default LocateDailyCallLogClient;

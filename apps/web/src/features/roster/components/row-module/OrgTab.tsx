@@ -9,12 +9,27 @@ export function OrgTab(props: {
   pcOrgName?: string | null;
   orgStartDate: string | null;
 
+  // ✅ org meta (PC-ORG scope)
+  msoName?: string | null;
+  divisionName?: string | null;
+  regionName?: string | null;
+
   endOrgBlocked: boolean;
   endOrgBlockedTitle: string;
 
   endPcOrgCascade: () => void;
 }) {
-  const { row, pcOrgName, orgStartDate, endOrgBlocked, endOrgBlockedTitle, endPcOrgCascade } = props;
+  const {
+    row,
+    pcOrgName,
+    orgStartDate,
+    msoName,
+    divisionName,
+    regionName,
+    endOrgBlocked,
+    endOrgBlockedTitle,
+    endPcOrgCascade,
+  } = props;
 
   return (
     <div className="space-y-3">
@@ -42,20 +57,16 @@ export function OrgTab(props: {
 
         <div className="mt-3 grid grid-cols-12 gap-2 text-sm">
           <div className="col-span-4 text-[var(--to-ink-muted)]">PC</div>
-          <div className="col-span-8">
-            {(row as any)?.pc_name ??
-              (row as any)?.pc_number ??
-              ((row as any)?.pc_id ? String((row as any)?.pc_id) : "—")}
-          </div>
+          <div className="col-span-8">{pcOrgName ?? (row as any)?.pc_org_name ?? "—"}</div>
 
           <div className="col-span-4 text-[var(--to-ink-muted)]">MSO</div>
-          <div className="col-span-8">{(row as any)?.mso_name ?? "—"}</div>
+          <div className="col-span-8">{msoName ?? (row as any)?.mso_name ?? "—"}</div>
 
           <div className="col-span-4 text-[var(--to-ink-muted)]">Division</div>
-          <div className="col-span-8">{(row as any)?.division_name ?? "—"}</div>
+          <div className="col-span-8">{divisionName ?? (row as any)?.division_name ?? "—"}</div>
 
           <div className="col-span-4 text-[var(--to-ink-muted)]">Region</div>
-          <div className="col-span-8">{(row as any)?.region_name ?? "—"}</div>
+          <div className="col-span-8">{regionName ?? (row as any)?.region_name ?? "—"}</div>
         </div>
 
         <div className="mt-3 text-xs text-[var(--to-ink-muted)]">

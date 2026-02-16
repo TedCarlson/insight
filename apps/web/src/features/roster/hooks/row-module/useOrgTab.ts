@@ -1,95 +1,102 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { api, type RosterRow } from "@/shared/lib/api";
-import { useToast } from "@/components/ui/Toast";
+import { useMemo } from "react";
+import { api } from "@/shared/lib/api";
+import type { RosterRow } from "@/shared/lib/api";
 
-export function useOrgTab(args: {
+export type OrgMeta = {
+  mso_name?: string | null;
+  division_name?: string | null;
+  region_name?: string | null;
+};
+
+export function useOrgTab(props: {
   row: RosterRow | null;
   pcOrgId: string;
-  pcOrgName?: string | null;
-
+  pcOrgName: string | null;
   personId: string | null;
-
-  // parent callbacks
   onClose: () => void;
-  refreshCurrent: () => Promise<any> | void;
+  refreshCurrent: () => Promise<void> | void;
 
-  // derived block rule comes from parent pills
+  // from parent
   endOrgBlocked: boolean;
-}) {
-  const { row, pcOrgId, personId, onClose, refreshCurrent, endOrgBlocked } = args;
 
-  const toast = useToast();
-  const [orgAssociationEndedAt, setOrgAssociationEndedAt] = useState<string | null>(null);
+  // ✅ org meta for the selected PC-ORG
+  orgMeta?: OrgMeta | null;
+}) {
+  const { row, personId, pcOrgId, pcOrgName, onClose, refreshCurrent, endOrgBlocked, orgMeta } = props;
 
   const orgStartDate = useMemo(() => {
-    return (
+    const s =
+      (row as any)?.person_pc_org_start_date ??
       (row as any)?.pc_org_start_date ??
       (row as any)?.org_start_date ??
-      (row as any)?.org_event_start_date ??
       (row as any)?.start_date ??
-      null
-    );
+      null;
+    return s ? String(s) : null;
   }, [row]);
 
-  const ended = useMemo(() => {
-    return (
-      orgAssociationEndedAt ??
-      (row as any)?.person_pc_org_end_date ??
-      (row as any)?.pc_org_end_date ??
-      null
-    );
-  }, [orgAssociationEndedAt, row]);
+  const orgAssociationEndedAt = useMemo(() => {
+    const s = (row as any)?.person_pc_org_end_date ?? (row as any)?.pc_org_end_date ?? null;
+    return s ? String(s) : null;
+  }, [row]);
+
+  // These are computed in RosterRowModule and attached to row props (via parent file)
+  // But we also recompute defensively here if present.
+  const activeAssignmentCount = useMemo(() => {
+    const v = (row as any)?.activeAssignmentCount;
+    if (Number.isFinite(Number(v))) return Number(v);
+    return 0;
+  }, [row]);
+
+  const activeLeadershipCount = useMemo(() => {
+    const v = (row as any)?.activeLeadershipCount;
+    if (Number.isFinite(Number(v))) return Number(v);
+    return 0;
+  }, [row]);
+
+  const hardBlocked = endOrgBlocked;
+  const blockedByDownstream = activeAssignmentCount > 0 || activeLeadershipCount > 0;
+
+  const endPcOrgDisabled = hardBlocked || blockedByDownstream;
+
+  const endPcOrgDisabledTitle = hardBlocked
+    ? "You do not have permission to end org associations, or roster is locked."
+    : blockedByDownstream
+      ? "End assignments and leadership first (then you can end org association)."
+      : "End Org association";
 
   async function endPcOrgCascade() {
-    if (endOrgBlocked) return;
+    if (endPcOrgDisabled) return;
+    if (!personId) return;
 
     const ok = window.confirm(
       "End Org association for this person? This will set an end date (today) on the person ↔ org association so they return to the unassigned pool. Continue?"
     );
     if (!ok) return;
 
-    const today = new Date().toISOString().slice(0, 10);
+    await api.personPcOrgEndAssociation({
+      pc_org_id: pcOrgId,
+      person_id: personId,
+    });
 
-    try {
-      if (!personId || !pcOrgId) throw new Error("Missing personId or pcOrgId");
-
-      await api.personPcOrgEndAssociation({
-        person_id: String(personId),
-        pc_org_id: String(pcOrgId),
-        end_date: today,
-      });
-
-      toast.push({
-        title: "Org association ended",
-        message: "This person is now eligible for reassignment.",
-        variant: "success",
-        durationMs: 3200,
-      });
-
-      setOrgAssociationEndedAt(today);
-
-      await Promise.resolve(refreshCurrent?.());
-
-      // close overlay so parent list refresh can remove the row
-      onClose();
-    } catch (e: any) {
-      toast.push({
-        title: "End org association failed",
-        message: String(e?.message ?? e),
-        variant: "danger",
-        durationMs: 4200,
-      });
-    }
+    await refreshCurrent();
+    onClose();
   }
 
   return {
+    pcOrgName,
     orgStartDate,
-    ended,
     orgAssociationEndedAt,
-    setOrgAssociationEndedAt,
 
+    // ✅ expose org meta (PC-ORG level)
+    msoName: orgMeta?.mso_name ?? null,
+    divisionName: orgMeta?.division_name ?? null,
+    regionName: orgMeta?.region_name ?? null,
+
+    // expose to UI
     endPcOrgCascade,
+    endOrgBlocked: endPcOrgDisabled,
+    endOrgBlockedTitle: endPcOrgDisabledTitle,
   };
 }

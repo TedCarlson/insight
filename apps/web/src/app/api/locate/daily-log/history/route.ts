@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
   let query = supabase
     .from("locate_daily_call_log_v")
     .select(
-      "log_date,state_code,state_name,manpower_count,tickets_received_am,tickets_closed_pm,project_tickets,emergency_tickets,updated_at",
+      "log_date,state_code,state_name,manpower_count,tickets_received_am,tickets_closed_pm,project_tickets,emergency_tickets,ojc,updated_at",
       { count: "exact" }
     )
     .order(sort, { ascending: dir === "asc" })
@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
   // "Saved only" => has any meaningful submitted value
   if (onlySaved) {
     query = query.or(
-      "manpower_count.gt.0,tickets_received_am.gt.0,tickets_closed_pm.gt.0,project_tickets.gt.0,emergency_tickets.gt.0"
+      "manpower_count.gt.0,tickets_received_am.gt.0,tickets_closed_pm.gt.0,project_tickets.gt.0,emergency_tickets.gt.0,ojc.gt.0"
     );
   }
 

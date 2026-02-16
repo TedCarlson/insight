@@ -32,15 +32,19 @@ async function searchAffiliations(supabase: SupabaseClient, q: string, limit: nu
   const query = (q ?? "").trim();
   const lim = Math.max(5, Math.min(limit ?? 25, 50));
 
+  // ✅ Replace missing *_admin_v views with real tables:
+  // - company(company_id, company_code, company_name)
+  // - contractor(contractor_id, contractor_code, contractor_name)
+
   // When empty, return a small default list (alphabetical) from both sources.
   const companyBase = supabase
-    .from("company_admin_v")
+    .from("company")
     .select("company_id, company_code, company_name")
     .order("company_name", { ascending: true })
     .limit(lim);
 
   const contractorBase = supabase
-    .from("contractor_admin_v")
+    .from("contractor")
     .select("contractor_id, contractor_code, contractor_name")
     .order("contractor_name", { ascending: true })
     .limit(lim);
@@ -49,7 +53,7 @@ async function searchAffiliations(supabase: SupabaseClient, q: string, limit: nu
     query.length === 0
       ? companyBase
       : supabase
-          .from("company_admin_v")
+          .from("company")
           .select("company_id, company_code, company_name")
           .or(`company_name.ilike.%${query}%,company_code.ilike.%${query}%`)
           .order("company_name", { ascending: true })
@@ -59,7 +63,7 @@ async function searchAffiliations(supabase: SupabaseClient, q: string, limit: nu
     query.length === 0
       ? contractorBase
       : supabase
-          .from("contractor_admin_v")
+          .from("contractor")
           .select("contractor_id, contractor_code, contractor_name")
           .or(`contractor_name.ilike.%${query}%,contractor_code.ilike.%${query}%`)
           .order("contractor_name", { ascending: true })
@@ -123,7 +127,6 @@ export function AffiliationSelector(props: {
 
   // Selected key for native <select>
   const selectedKey = value ? `${value.kind}:${value.co_ref_id}` : "";
-
 
   // For display: prefer the fully-hydrated option from the loaded list (so we can show name/code),
   // even if the parent only stored ids/codes.

@@ -1,239 +1,169 @@
 // apps/web/src/app/api/admin/invite/route.ts
-
-import { NextResponse } from "next/server";
-import { supabaseServer } from "@/shared/data/supabase/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
-import { normalizeNext } from "@/lib/navigation/next";
+import { supabaseServer } from "@/shared/data/supabase/server";
 
 export const runtime = "nodejs";
 
-type InviteBody = {
-  email: string;
-  assignment_id: string;
-  next?: string; // optional post-password target, default "/home"
-};
-
-/**
- * Owner-only invite endpoint.
- *
- * Sends an invite email (Supabase admin.inviteUserByEmail) and stamps the invited user's metadata
- * so the app can bootstrap user_profile on first login.
- *
- * Existing user fallback: email_exists -> send magic link (signInWithOtp) that lands on /auth/callback
- * so session cookies/tokens are established before set-password.
- *
- * Requires env:
- *   - NEXT_PUBLIC_SUPABASE_URL
- *   - NEXT_PUBLIC_SUPABASE_ANON_KEY
- *   - SUPABASE_SERVICE_ROLE_KEY
- *   - NEXT_PUBLIC_SITE_URL (optional; falls back to request origin)
- */
-export async function GET() {
-  // Avoid “success” responses for an admin endpoint via browser GET.
-  return NextResponse.json({ ok: false, error: "Method Not Allowed" }, { status: 405 });
+function str(v: unknown) {
+  return String(v ?? "").trim();
 }
 
-export async function POST(req: Request) {
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+type InviteMeta = {
+  person_id: string | null;
+  assignment_id: string | null;
+};
+
+async function hasRosterManage(apiClient: any, pc_org_id: string) {
+  const { data, error } = await apiClient.rpc("has_any_pc_org_permission", {
+    p_pc_org_id: pc_org_id,
+    p_permission_keys: ["roster_manage"],
+  });
+  if (error) return false;
+  return Boolean(data);
+}
+
+async function nextResendCount(admin: any, input: { pc_org_id: string; assignment_id: string; email: string }) {
+  // Count prior invite logs for this (org, assignment, email).
+  // The current send should record that count (0 = first send, 1 = first resend, ...).
+  const { count } = await admin
+    .from("roster_invite_log")
+    .select("invite_id", { count: "exact", head: true })
+    .eq("pc_org_id", input.pc_org_id)
+    .eq("assignment_id", input.assignment_id)
+    .eq("email", input.email);
+
+  return Number.isFinite(Number(count)) ? Number(count) : 0;
+}
+
+export async function POST(req: NextRequest) {
   try {
-    // Prefer explicit site URL; otherwise use request origin (works in previews)
-    const origin = new URL(req.url).origin;
-    const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || origin).replace(/\/+$/, "");
-
-    // Session-aware server client (cookie auth)
     const sb = await supabaseServer();
+    const admin = supabaseAdmin();
 
-    // AuthZ: must be signed in and be owner
-    const { data: userData, error: userErr } = await sb.auth.getUser();
-    const user = userData?.user ?? null;
-    if (!user || userErr) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const {
+      data: { user },
+      error: userErr,
+    } = await sb.auth.getUser();
 
-    let isOwner = false;
-    try {
-      const { data } = await sb.rpc("is_owner");
-      isOwner = !!data;
-    } catch {
-      isOwner = false;
-    }
-    if (!isOwner) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-    // Parse body
-    let body: InviteBody;
-    try {
-      body = (await req.json()) as InviteBody;
-    } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    if (userErr || !user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const email = (body.email ?? "").trim().toLowerCase();
-    const assignment_id = (body.assignment_id ?? "").trim();
+    const body = await req.json();
 
-    if (!email || !assignment_id) {
+    const email = normalizeEmail(str(body?.email));
+    const assignmentId = str(body?.assignment_id);
+
+    if (!email || !assignmentId) {
       return NextResponse.json({ error: "email and assignment_id are required" }, { status: 400 });
     }
 
-    // IMPORTANT: next is where user should land AFTER they set password
-    const postPasswordNext = normalizeNext(body.next ?? "/home");
-
-    /**
-     * IMPORTANT:
-     * ALL emailed auth links (invite, magiclink fallback) should land on /auth/callback first.
-     * callback then routes to /auth/set-password for invite/recovery/magiclink types.
-     */
-    const inviteCb = new URL("/auth/callback", siteUrl);
-    inviteCb.searchParams.set("type", "invite");
-    inviteCb.searchParams.set("next", postPasswordNext);
-    const redirectTo = inviteCb.toString();
-
-    const magicCb = new URL("/auth/callback", siteUrl);
-    magicCb.searchParams.set("type", "magiclink");
-    magicCb.searchParams.set("next", postPasswordNext);
-    const magicLinkRedirectTo = magicCb.toString();
-
-    // Validate prerequisites via assignment_admin_v (user-scoped read; keep as-is)
-    const prereq = await sb
-      .from("assignment_admin_v")
-      .select("assignment_id, person_id, position_title, pc_org_id, pc_org_name")
-      .eq("assignment_id", assignment_id)
+    // --- Load assignment context (pc_org_id + person_id) via service role ---
+    const { data: assignment, error: assignmentErr } = await admin
+      .from("assignment")
+      .select("assignment_id, pc_org_id, person_id")
+      .eq("assignment_id", assignmentId)
       .maybeSingle();
 
-    if (prereq.error) {
-      return NextResponse.json(
-        { error: "assignment_admin_v lookup failed", details: prereq.error },
-        { status: 400 }
-      );
-    }
-    if (!prereq.data) {
-      return NextResponse.json({ error: "No assignment found for assignment_id" }, { status: 400 });
+    if (assignmentErr) {
+      return NextResponse.json({ error: assignmentErr.message }, { status: 500 });
     }
 
-    const person_id = (prereq.data as any)?.person_id ?? null;
-    const position_title = (prereq.data as any)?.position_title ?? null;
-    const pc_org_id = (prereq.data as any)?.pc_org_id ?? null;
-    const pc_org_name = (prereq.data as any)?.pc_org_name ?? null;
+    const pc_org_id = str(assignment?.pc_org_id);
+    const person_id = str(assignment?.person_id);
 
-    const missing: string[] = [];
-    if (!person_id) missing.push("person");
-    if (!position_title) missing.push("assignment.position_title");
-    if (!pc_org_id) missing.push("pc_org");
-
-    if (missing.length) {
-      return NextResponse.json(
-        {
-          error: "Invite blocked: prerequisites missing",
-          missing,
-          found: { person_id, position_title, pc_org_id, pc_org_name },
-        },
-        { status: 400 }
-      );
+    if (!pc_org_id) {
+      return NextResponse.json({ error: "Assignment missing pc_org_id" }, { status: 400 });
     }
 
-    // Service-role admin client
-    let admin;
-    try {
-      admin = supabaseAdmin();
-    } catch (e: any) {
-      return NextResponse.json(
-        { error: "Service client unavailable", details: e?.message ?? String(e) },
-        { status: 500 }
-      );
-    }
+    // --- Permission gate: owner OR roster_manage for this PC-ORG ---
+    const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
 
-    // Stamp metadata for bootstrap
-    const meta = { assignment_id, person_id, position_title, pc_org_id, pc_org_name };
+    const { data: isOwner, error: ownerErr } = await apiClient.rpc("is_owner");
+    if (ownerErr) return NextResponse.json({ error: ownerErr.message }, { status: 500 });
 
-    // Send invite email (Supabase sends the email)
-    const inviteRes = await admin.auth.admin.inviteUserByEmail(email, {
-      redirectTo,
-      data: meta, // user_metadata
-    });
-
-    if (inviteRes.error) {
-      const code = (inviteRes.error as any)?.code;
-
-      // Existing user: invites won't email; send magic link instead.
-      if (code === "email_exists") {
-        const { error: otpErr } = await sb.auth.signInWithOtp({
-          email,
-          options: {
-            shouldCreateUser: false,
-            emailRedirectTo: magicLinkRedirectTo, // ✅ must be /auth/callback
-          },
-        });
-
-        if (otpErr) {
-          return NextResponse.json(
-            {
-              error: "email_exists fallback failed (signInWithOtp)",
-              details: otpErr,
-              redirect_to: magicLinkRedirectTo,
-            },
-            { status: 400 }
-          );
-        }
-
-        return NextResponse.json(
-          {
-            ok: true,
-            emailed: true,
-            mode: "magic_link_existing_user",
-            existing_user: true,
-            email,
-            redirect_to: magicLinkRedirectTo,
-            post_password_next: postPasswordNext,
-          },
-          { status: 200 }
-        );
+    if (!isOwner) {
+      const { data: canAccess, error: accessErr } = await apiClient.rpc("can_access_pc_org", { p_pc_org_id: pc_org_id });
+      if (accessErr || !canAccess) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
 
-      return NextResponse.json(
-        { error: "inviteUserByEmail failed", details: inviteRes.error, redirect_to: redirectTo },
-        { status: 400 }
-      );
+      const allowed = await hasRosterManage(apiClient, pc_org_id);
+      if (!allowed) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
-    const invitedUserId = (inviteRes.data as any)?.user?.id ?? null;
+    // --- Invite user to Supabase Auth ---
+    const redirectTo = `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`;
 
-    if (!invitedUserId) {
-      return NextResponse.json(
-        { error: "inviteUserByEmail succeeded but no user id returned", data: inviteRes.data },
-        { status: 400 }
-      );
-    }
-
-    // (Optional but helpful) ensure metadata is correct on the auth user
-    const upd = await admin.auth.admin.updateUserById(invitedUserId, {
-      user_metadata: meta,
-      app_metadata: { assignment_id },
+    const { data: inviteData, error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
+      redirectTo,
+      data: {
+        app: "teamoptix-insight",
+        assignment_id: assignmentId,
+        pc_org_id,
+      },
     });
 
-    if (upd.error) {
-      return NextResponse.json(
-        {
-          ok: true,
-          emailed: true,
-          warning: "Invite email sent, but metadata update failed",
-          warning_details: upd.error,
-          invited: { email, auth_user_id: invitedUserId, ...meta },
-          redirect_to: redirectTo,
-          post_password_next: postPasswordNext,
-        },
-        { status: 200 }
-      );
+    if (inviteErr) {
+      return NextResponse.json({ error: inviteErr.message }, { status: 400 });
     }
 
-    // Ensure user_profile exists and is linked (service-role bypasses RLS)
-    const nowIso = new Date().toISOString();
-    await admin.from("user_profile" as any).upsert(
-      {
-        auth_user_id: invitedUserId,
-        status: "active",
-        person_id,
-        selected_pc_org_id: pc_org_id,
-        created_at: nowIso,
-        updated_at: nowIso,
-      },
-      { onConflict: "auth_user_id" as any }
-    );
+    const invitedUserId = inviteData?.user?.id;
+    if (!invitedUserId) {
+      return NextResponse.json({ error: "Invite did not return a user id" }, { status: 500 });
+    }
+
+    // --- Invite log (authoritative record of "invite sent") ---
+    // This avoids proxy logic like "user_profile.created_at implies invited".
+    // One row per send.
+    const resendCount = await nextResendCount(admin, { pc_org_id, assignment_id: assignmentId, email });
+
+    const { error: logErr } = await admin.from("roster_invite_log").insert({
+      pc_org_id,
+      person_id: person_id || null,
+      assignment_id: assignmentId,
+      email,
+      invited_by_auth_user_id: user.id,
+      invited_at: new Date().toISOString(),
+      resend_count: resendCount,
+    });
+
+    if (logErr) {
+      return NextResponse.json({ error: logErr.message }, { status: 500 });
+    }
+
+    // --- Ensure app profile row exists/linked ---
+    const meta: InviteMeta = {
+      person_id: person_id || null,
+      assignment_id: assignmentId,
+    };
+
+    if (person_id) {
+      const { error: upsertErr } = await admin
+        .from("user_profile")
+        .upsert(
+          {
+            auth_user_id: invitedUserId,
+            person_id,
+            selected_pc_org_id: pc_org_id,
+            status: "invited",
+          },
+          { onConflict: "auth_user_id" }
+        );
+
+      if (upsertErr) {
+        return NextResponse.json({ error: upsertErr.message }, { status: 500 });
+      }
+    }
+
+    const postPasswordNext = `/roster`;
 
     return NextResponse.json({
       ok: true,
@@ -244,9 +174,6 @@ export async function POST(req: Request) {
     });
   } catch (e: any) {
     console.error("INVITE_ROUTE_UNCAUGHT_ERROR", e);
-    return NextResponse.json(
-      { error: "Unhandled server error", message: e?.message ?? String(e) },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Unhandled server error", message: e?.message ?? String(e) }, { status: 500 });
   }
 }

@@ -22,3 +22,4 @@ snapshots/
 # mac junk
 .DS_Store
 **/.DS_Store
+supabase/.temp/

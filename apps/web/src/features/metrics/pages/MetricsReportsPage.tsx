@@ -27,6 +27,12 @@ export const revalidate = 0;
 
 type SearchParams = { fiscal?: string; reports_to?: string };
 
+type BatchMeta = {
+  batch_id: string;
+  metric_date: string;
+  fiscal_end_date: string;
+};
+
 function currentFiscalEndDateISO_NY(): string {
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -57,8 +63,7 @@ function currentFiscalEndDateISO_NY(): string {
 }
 
 function dedupeByTechId(rows: any[]) {
-  // Defensive: if the view ever returns multiple rows per tech within a snapshot,
-  // keep the “best” one deterministically so UI does not duplicate / key-collide.
+  // Defensive: if multiple rows ever show up per tech, keep the “best” deterministically.
   const by = new Map<string, any>();
   for (const r of rows) {
     const k = String(r.tech_id ?? "");
@@ -110,6 +115,143 @@ function filterEmptyRubricGroups(rows: any[]) {
   return out;
 }
 
+function pickStatusBadge(s: {
+  is_totals?: boolean | null;
+  ownership_mode?: string | null;
+  composite_score?: number | null;
+}): { status_badge: string; status_sort: number } {
+  if (s.is_totals) return { status_badge: "TOTALS", status_sort: 999 };
+  if (String(s.ownership_mode ?? "") === "ORPHAN_OUT_OF_WINDOW") return { status_badge: "OUTLIER", status_sort: 50 };
+  if (s.composite_score == null) return { status_badge: "OUTLIER", status_sort: 50 };
+  return { status_badge: "OK", status_sort: 10 };
+}
+
+async function loadBatchMetaForFiscal(sb: any, pc_org_id: string, fiscal_end_date: string): Promise<BatchMeta | null> {
+  const { data } = await sb
+    .from("metrics_raw_batch")
+    .select("batch_id, metric_date, fiscal_end_date, uploaded_at, status")
+    .eq("pc_org_id", pc_org_id)
+    .eq("fiscal_end_date", fiscal_end_date)
+    .eq("status", "loaded")
+    .order("metric_date", { ascending: false })
+    .order("uploaded_at", { ascending: false })
+    .limit(1);
+
+  const row = data?.[0];
+  if (!row?.batch_id) return null;
+  return {
+    batch_id: String(row.batch_id),
+    metric_date: String(row.metric_date),
+    fiscal_end_date: String(row.fiscal_end_date),
+  };
+}
+
+async function loadPriorBatchMeta(sb: any, pc_org_id: string, before_metric_date: string): Promise<BatchMeta | null> {
+  const { data } = await sb
+    .from("metrics_raw_batch")
+    .select("batch_id, metric_date, fiscal_end_date, uploaded_at, status")
+    .eq("pc_org_id", pc_org_id)
+    .eq("status", "loaded")
+    .lt("metric_date", before_metric_date)
+    .order("metric_date", { ascending: false })
+    .order("uploaded_at", { ascending: false })
+    .limit(1);
+
+  const row = data?.[0];
+  if (!row?.batch_id) return null;
+  return {
+    batch_id: String(row.batch_id),
+    metric_date: String(row.metric_date),
+    fiscal_end_date: String(row.fiscal_end_date),
+  };
+}
+
+async function buildRowsForBatch(sb: any, batch_id: string, class_type: "P4P" = "P4P") {
+  const [{ data: snap }, { data: metrics }] = await Promise.all([
+    sb
+      .from("master_kpi_archive_snapshot")
+      .select(
+        "batch_id,class_type,pc_org_id,metric_date,fiscal_end_date,tech_id,person_id,ownership_mode,direct_reports_to_person_id,is_totals,composite_score,rank_org,population_size"
+      )
+      .eq("batch_id", batch_id)
+      .eq("class_type", class_type),
+    sb
+      .from("master_kpi_archive_metric")
+      .select("tech_id,metric_key_canonical,computed_value,raw_value")
+      .eq("batch_id", batch_id)
+      .eq("class_type", class_type),
+  ]);
+
+  const metricByTech = new Map<string, Record<string, number | null>>();
+  for (const m of metrics ?? []) {
+    const tech = String((m as any).tech_id ?? "");
+    const key = String((m as any).metric_key_canonical ?? "");
+    if (!tech || !key) continue;
+
+    const v = (m as any).computed_value ?? (m as any).raw_value ?? null;
+    const num = v == null ? null : Number(v);
+
+    const obj = metricByTech.get(tech) ?? {};
+    obj[key] = Number.isFinite(num as any) ? (num as number) : null;
+    metricByTech.set(tech, obj);
+  }
+
+  const out: any[] = [];
+  for (const s of snap ?? []) {
+    const tech_id = String((s as any).tech_id ?? "");
+    const is_totals = Boolean((s as any).is_totals);
+
+    // We keep totals in the archive, but do NOT show them in the report UI.
+    if (is_totals) continue;
+
+    const m = metricByTech.get(tech_id) ?? {};
+    const badge = pickStatusBadge({
+      is_totals,
+      ownership_mode: (s as any).ownership_mode ?? null,
+      composite_score: (s as any).composite_score ?? null,
+    });
+
+    out.push({
+      // identity
+      tech_id,
+      person_id: (s as any).person_id ?? null,
+      reports_to_person_id: (s as any).direct_reports_to_person_id ?? null,
+
+      // snapshot
+      ownership_mode: (s as any).ownership_mode ?? null,
+      metric_date: (s as any).metric_date ?? null,
+      fiscal_end_date: (s as any).fiscal_end_date ?? null,
+
+      // ranking
+      weighted_score: (s as any).composite_score ?? null,
+      rank_in_pc: (s as any).rank_org ?? null,
+      population_size: (s as any).population_size ?? null,
+
+      // KPIs used by rubric + pills
+      tnps_score: (m as any).tnps_score ?? null,
+      ftr_rate: (m as any).ftr_rate ?? null,
+      tool_usage_rate: (m as any).tool_usage_rate ?? null,
+
+      // denominators for weighted rollups + volume column
+      tnps_surveys: (m as any).tnps_surveys ?? null,
+      ftr_contact_jobs:
+        (m as any).ftr_contact_jobs ??
+        // in case canonical uses different naming
+        (m as any).total_ftr_contact_jobs ??
+        (m as any).total_ftr_contact_jobs_count ??
+        null,
+      tu_eligible_jobs: (m as any).tu_eligible_jobs ?? null,
+
+      // misc (table expects these)
+      job_volume_band: null,
+      status_badge: badge.status_badge,
+      status_sort: badge.status_sort,
+    });
+  }
+
+  return dedupeByTechId(out);
+}
+
 export default async function MetricsReportsPage({
   searchParams,
 }: {
@@ -129,19 +271,20 @@ export default async function MetricsReportsPage({
   // 1) Fiscal options (cheap)
   // -----------------------------
   const { data: fiscalRowsRaw } = await sb
-    .from("metrics_p4p_manager_view_v")
+    .from("metrics_raw_batch")
     .select("fiscal_end_date")
-    .eq("pc_org_id", pc_org_id);
+    .eq("pc_org_id", pc_org_id)
+    .eq("status", "loaded");
 
   if (!fiscalRowsRaw || fiscalRowsRaw.length === 0) {
     return (
       <PageShell>
-        <Card>No reporting rows found.</Card>
+        <Card>No reporting batches found.</Card>
       </PageShell>
     );
   }
 
-  const fiscalOptions = Array.from(new Set(fiscalRowsRaw.map((r: any) => r.fiscal_end_date))).sort((a, b) =>
+  const fiscalOptions = Array.from(new Set(fiscalRowsRaw.map((r: any) => String(r.fiscal_end_date)))).sort((a, b) =>
     a > b ? -1 : 1
   );
 
@@ -150,33 +293,19 @@ export default async function MetricsReportsPage({
   const selectedFiscal = sp.fiscal ?? defaultFiscal;
 
   // -----------------------------
-  // 2) Current fiscal dataset ONLY
-  //    (table + filters live here)
+  // 2) Current batch for selected fiscal
   // -----------------------------
-  const { data: fiscalRows } = await sb
-    .from("metrics_p4p_manager_view_v")
-    .select("*")
-    .eq("pc_org_id", pc_org_id)
-    .eq("fiscal_end_date", selectedFiscal);
-
-  if (!fiscalRows || fiscalRows.length === 0) {
+  const currentBatch = await loadBatchMetaForFiscal(sb, pc_org_id, selectedFiscal);
+  if (!currentBatch) {
     return (
       <PageShell>
-        <Card>No reporting rows for selected fiscal.</Card>
+        <Card>No loaded batch for selected fiscal.</Card>
       </PageShell>
     );
   }
 
-  // Latest metric_date inside selected fiscal
-  const metricDatesDesc = Array.from(new Set(fiscalRows.map((r: any) => r.metric_date))).sort((a, b) =>
-    a > b ? -1 : 1
-  );
-
-  const latestMetricDate = metricDatesDesc[0];
-
-  // Current snapshot rows (STRICTLY fiscal-scoped)
-  const snapshotRowsRaw = fiscalRows.filter((r: any) => r.metric_date === latestMetricDate);
-  const snapshotRows = dedupeByTechId(snapshotRowsRaw);
+  const latestMetricDate = currentBatch.metric_date;
+  const snapshotRows = await buildRowsForBatch(sb, currentBatch.batch_id, "P4P");
 
   const applyReportsTo = (arr: any[]) => {
     if (selectedReportsTo === "ALL") return arr;
@@ -185,6 +314,8 @@ export default async function MetricsReportsPage({
 
   let filteredRows = applyReportsTo(snapshotRows);
 
+  // ✅ Include outliers in the slice for sanity checks.
+  // (Totals rows are excluded from the UI + from rollups.)
   filteredRows = filteredRows.sort((a: any, b: any) => {
     if (a.status_sort !== b.status_sort) return a.status_sort - b.status_sort;
     if (a.rank_in_pc !== b.rank_in_pc) return numOrInf(a.rank_in_pc) - numOrInf(b.rank_in_pc);
@@ -195,30 +326,12 @@ export default async function MetricsReportsPage({
   const nonOkRows = filteredRows.filter((r: any) => r.status_badge !== "OK");
 
   // -----------------------------
-  // 3) Prior snapshot (FISCAL-AGNOSTIC)
-  //    used ONLY for deltas + arrows
+  // 3) Prior batch (fiscal-agnostic)
   // -----------------------------
-  const { data: priorDateRows } = await sb
-    .from("metrics_p4p_manager_view_v")
-    .select("metric_date")
-    .eq("pc_org_id", pc_org_id)
-    .lt("metric_date", latestMetricDate)
-    .order("metric_date", { ascending: false })
-    .limit(1);
+  const priorBatch = await loadPriorBatchMeta(sb, pc_org_id, latestMetricDate);
+  const priorMetricDate = priorBatch?.metric_date ?? null;
 
-  const priorMetricDate = priorDateRows && priorDateRows.length > 0 ? priorDateRows[0].metric_date : null;
-
-  const priorSnapshotRowsRaw = priorMetricDate
-    ? (
-        await sb
-          .from("metrics_p4p_manager_view_v")
-          .select("*")
-          .eq("pc_org_id", pc_org_id)
-          .eq("metric_date", priorMetricDate)
-      ).data ?? []
-    : [];
-
-  const priorSnapshotRows = dedupeByTechId(priorSnapshotRowsRaw);
+  const priorSnapshotRows = priorBatch ? await buildRowsForBatch(sb, priorBatch.batch_id, "P4P") : [];
   const priorRowsScoped = applyReportsTo(priorSnapshotRows);
 
   // Prior map for KPI pill arrows in the table
@@ -242,7 +355,10 @@ export default async function MetricsReportsPage({
 
   const personNameById = new Map<string, string>();
   if (ids.size > 0) {
-    const { data: people } = await admin.from("person").select("person_id, full_name").in("person_id", Array.from(ids));
+    const { data: people } = await admin
+      .from("person")
+      .select("person_id, full_name")
+      .in("person_id", Array.from(ids));
 
     people?.forEach((p: any) => {
       personNameById.set(String(p.person_id), p.full_name ?? "—");
@@ -260,8 +376,7 @@ export default async function MetricsReportsPage({
     .eq("selection_key", "GLOBAL")
     .maybeSingle();
 
-  const activeKey =
-    sel?.preset_key && presetKeys.includes(sel.preset_key) ? sel.preset_key : presetKeys[0] ?? "MODERN";
+  const activeKey = sel?.preset_key && presetKeys.includes(sel.preset_key) ? sel.preset_key : presetKeys[0] ?? "MODERN";
 
   const activePreset = GLOBAL_BAND_PRESETS[activeKey] ?? GLOBAL_BAND_PRESETS[presetKeys[0] ?? "MODERN"];
 
@@ -273,12 +388,10 @@ export default async function MetricsReportsPage({
     .select("class_type,kpi_key,band_key,min_value,max_value,score_value")
     .eq("class_type", "P4P");
 
-  // ✅ Drop KPI groups where all rows are empty
   const rubricRowsAll = filterEmptyRubricGroups(rubricRowsRaw ?? []);
 
   const distinctKeys = Array.from(new Set(rubricRowsAll.map((r: any) => String(r.kpi_key))));
 
-  // ✅ resolveRubricKey can be null; provide safe fallbacks so types stay clean
   const tnpsKey = resolveRubricKey(distinctKeys, ["tnps", "nps"]) ?? "tnps_score";
   const ftrKey = resolveRubricKey(distinctKeys, ["ftr"]) ?? "ftr_rate";
   const toolKey = resolveRubricKey(distinctKeys, ["tool"]) ?? "tool_usage_rate";
@@ -306,7 +419,6 @@ export default async function MetricsReportsPage({
   // -----------------------------
   return (
     <PageShell>
-      {/* ✅ Back to /metrics + ✅ Rubric overlay button (not link) */}
       <ReportsClientShell
         title="Reports"
         subtitle="Metrics • Stack ranking + outliers (P4P Manager)"

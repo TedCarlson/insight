@@ -4,6 +4,12 @@ import { useMemo } from "react";
 
 import type { BandKey, RubricRow } from "@/features/metrics-reports/lib/score";
 import type { KpiDef } from "@/features/metrics/lib/reports/kpis";
+import {
+  computeP4PRollup,
+  delta,
+  trendFromDelta,
+  fmtDelta as fmtDeltaNum,
+} from "@/features/metrics/lib/reports/rollup";
 
 type Preset = Record<string, any>;
 
@@ -18,20 +24,8 @@ type Props = {
   rubricKeys: { tnpsKey: string; ftrKey: string; toolKey: string };
 };
 
-function toNum(v: any): number | null {
-  if (v === null || v === undefined) return null;
-  const n = typeof v === "number" ? v : Number(String(v));
-  return Number.isFinite(n) ? n : null;
-}
-
-function deltaDir(current: any, prior: any): "UP" | "DOWN" | "FLAT" | null {
-  const c = toNum(current);
-  const p = toNum(prior);
-  if (c === null || p === null) return null;
-
-  const eps = 0.0001;
-  if (Math.abs(c - p) <= eps) return "FLAT";
-  return c > p ? "UP" : "DOWN";
+function deltaDir(current: number | null, prior: number | null): "UP" | "DOWN" | "FLAT" | null {
+  return trendFromDelta(delta(current, prior), 0.0001);
 }
 
 function DeltaArrow({ dir }: { dir: "UP" | "DOWN" | "FLAT" | null }) {
@@ -63,8 +57,7 @@ function hexToRgba(hex: string, alpha: number) {
   const h = String(hex ?? "").replace("#", "").trim();
   if (!(h.length === 3 || h.length === 6)) return null;
 
-  const full =
-    h.length === 3 ? `${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}` : h;
+  const full = h.length === 3 ? `${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}` : h;
 
   const r = parseInt(full.slice(0, 2), 16);
   const g = parseInt(full.slice(2, 4), 16);
@@ -127,11 +120,9 @@ function fmtPct1(v: number | null) {
   return `${v.toFixed(1)}%`;
 }
 
-function fmtDelta(v: number | null, isPct: boolean) {
+function fmtDelta(v: number | null, digits = 1) {
   if (v === null) return "—";
-  const sign = v > 0 ? "+" : v < 0 ? "−" : "";
-  const abs = Math.abs(v);
-  return `${sign}${abs.toFixed(1)}${isPct ? "" : ""}`;
+  return fmtDeltaNum(v, digits);
 }
 
 export default function ReportSummaryTiles({
@@ -145,8 +136,12 @@ export default function ReportSummaryTiles({
   const current = rows ?? [];
   const prior = priorRows ?? [];
 
-  const headcount = current.length;
-  const headcountPrior = prior.length;
+  // ✅ Use the weighted rollup helper so tiles match batch totals behavior.
+  const rollCur = useMemo(() => computeP4PRollup(current), [current]);
+  const rollPrev = useMemo(() => computeP4PRollup(prior), [prior]);
+
+  const headcount = rollCur.headcount;
+  const headcountPrior = rollPrev.headcount;
 
   const tnpsDef = useMemo(
     () => kpis.find((k) => String(k.key).toLowerCase().includes("tnps")) ?? kpis[0],
@@ -161,27 +156,14 @@ export default function ReportSummaryTiles({
     [kpis]
   );
 
-  const avg = (arr: any[], field: string): number | null => {
-    if (!arr || arr.length === 0) return null;
-    let sum = 0;
-    let n = 0;
-    for (const r of arr) {
-      const v = toNum(r?.[field]);
-      if (v === null) continue;
-      sum += v;
-      n += 1;
-    }
-    return n === 0 ? null : sum / n;
-  };
+  const tnpsCur = tnpsDef ? rollCur.tnps_score : null;
+  const tnpsPrev = tnpsDef ? rollPrev.tnps_score : null;
 
-  const tnpsCur = tnpsDef ? avg(current, tnpsDef.valueField) : null;
-  const tnpsPrev = tnpsDef ? avg(prior, tnpsDef.valueField) : null;
+  const ftrCur = ftrDef ? rollCur.ftr_rate : null;
+  const ftrPrev = ftrDef ? rollPrev.ftr_rate : null;
 
-  const ftrCur = ftrDef ? avg(current, ftrDef.valueField) : null;
-  const ftrPrev = ftrDef ? avg(prior, ftrDef.valueField) : null;
-
-  const toolCur = toolDef ? avg(current, toolDef.valueField) : null;
-  const toolPrev = toolDef ? avg(prior, toolDef.valueField) : null;
+  const toolCur = toolDef ? rollCur.tool_usage_rate : null;
+  const toolPrev = toolDef ? rollPrev.tool_usage_rate : null;
 
   const headDir = deltaDir(headcount, headcountPrior);
   const tnpsDir = deltaDir(tnpsCur, tnpsPrev);
@@ -189,9 +171,9 @@ export default function ReportSummaryTiles({
   const toolDir = deltaDir(toolCur, toolPrev);
 
   const headDelta = headcountPrior === 0 ? null : headcount - headcountPrior;
-  const tnpsDelta = tnpsCur === null || tnpsPrev === null ? null : tnpsCur - tnpsPrev;
-  const ftrDelta = ftrCur === null || ftrPrev === null ? null : ftrCur - ftrPrev;
-  const toolDelta = toolCur === null || toolPrev === null ? null : toolCur - toolPrev;
+  const tnpsDelta = delta(tnpsCur, tnpsPrev);
+  const ftrDelta = delta(ftrCur, ftrPrev);
+  const toolDelta = delta(toolCur, toolPrev);
 
   const tnpsBand = bandForValue(rubricRows, rubricKeys.tnpsKey, tnpsCur);
   const ftrBand = bandForValue(rubricRows, rubricKeys.ftrKey, ftrCur);
@@ -223,7 +205,10 @@ export default function ReportSummaryTiles({
       </div>
 
       {/* tNPS */}
-      <div className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm" style={tileSurfaceFromBand(preset, tnpsBand)}>
+      <div
+        className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm"
+        style={tileSurfaceFromBand(preset, tnpsBand)}
+      >
         <div className="text-xs text-[var(--to-ink-muted)]">tNPS</div>
 
         <div className="mt-2 flex items-center">
@@ -239,14 +224,17 @@ export default function ReportSummaryTiles({
           <div className="font-mono text-[var(--to-ink-muted)]">
             Δ prior:{" "}
             <span className="tabular-nums text-[var(--to-ink)]">
-              {tnpsDelta === null ? "—" : fmtDelta(tnpsDelta, false)}
+              {tnpsDelta === null ? "—" : fmtDelta(tnpsDelta, 2)}
             </span>
           </div>
         </div>
       </div>
 
       {/* FTR */}
-      <div className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm" style={tileSurfaceFromBand(preset, ftrBand)}>
+      <div
+        className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm"
+        style={tileSurfaceFromBand(preset, ftrBand)}
+      >
         <div className="text-xs text-[var(--to-ink-muted)]">FTR%</div>
 
         <div className="mt-2 flex items-center">
@@ -262,15 +250,18 @@ export default function ReportSummaryTiles({
           <div className="font-mono text-[var(--to-ink-muted)]">
             Δ prior:{" "}
             <span className="tabular-nums text-[var(--to-ink)]">
-              {ftrDelta === null ? "—" : fmtDelta(ftrDelta, true)}
+              {ftrDelta === null ? "—" : fmtDelta(ftrDelta, 1)}
             </span>
           </div>
         </div>
       </div>
 
       {/* Tool Usage */}
-      <div className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm" style={tileSurfaceFromBand(preset, toolBand)}>
-        <div className="text-xs text-[var(--to-ink-muted)]">Tool Usage</div>
+      <div
+        className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm"
+        style={tileSurfaceFromBand(preset, toolBand)}
+      >
+        <div className="text-xs text-[var(--to-ink-muted)]">Tool Usage%</div>
 
         <div className="mt-2 flex items-center">
           <div className="text-2xl font-semibold tabular-nums">{fmtPct1(toolCur)}</div>
@@ -285,7 +276,7 @@ export default function ReportSummaryTiles({
           <div className="font-mono text-[var(--to-ink-muted)]">
             Δ prior:{" "}
             <span className="tabular-nums text-[var(--to-ink)]">
-              {toolDelta === null ? "—" : fmtDelta(toolDelta, true)}
+              {toolDelta === null ? "—" : fmtDelta(toolDelta, 1)}
             </span>
           </div>
         </div>

@@ -20,6 +20,13 @@ function shortId(id: unknown) {
   return `${s.slice(0, 8)}…${s.slice(-4)}`;
 }
 
+function pickOfficeLabel(officeOptions: OfficeOption[], officeId: unknown) {
+  const id = String(officeId ?? "").trim();
+  if (!id) return "—";
+  const match = officeOptions.find((o) => String(o.id) === id);
+  return match?.label ?? shortId(id);
+}
+
 export function AssignmentTab(props: {
   masterErr: string | null;
   assignmentErr: string | null;
@@ -28,15 +35,12 @@ export function AssignmentTab(props: {
   masterForPerson: any | null;
   row: any;
 
-  // existing edit flow
   editingAssignment: boolean;
   savingAssignment: boolean;
 
   assignmentDraft: any | null;
-
   assignmentDirty: boolean;
 
-  // ✅ make optional because hook wiring can briefly pass undefined
   assignmentValidation?: { ok: boolean; msg: string };
 
   positionTitlesError: string | null;
@@ -44,7 +48,6 @@ export function AssignmentTab(props: {
   positionTitleOptions: PositionTitleRow[];
   loadPositionTitles: () => void;
 
-  // office picker
   officeOptions?: OfficeOption[];
   officeLoading?: boolean;
   officeError?: string | null;
@@ -56,13 +59,8 @@ export function AssignmentTab(props: {
 
   setAssignmentDraft: (updater: any) => void;
 
-  // assignment lifecycle controls (start/end)
-  canManage?: boolean; // roster_manage OR owner
+  canManage?: boolean;
   modifyMode?: "open" | "locked";
-  startingAssignment?: boolean;
-  endingAssignment?: boolean;
-  startAssignment?: () => void;
-  endAssignment?: () => void;
 }) {
   const {
     masterErr,
@@ -76,7 +74,6 @@ export function AssignmentTab(props: {
     assignmentDraft,
     assignmentDirty,
 
-    // ✅ safe default prevents runtime crash
     assignmentValidation = { ok: true, msg: "" },
 
     positionTitlesError,
@@ -96,25 +93,21 @@ export function AssignmentTab(props: {
 
     canManage = false,
     modifyMode = "locked",
-    startingAssignment = false,
-    endingAssignment = false,
-    startAssignment,
-    endAssignment,
   } = props;
 
-  const hasActiveAssignment = Boolean(masterForPerson);
-  const canShowLifecycleButtons = canManage && modifyMode === "open";
+  const canEdit = canManage && modifyMode === "open";
 
-  const officeLabel = (office_id: unknown) => {
-    const id = office_id == null ? "" : String(office_id);
-    if (!id) return "—";
-    const match = officeOptions.find((o) => String(o.id) === id);
-    return match?.label ?? shortId(id);
-  };
+  const base = masterForPerson ?? null;
+  const draft = assignmentDraft ?? null;
 
-  const currentOfficeLabel =
-    (masterForPerson as any)?.office_name ??
-    officeLabel((masterForPerson as any)?.office_id ?? (assignmentDraft as any)?.office_id ?? null);
+  const officeDisplay = pickOfficeLabel(officeOptions, (base as any)?.office_id ?? (row as any)?.office_id ?? null);
+
+  const positionDisplay = String((base as any)?.position_title ?? (row as any)?.position_title ?? "").trim() || "—";
+  const techIdDisplay = String((base as any)?.tech_id ?? (row as any)?.tech_id ?? "").trim() || "—";
+  const startDisplay = String((base as any)?.start_date ?? "").trim() || "—";
+  const endDisplay = String((base as any)?.end_date ?? "").trim() || "—";
+  const statusDisplay =
+    Boolean((base as any)?.active ?? (base as any)?.assignment_active ?? true) ? "Active" : "Inactive";
 
   return (
     <div className="space-y-3">
@@ -137,40 +130,26 @@ export function AssignmentTab(props: {
               Assignment is the source of truth for position + dates.
             </div>
 
-            {!hasActiveAssignment && !loadingMaster ? (
+            {!base && !loadingMaster ? (
               <div className="text-sm text-[var(--to-ink-muted)]">
-                No active assignment found. Start one to enable assignment editing + full roster actions.
+                No active assignment found. Click Edit, fill fields, then Save to create one.
               </div>
             ) : null}
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Start/End Assignment buttons (only when Modify=open + roster_manage) */}
-            {canShowLifecycleButtons ? (
-              hasActiveAssignment ? (
-                <Button
-                  variant="secondary"
-                  onClick={endAssignment}
-                  disabled={loadingMaster || savingAssignment || endingAssignment || !endAssignment}
-                  title={!endAssignment ? "endAssignment handler not wired yet" : undefined}
-                >
-                  {endingAssignment ? "Ending…" : "End assignment"}
-                </Button>
-              ) : (
-                <Button
-                  variant="secondary"
-                  onClick={startAssignment}
-                  disabled={loadingMaster || savingAssignment || startingAssignment || !startAssignment}
-                  title={!startAssignment ? "startAssignment handler not wired yet" : undefined}
-                >
-                  {startingAssignment ? "Starting…" : "Start assignment"}
-                </Button>
-              )
-            ) : null}
-
-            {/* Existing edit flow remains */}
             {!editingAssignment ? (
-              <Button onClick={beginEditAssignment} disabled={!hasActiveAssignment || loadingMaster}>
+              <Button
+                onClick={beginEditAssignment}
+                disabled={loadingMaster || !canEdit}
+                title={
+                  !canEdit
+                    ? !canManage
+                      ? "Permission required (roster_manage)."
+                      : "Roster is locked (read-only)."
+                    : undefined
+                }
+              >
                 Edit
               </Button>
             ) : (
@@ -178,10 +157,7 @@ export function AssignmentTab(props: {
                 <Button variant="ghost" onClick={cancelEditAssignment} disabled={savingAssignment}>
                   Cancel
                 </Button>
-                <Button
-                  onClick={saveAssignment}
-                  disabled={savingAssignment || !assignmentDirty || !assignmentValidation.ok}
-                >
+                <Button onClick={saveAssignment} disabled={savingAssignment || !assignmentDirty || !assignmentValidation.ok}>
                   {savingAssignment ? "Saving…" : "Save"}
                 </Button>
               </div>
@@ -189,9 +165,9 @@ export function AssignmentTab(props: {
           </div>
         </div>
 
-        {loadingMaster && !masterForPerson ? (
+        {loadingMaster && !base ? (
           <div className="mt-3 text-sm text-[var(--to-ink-muted)]">Loading roster master…</div>
-        ) : masterForPerson ? (
+        ) : (
           <div className="mt-3 space-y-2">
             {/* Office */}
             {editingAssignment ? (
@@ -214,7 +190,7 @@ export function AssignmentTab(props: {
                   ) : null}
 
                   <Select
-                    value={(assignmentDraft as any)?.office_id ?? ""}
+                    value={String((draft as any)?.office_id ?? "")}
                     onChange={(e) =>
                       setAssignmentDraft((a: any) => ({
                         ...(a ?? {}),
@@ -230,14 +206,10 @@ export function AssignmentTab(props: {
                       </option>
                     ))}
                   </Select>
-
-                  <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-                    Writes <code className="px-1">office_id</code> on assignment.
-                  </div>
                 </div>
               </div>
             ) : (
-              <KVRow label="Office" value={currentOfficeLabel} />
+              <KVRow label="Office" value={officeDisplay} />
             )}
 
             {/* Position title */}
@@ -259,7 +231,7 @@ export function AssignmentTab(props: {
                   ) : null}
 
                   <Select
-                    value={(assignmentDraft as any)?.position_title ?? ""}
+                    value={String((draft as any)?.position_title ?? "")}
                     onChange={(e) =>
                       setAssignmentDraft((a: any) => ({
                         ...(a ?? {}),
@@ -275,12 +247,10 @@ export function AssignmentTab(props: {
                       </option>
                     ))}
                   </Select>
-
-                  <div className="mt-1 text-xs text-[var(--to-ink-muted)]">(Save will fail if invalid.)</div>
                 </div>
               </div>
             ) : (
-              <KVRow label="Position title" value={(masterForPerson as any)?.position_title ?? "—"} />
+              <KVRow label="Position title" value={positionDisplay} />
             )}
 
             {/* Tech ID */}
@@ -289,7 +259,7 @@ export function AssignmentTab(props: {
                 <div className="col-span-4 text-[var(--to-ink-muted)]">Tech ID</div>
                 <div className="col-span-8">
                   <TextInput
-                    value={(assignmentDraft as any)?.tech_id ?? ""}
+                    value={String((draft as any)?.tech_id ?? "")}
                     onChange={(e) =>
                       setAssignmentDraft((a: any) => ({
                         ...(a ?? {}),
@@ -300,7 +270,7 @@ export function AssignmentTab(props: {
                 </div>
               </div>
             ) : (
-              <KVRow label="Tech ID" value={(masterForPerson as any)?.tech_id ?? (row as any)?.tech_id ?? "—"} />
+              <KVRow label="Tech ID" value={techIdDisplay} />
             )}
 
             {/* Start date */}
@@ -311,7 +281,7 @@ export function AssignmentTab(props: {
                   <input
                     className="to-input"
                     type="date"
-                    value={(assignmentDraft as any)?.start_date ?? ""}
+                    value={String((draft as any)?.start_date ?? "")}
                     onChange={(e) =>
                       setAssignmentDraft((a: any) => ({
                         ...(a ?? {}),
@@ -322,7 +292,7 @@ export function AssignmentTab(props: {
                 </div>
               </div>
             ) : (
-              <KVRow label="Start date" value={(masterForPerson as any)?.start_date ?? "—"} />
+              <KVRow label="Start date" value={startDisplay} />
             )}
 
             {/* End date */}
@@ -333,7 +303,7 @@ export function AssignmentTab(props: {
                   <input
                     className="to-input"
                     type="date"
-                    value={(assignmentDraft as any)?.end_date ?? ""}
+                    value={String((draft as any)?.end_date ?? "")}
                     onChange={(e) =>
                       setAssignmentDraft((a: any) => ({
                         ...(a ?? {}),
@@ -344,7 +314,7 @@ export function AssignmentTab(props: {
                 </div>
               </div>
             ) : (
-              <KVRow label="End date" value={(masterForPerson as any)?.end_date ?? "—"} />
+              <KVRow label="End date" value={endDisplay} />
             )}
 
             {/* Active */}
@@ -353,7 +323,7 @@ export function AssignmentTab(props: {
                 <div className="col-span-4 text-[var(--to-ink-muted)]">Status</div>
                 <div className="col-span-8">
                   <SegmentedControl
-                    value={String(Boolean((assignmentDraft as any)?.active ?? (assignmentDraft as any)?.assignment_active))}
+                    value={String(Boolean((draft as any)?.active ?? true))}
                     onChange={(next) =>
                       setAssignmentDraft((a: any) => ({
                         ...(a ?? {}),
@@ -368,19 +338,12 @@ export function AssignmentTab(props: {
                 </div>
               </div>
             ) : (
-              <KVRow
-                label="Status"
-                value={
-                  Boolean((masterForPerson as any)?.active ?? (masterForPerson as any)?.assignment_active)
-                    ? "Active"
-                    : "Inactive"
-                }
-              />
+              <KVRow label="Status" value={statusDisplay} />
             )}
 
-            <KVRow label="Reports to" value={(masterForPerson as any)?.reports_to_full_name ?? "—"} />
+            <KVRow label="Reports to" value={String((base as any)?.reports_to_full_name ?? "").trim() || "—"} />
           </div>
-        ) : null}
+        )}
 
         {editingAssignment && !assignmentValidation.ok ? (
           <div className="mt-3 text-sm text-[var(--to-status-danger)]">{assignmentValidation.msg}</div>

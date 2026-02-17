@@ -8,8 +8,9 @@ import { useSession } from "@/state/session";
 import { useRosterManageAccess } from "@/features/roster/hooks/useRosterManageAccess";
 
 const rosterGridStyle: CSSProperties = {
-  // Short/id columns use fixed-ish widths; the three text-heavy columns share remaining space evenly.
-  gridTemplateColumns: "6rem minmax(12rem,1fr) 10rem 8rem 5rem minmax(0,1fr) minmax(0,1fr) 8rem",
+  // Added Office column (human-read).
+  gridTemplateColumns:
+    "6rem minmax(12rem,1fr) 10rem 8rem 5rem 10rem minmax(0,1fr) minmax(0,1fr) 8rem",
 };
 
 // Company vs Contractor classification:
@@ -48,7 +49,6 @@ function MiniStatusPill({
     </span>
   );
 }
-
 
 function getReadinessFlags(r: any) {
   const personOk = !!String(r?.full_name ?? "").trim();
@@ -89,7 +89,6 @@ function StatusPills({ row }: { row: any }) {
     </div>
   );
 }
-
 
 export function RosterTable({
   roster,
@@ -133,9 +132,7 @@ export function RosterTable({
       <DataTable
         zebra
         hover
-        // Template-driven, distributed columns that still respect content and truncate long text.
         layout="content"
-        // IMPORTANT: no min-w-max here; it prevents fr columns from distributing and disables truncation.
         gridClassName="w-full min-w-[64rem] lg:min-w-0"
         gridStyle={rosterGridStyle}
       >
@@ -145,6 +142,7 @@ export function RosterTable({
           <div className="whitespace-nowrap">Mobile</div>
           <div className="whitespace-nowrap">NT Login</div>
           <div className="whitespace-nowrap">CSG</div>
+          <div className="whitespace-nowrap">Office</div>
           <div className="min-w-0">Reports To</div>
           <div className="min-w-0">Affiliation</div>
           <div
@@ -167,7 +165,6 @@ export function RosterTable({
                 const el = e.currentTarget as HTMLElement;
                 if (effectiveModifyMode === "locked") onRowQuickView?.(r, el);
                 else onRowOpen(r);
-
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -176,7 +173,6 @@ export function RosterTable({
                   else onRowOpen(r);
                 }
               }}
-
             >
               <div className="whitespace-nowrap font-mono text-xs">{(r as any)?.tech_id ?? "—"}</div>
 
@@ -192,6 +188,10 @@ export function RosterTable({
 
               <div className="whitespace-nowrap truncate font-mono text-xs text-[var(--to-ink-muted)]">
                 {(r as any)?.person_csg_id ?? "—"}
+              </div>
+
+              <div className="whitespace-nowrap truncate text-xs text-[var(--to-ink-muted)]">
+                {(r as any)?.office_name ?? "—"}
               </div>
 
               <div className="min-w-0 truncate text-xs text-[var(--to-ink-muted)]">

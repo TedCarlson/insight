@@ -1,4 +1,7 @@
+// RUN THIS
+// Replace the entire file:
 // apps/web/src/features/metrics/pages/MetricsReportsPage.tsx
+
 import { redirect } from "next/navigation";
 
 import { supabaseServer } from "@/shared/data/supabase/server";
@@ -33,6 +36,29 @@ type BatchMeta = {
   fiscal_end_date: string;
 };
 
+type UiMasterMetricRow = {
+  batch_id: string | null;
+  class_type: string | null;
+  pc_org_id: string | null;
+  metric_date: string | null;
+  fiscal_end_date: string | null;
+
+  tech_id: string | null;
+  person_id: string | null;
+
+  ownership_mode: string | null;
+  direct_reports_to_person_id: string | null;
+
+  composite_score: number | null;
+  rank_org: number | null;
+  population_size: number | null;
+
+  is_totals: boolean | null;
+
+  metrics_json: unknown | null;
+  created_at: string | null;
+};
+
 function currentFiscalEndDateISO_NY(): string {
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -63,7 +89,6 @@ function currentFiscalEndDateISO_NY(): string {
 }
 
 function dedupeByTechId(rows: any[]) {
-  // Defensive: if multiple rows ever show up per tech, keep the “best” deterministically.
   const by = new Map<string, any>();
   for (const r of rows) {
     const k = String(r.tech_id ?? "");
@@ -80,25 +105,21 @@ function dedupeByTechId(rows: any[]) {
       by.set(k, r);
       continue;
     }
+
     if (curOk === prevOk) {
       const pr = numOrInf(prev.rank_in_pc);
       const cr = numOrInf(r.rank_in_pc);
-      if (cr < pr) {
-        by.set(k, r);
-        continue;
-      }
+      if (cr < pr) by.set(k, r);
     }
   }
   return Array.from(by.values());
 }
 
 function isRubricRowMeaningful(r: any) {
-  // “Meaningful” = at least one of min/max/score is present.
   return r?.min_value != null || r?.max_value != null || r?.score_value != null;
 }
 
 function filterEmptyRubricGroups(rows: any[]) {
-  // Drops KPI groups where ALL rows are empty (min/max/score all null)
   const byKpi = new Map<string, any[]>();
   for (const r of rows) {
     const k = String(r.kpi_key ?? "");
@@ -115,19 +136,27 @@ function filterEmptyRubricGroups(rows: any[]) {
   return out;
 }
 
-function pickStatusBadge(s: {
-  is_totals?: boolean | null;
-  ownership_mode?: string | null;
-  composite_score?: number | null;
-}): { status_badge: string; status_sort: number } {
+function pickStatusBadge(s: { is_totals?: boolean | null; ownership_mode?: string | null; composite_score?: number | null }) {
   if (s.is_totals) return { status_badge: "TOTALS", status_sort: 999 };
-  if (String(s.ownership_mode ?? "") === "ORPHAN_OUT_OF_WINDOW") return { status_badge: "OUTLIER", status_sort: 50 };
-  if (s.composite_score == null) return { status_badge: "OUTLIER", status_sort: 50 };
+
+  // ✅ YOUR RULE:
+  // only ACTIVE may be OK; everything else is UNLINKED (no ORPHAN leakage)
+  if (String(s.ownership_mode ?? "") !== "ACTIVE") return { status_badge: "UNLINKED", status_sort: 50 };
+  if (s.composite_score == null) return { status_badge: "UNLINKED", status_sort: 50 };
+
   return { status_badge: "OK", status_sort: 10 };
 }
 
+function metricNum(metricsJson: unknown, key: string): number | null {
+  if (!metricsJson || typeof metricsJson !== "object") return null;
+  const v = (metricsJson as Record<string, unknown>)[key];
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 async function loadBatchMetaForFiscal(sb: any, pc_org_id: string, fiscal_end_date: string): Promise<BatchMeta | null> {
-  const { data } = await sb
+  const { data, error } = await sb
     .from("metrics_raw_batch")
     .select("batch_id, metric_date, fiscal_end_date, uploaded_at, status")
     .eq("pc_org_id", pc_org_id)
@@ -137,8 +166,21 @@ async function loadBatchMetaForFiscal(sb: any, pc_org_id: string, fiscal_end_dat
     .order("uploaded_at", { ascending: false })
     .limit(1);
 
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.error("[P4P REPORT] metrics_raw_batch current batch error", {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+      pc_org_id,
+      fiscal_end_date,
+    });
+  }
+
   const row = data?.[0];
   if (!row?.batch_id) return null;
+
   return {
     batch_id: String(row.batch_id),
     metric_date: String(row.metric_date),
@@ -146,19 +188,34 @@ async function loadBatchMetaForFiscal(sb: any, pc_org_id: string, fiscal_end_dat
   };
 }
 
-async function loadPriorBatchMeta(sb: any, pc_org_id: string, before_metric_date: string): Promise<BatchMeta | null> {
-  const { data } = await sb
+async function loadPriorBatchMetaSameFiscal(sb: any, pc_org_id: string, fiscal_end_date: string, before_metric_date: string): Promise<BatchMeta | null> {
+  const { data, error } = await sb
     .from("metrics_raw_batch")
     .select("batch_id, metric_date, fiscal_end_date, uploaded_at, status")
     .eq("pc_org_id", pc_org_id)
+    .eq("fiscal_end_date", fiscal_end_date)
     .eq("status", "loaded")
     .lt("metric_date", before_metric_date)
     .order("metric_date", { ascending: false })
     .order("uploaded_at", { ascending: false })
     .limit(1);
 
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.error("[P4P REPORT] metrics_raw_batch prior batch error", {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+      pc_org_id,
+      fiscal_end_date,
+      before_metric_date,
+    });
+  }
+
   const row = data?.[0];
   if (!row?.batch_id) return null;
+
   return {
     batch_id: String(row.batch_id),
     metric_date: String(row.metric_date),
@@ -166,81 +223,91 @@ async function loadPriorBatchMeta(sb: any, pc_org_id: string, before_metric_date
   };
 }
 
-async function buildRowsForBatch(sb: any, batch_id: string, class_type: "P4P" = "P4P") {
-  const [{ data: snap }, { data: metrics }] = await Promise.all([
-    sb
-      .from("master_kpi_archive_snapshot")
-      .select(
-        "batch_id,class_type,pc_org_id,metric_date,fiscal_end_date,tech_id,person_id,ownership_mode,direct_reports_to_person_id,is_totals,composite_score,rank_org,population_size"
-      )
-      .eq("batch_id", batch_id)
-      .eq("class_type", class_type),
-    sb
-      .from("master_kpi_archive_metric")
-      .select("tech_id,metric_key_canonical,computed_value,raw_value")
-      .eq("batch_id", batch_id)
-      .eq("class_type", class_type),
-  ]);
+async function loadRowsForBatchFromView(sb: any, pc_org_id: string, batch_id: string): Promise<any[]> {
+  const { data, error } = await sb
+    .from("ui_master_metric_v")
+    .select(
+      [
+        "batch_id",
+        "class_type",
+        "pc_org_id",
+        "metric_date",
+        "fiscal_end_date",
+        "tech_id",
+        "person_id",
+        "ownership_mode",
+        "direct_reports_to_person_id",
+        "composite_score",
+        "rank_org",
+        "population_size",
+        "is_totals",
+        "metrics_json",
+        "created_at",
+      ].join(",")
+    )
+    .eq("pc_org_id", pc_org_id)
+    .eq("class_type", "P4P")
+    .eq("batch_id", batch_id);
 
-  const metricByTech = new Map<string, Record<string, number | null>>();
-  for (const m of metrics ?? []) {
-    const tech = String((m as any).tech_id ?? "");
-    const key = String((m as any).metric_key_canonical ?? "");
-    if (!tech || !key) continue;
-
-    const v = (m as any).computed_value ?? (m as any).raw_value ?? null;
-    const num = v == null ? null : Number(v);
-
-    const obj = metricByTech.get(tech) ?? {};
-    obj[key] = Number.isFinite(num as any) ? (num as number) : null;
-    metricByTech.set(tech, obj);
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.error("[P4P REPORT] ui_master_metric_v rows error", {
+      message: (error as any)?.message,
+      details: (error as any)?.details,
+      hint: (error as any)?.hint,
+      code: (error as any)?.code,
+      pc_org_id,
+      batch_id,
+    });
   }
 
-  const out: any[] = [];
-  for (const s of snap ?? []) {
-    const tech_id = String((s as any).tech_id ?? "");
-    const is_totals = Boolean((s as any).is_totals);
+  const rows = (data ?? []) as UiMasterMetricRow[];
 
-    // We keep totals in the archive, but do NOT show them in the report UI.
+  const out: any[] = [];
+  for (const r of rows) {
+    const tech_id = String(r.tech_id ?? "");
+    if (!tech_id) continue;
+
+    const is_totals = Boolean(r.is_totals);
     if (is_totals) continue;
 
-    const m = metricByTech.get(tech_id) ?? {};
     const badge = pickStatusBadge({
       is_totals,
-      ownership_mode: (s as any).ownership_mode ?? null,
-      composite_score: (s as any).composite_score ?? null,
+      ownership_mode: r.ownership_mode ?? null,
+      composite_score: r.composite_score ?? null,
     });
+
+    const mj = r.metrics_json ?? {};
 
     out.push({
       // identity
       tech_id,
-      person_id: (s as any).person_id ?? null,
-      reports_to_person_id: (s as any).direct_reports_to_person_id ?? null,
+      person_id: r.person_id ?? null,
+      reports_to_person_id: r.direct_reports_to_person_id ?? null,
 
       // snapshot
-      ownership_mode: (s as any).ownership_mode ?? null,
-      metric_date: (s as any).metric_date ?? null,
-      fiscal_end_date: (s as any).fiscal_end_date ?? null,
+      ownership_mode: r.ownership_mode ?? null,
+      metric_date: r.metric_date ?? null,
+      fiscal_end_date: r.fiscal_end_date ?? null,
 
       // ranking
-      weighted_score: (s as any).composite_score ?? null,
-      rank_in_pc: (s as any).rank_org ?? null,
-      population_size: (s as any).population_size ?? null,
+      weighted_score: r.composite_score ?? null,
+      rank_in_pc: r.rank_org ?? null,
+      population_size: r.population_size ?? null,
 
       // KPIs used by rubric + pills
-      tnps_score: (m as any).tnps_score ?? null,
-      ftr_rate: (m as any).ftr_rate ?? null,
-      tool_usage_rate: (m as any).tool_usage_rate ?? null,
+      tnps_score: metricNum(mj, "tnps_score"),
+      ftr_rate: metricNum(mj, "ftr_rate"),
+      tool_usage_rate: metricNum(mj, "tool_usage_rate"),
 
-      // denominators for weighted rollups + volume column
-      tnps_surveys: (m as any).tnps_surveys ?? null,
+      // denominators / volume (best-effort keys)
+      tnps_surveys: metricNum(mj, "tnps_surveys"),
       ftr_contact_jobs:
-        (m as any).ftr_contact_jobs ??
-        // in case canonical uses different naming
-        (m as any).total_ftr_contact_jobs ??
-        (m as any).total_ftr_contact_jobs_count ??
-        null,
-      tu_eligible_jobs: (m as any).tu_eligible_jobs ?? null,
+        metricNum(mj, "ftr_contact_jobs") ??
+        metricNum(mj, "total_ftr_contact_jobs") ??
+        metricNum(mj, "total_ftr_contact_jobs_count") ??
+        metricNum(mj, "ftr_contacts"),
+      tu_eligible_jobs: metricNum(mj, "tu_eligible_jobs") ?? metricNum(mj, "tool_usage_eligible_jobs"),
 
       // misc (table expects these)
       job_volume_band: null,
@@ -252,11 +319,7 @@ async function buildRowsForBatch(sb: any, batch_id: string, class_type: "P4P" = 
   return dedupeByTechId(out);
 }
 
-export default async function MetricsReportsPage({
-  searchParams,
-}: {
-  searchParams: Promise<SearchParams>;
-}) {
+export default async function MetricsReportsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const scopeAuth = await requireSelectedPcOrgServer();
   if (!scopeAuth.ok) redirect("/home");
 
@@ -268,15 +331,30 @@ export default async function MetricsReportsPage({
   const selectedReportsTo = sp.reports_to ?? "ALL";
 
   // -----------------------------
-  // 1) Fiscal options (cheap)
+  // 1) Fiscal options (cheap + authoritative)
   // -----------------------------
-  const { data: fiscalRowsRaw } = await sb
+  const { data: fiscalRowsRaw, error: fiscalErr } = await sb
     .from("metrics_raw_batch")
     .select("fiscal_end_date")
     .eq("pc_org_id", pc_org_id)
     .eq("status", "loaded");
 
-  if (!fiscalRowsRaw || fiscalRowsRaw.length === 0) {
+  if (fiscalErr) {
+    // eslint-disable-next-line no-console
+    console.error("[P4P REPORT] metrics_raw_batch fiscal options error", {
+      message: (fiscalErr as any)?.message,
+      details: (fiscalErr as any)?.details,
+      hint: (fiscalErr as any)?.hint,
+      code: (fiscalErr as any)?.code,
+      pc_org_id,
+    });
+  }
+
+  const fiscalOptions = Array.from(new Set((fiscalRowsRaw ?? []).map((r: any) => String(r.fiscal_end_date)))).sort((a, b) =>
+    a > b ? -1 : 1
+  );
+
+  if (fiscalOptions.length === 0) {
     return (
       <PageShell>
         <Card>No reporting batches found.</Card>
@@ -284,28 +362,26 @@ export default async function MetricsReportsPage({
     );
   }
 
-  const fiscalOptions = Array.from(new Set(fiscalRowsRaw.map((r: any) => String(r.fiscal_end_date)))).sort((a, b) =>
-    a > b ? -1 : 1
-  );
-
   const currentFiscal = currentFiscalEndDateISO_NY();
   const defaultFiscal = fiscalOptions.includes(currentFiscal) ? currentFiscal : fiscalOptions[0];
   const selectedFiscal = sp.fiscal ?? defaultFiscal;
 
   // -----------------------------
-  // 2) Current batch for selected fiscal
+  // 2) Current batch for selected fiscal (P4P rule)
   // -----------------------------
   const currentBatch = await loadBatchMetaForFiscal(sb, pc_org_id, selectedFiscal);
   if (!currentBatch) {
     return (
       <PageShell>
-        <Card>No loaded batch for selected fiscal.</Card>
+        <Card>No reportable batch found for selected fiscal (P4P).</Card>
       </PageShell>
     );
   }
 
   const latestMetricDate = currentBatch.metric_date;
-  const snapshotRows = await buildRowsForBatch(sb, currentBatch.batch_id, "P4P");
+
+  // Pull rows from the UI view (wide/pivoted for UI)
+  const snapshotRows = await loadRowsForBatchFromView(sb, pc_org_id, currentBatch.batch_id);
 
   const applyReportsTo = (arr: any[]) => {
     if (selectedReportsTo === "ALL") return arr;
@@ -314,8 +390,6 @@ export default async function MetricsReportsPage({
 
   let filteredRows = applyReportsTo(snapshotRows);
 
-  // ✅ Include outliers in the slice for sanity checks.
-  // (Totals rows are excluded from the UI + from rollups.)
   filteredRows = filteredRows.sort((a: any, b: any) => {
     if (a.status_sort !== b.status_sort) return a.status_sort - b.status_sort;
     if (a.rank_in_pc !== b.rank_in_pc) return numOrInf(a.rank_in_pc) - numOrInf(b.rank_in_pc);
@@ -326,15 +400,14 @@ export default async function MetricsReportsPage({
   const nonOkRows = filteredRows.filter((r: any) => r.status_badge !== "OK");
 
   // -----------------------------
-  // 3) Prior batch (fiscal-agnostic)
+  // 3) Prior batch (same fiscal, previous metric_date)
   // -----------------------------
-  const priorBatch = await loadPriorBatchMeta(sb, pc_org_id, latestMetricDate);
+  const priorBatch = await loadPriorBatchMetaSameFiscal(sb, pc_org_id, selectedFiscal, latestMetricDate);
   const priorMetricDate = priorBatch?.metric_date ?? null;
 
-  const priorSnapshotRows = priorBatch ? await buildRowsForBatch(sb, priorBatch.batch_id, "P4P") : [];
+  const priorSnapshotRows = priorBatch ? await loadRowsForBatchFromView(sb, pc_org_id, priorBatch.batch_id) : [];
   const priorRowsScoped = applyReportsTo(priorSnapshotRows);
 
-  // Prior map for KPI pill arrows in the table
   const priorByTechId = new Map<string, any>();
   priorRowsScoped.forEach((r: any) => {
     priorByTechId.set(String(r.tech_id), {
@@ -355,11 +428,7 @@ export default async function MetricsReportsPage({
 
   const personNameById = new Map<string, string>();
   if (ids.size > 0) {
-    const { data: people } = await admin
-      .from("person")
-      .select("person_id, full_name")
-      .in("person_id", Array.from(ids));
-
+    const { data: people } = await admin.from("person").select("person_id, full_name").in("person_id", Array.from(ids));
     people?.forEach((p: any) => {
       personNameById.set(String(p.person_id), p.full_name ?? "—");
     });
@@ -370,18 +439,13 @@ export default async function MetricsReportsPage({
   // -----------------------------
   const presetKeys = Object.keys(GLOBAL_BAND_PRESETS);
 
-  const { data: sel } = await admin
-    .from("metrics_band_style_selection")
-    .select("preset_key")
-    .eq("selection_key", "GLOBAL")
-    .maybeSingle();
+  const { data: sel } = await admin.from("metrics_band_style_selection").select("preset_key").eq("selection_key", "GLOBAL").maybeSingle();
 
   const activeKey = sel?.preset_key && presetKeys.includes(sel.preset_key) ? sel.preset_key : presetKeys[0] ?? "MODERN";
-
   const activePreset = GLOBAL_BAND_PRESETS[activeKey] ?? GLOBAL_BAND_PRESETS[presetKeys[0] ?? "MODERN"];
 
   // -----------------------------
-  // 6) Rubric (DB) — constant across time
+  // 6) Rubric (DB)
   // -----------------------------
   const { data: rubricRowsRaw } = await admin
     .from("metrics_class_kpi_rubric")
@@ -389,7 +453,6 @@ export default async function MetricsReportsPage({
     .eq("class_type", "P4P");
 
   const rubricRowsAll = filterEmptyRubricGroups(rubricRowsRaw ?? []);
-
   const distinctKeys = Array.from(new Set(rubricRowsAll.map((r: any) => String(r.kpi_key))));
 
   const tnpsKey = resolveRubricKey(distinctKeys, ["tnps", "nps"]) ?? "tnps_score";
@@ -414,9 +477,6 @@ export default async function MetricsReportsPage({
 
   const reportsToOptions = Array.from(reportsToMap.entries()).sort((a, b) => a[1].localeCompare(b[1]));
 
-  // -----------------------------
-  // Render
-  // -----------------------------
   return (
     <PageShell>
       <ReportsClientShell
@@ -470,20 +530,19 @@ export default async function MetricsReportsPage({
         />
       </Card>
 
-      {nonOkRowsBanded.length > 0 && (
-        <Card>
-          <div className="text-sm font-medium mb-3">Outliers (Attention Required)</div>
-          <ReportingTable
-            rows={nonOkRowsBanded}
-            showStatus={true}
-            personNameById={personNameById}
-            preset={activePreset}
-            kpis={P4P_KPIS}
-            slicerTitle="Outliers slicer"
-            priorSnapshotByTechId={priorByTechId}
-          />
-        </Card>
-      )}
+      {/* Always render Outliers table so the UI shape never “disappears” */}
+      <Card>
+        <div className="text-sm font-medium mb-3">Outliers (Attention Required)</div>
+        <ReportingTable
+          rows={nonOkRowsBanded}
+          showStatus={true}
+          personNameById={personNameById}
+          preset={activePreset}
+          kpis={P4P_KPIS}
+          slicerTitle="Outliers slicer"
+          priorSnapshotByTechId={priorByTechId}
+        />
+      </Card>
     </PageShell>
   );
 }

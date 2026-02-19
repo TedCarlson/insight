@@ -1,4 +1,5 @@
 // apps/web/src/app/api/route-lock/schedule/upsert/route.ts
+
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/shared/data/supabase/server";
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
@@ -81,7 +82,7 @@ function deriveNumbers(days: DayFlags, hoursPerDay: number, unitsPerHour: number
   return { h, u };
 }
 
-async function guardSelectedOrgRosterManage() {
+async function guardSelectedOrgRouteLockManage() {
   const sb = await supabaseServer();
   const admin = supabaseAdmin();
 
@@ -103,10 +104,16 @@ async function guardSelectedOrgRosterManage() {
   const pc_org_id = String(profile?.selected_pc_org_id ?? "").trim();
   if (!pc_org_id) return { ok: false as const, status: 409, error: "no selected org" };
 
+  // Owner always allowed
+  const { data: isOwner, error: ownerErr } = await sb.rpc("is_owner");
+  if (ownerErr) return { ok: false as const, status: 403, error: "forbidden" };
+  if (isOwner) return { ok: true as const, pc_org_id, auth_user_id: user.id };
+
+  // Route Lock write gate (preferred) OR Roster Manage (legacy bridge)
   const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
-  const { data: allowed, error: permErr } = await apiClient.rpc("has_pc_org_permission", {
+  const { data: allowed, error: permErr } = await apiClient.rpc("has_any_pc_org_permission", {
     p_pc_org_id: pc_org_id,
-    p_permission_key: "roster_manage",
+    p_permission_keys: ["route_lock_manage", "roster_manage"],
   });
 
   if (permErr || !allowed) return { ok: false as const, status: 403, error: "forbidden" };
@@ -116,7 +123,7 @@ async function guardSelectedOrgRosterManage() {
 
 export async function POST(req: Request) {
   try {
-    const guard = await guardSelectedOrgRosterManage();
+    const guard = await guardSelectedOrgRouteLockManage();
     if (!guard.ok) return NextResponse.json({ ok: false, error: guard.error }, { status: guard.status });
 
     const body = await req.json().catch(() => null);
@@ -206,6 +213,7 @@ export async function POST(req: Request) {
         sch_hours_fri: h.fri,
         sch_hours_sat: h.sat,
 
+        // ✅ FIX: write to REAL table columns (sch_units_*), not view aliases (units_*)
         sch_units_sun: u.sun,
         sch_units_mon: u.mon,
         sch_units_tue: u.tue,
@@ -215,9 +223,9 @@ export async function POST(req: Request) {
         sch_units_sat: u.sat,
       };
 
-      // Case A: open row exists with same start_date -> update it in place
+      // If open row exists and already starts on the requested start_date, update it in-place
       if (openId && openStart === start_date) {
-        const { data: upd, error: updErr } = await admin
+        const { data: updated, error: updErr } = await admin
           .from("schedule")
           .update(commonPayload)
           .eq("schedule_id", openId)
@@ -225,64 +233,35 @@ export async function POST(req: Request) {
           .maybeSingle();
 
         if (updErr) return NextResponse.json({ ok: false, error: updErr.message }, { status: 500 });
-        if (upd?.schedule_id) saved_schedule_ids.push(String(upd.schedule_id));
+        if (updated?.schedule_id) saved_schedule_ids.push(String(updated.schedule_id));
         continue;
       }
 
-      // Case B: open row exists but different start_date -> close it so it does NOT cover start_date
+      // Otherwise close the currently-open row (if any)
       if (openId) {
-        const { error: closeErr } = await admin
-          .from("schedule")
-          .update({ end_date: dayBefore })
-          .eq("schedule_id", openId);
+        const { error: closeErr } = await admin.from("schedule").update({ end_date: dayBefore }).eq("schedule_id", openId);
 
         if (closeErr) return NextResponse.json({ ok: false, error: closeErr.message }, { status: 500 });
       }
 
-      // Insert the new open-ended baseline row
-      const insertPayload: any = {
-        assignment_id: r.assignment_id!,
-        schedule_name: `planning_week_${start_date}`,
-        start_date,
-        end_date: null,
-        ...commonPayload,
-      };
-
-      const { data: ins, error: insErr } = await admin
+      // Insert the new open schedule row
+      const { data: inserted, error: insErr } = await admin
         .from("schedule")
-        .insert(insertPayload)
+        .insert({
+          assignment_id: r.assignment_id!,
+          start_date,
+          end_date: null,
+          ...commonPayload,
+        })
         .select("schedule_id")
         .maybeSingle();
 
       if (insErr) return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
-      if (ins?.schedule_id) saved_schedule_ids.push(String(ins.schedule_id));
+      if (inserted?.schedule_id) saved_schedule_ids.push(String(inserted.schedule_id));
     }
 
-    // Evidence refresh
-    const { data: refreshed, error: refErr } = await admin
-      .from("schedule_admin_v")
-      .select("*")
-      .eq("pc_org_id", guard.pc_org_id)
-      .in("assignment_id", assignmentIds)
-      .order("start_date", { ascending: false });
-
-    if (refErr) return NextResponse.json({ ok: false, error: refErr.message }, { status: 500 });
-
-    return NextResponse.json({
-      ok: true,
-      saved_schedule_ids,
-      refreshed: refreshed ?? [],
-      debug: {
-        selected_pc_org_id: guard.pc_org_id,
-        auth_user_id: guard.auth_user_id,
-        start_date,
-        dayBefore,
-        hoursPerDay,
-        unitsPerHour,
-        rows: clean.length,
-      },
-    });
+    return NextResponse.json({ ok: true, saved_schedule_ids });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? String(e ?? "Unknown error") }, { status: 500 });
+    return NextResponse.json({ ok: false, error: e?.message ?? "unknown error" }, { status: 500 });
   }
 }

@@ -1,4 +1,7 @@
-// apps/web/src/app/route-lock/schedule/page.tsx
+// RUN THIS
+// Replace the entire file:
+// apps/web/src/app/(app)/route-lock/schedule/page.tsx
+
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -21,6 +24,7 @@ type RosterRow = {
   tech_id: string | null;
   position_title: string | null;
 
+  start_date: string | null;
   end_date: string | null;
   assignment_active: boolean | null;
 
@@ -99,8 +103,8 @@ function isPOLAReady(r: RosterRow, membershipSet: Set<string>): boolean {
 
   // L (has leader)
   const leadershipOk =
-    !!r.reports_to_assignment_id ||
-    !!r.reports_to_person_id ||
+    !!String(r.reports_to_assignment_id ?? "").trim() ||
+    !!String(r.reports_to_person_id ?? "").trim() ||
     !!String(r.reports_to_full_name ?? "").trim();
 
   // A (active assignment)
@@ -118,10 +122,7 @@ function RouteLockBackHeader() {
       <Toolbar
         left={
           <div className="min-w-0 flex items-center gap-2">
-            <Link
-              href="/route-lock"
-              className="to-btn to-btn--secondary h-8 px-3 text-xs inline-flex items-center"
-            >
+            <Link href="/route-lock" className="to-btn to-btn--secondary h-8 px-3 text-xs inline-flex items-center">
               Back
             </Link>
             <div className="min-w-0">
@@ -164,24 +165,17 @@ export default async function RouteLockSchedulePage() {
   const pc_org_id = scope.selected_pc_org_id;
 
   // Membership set for "O"
-  const { data: memRows, error: memErr } = await sb
-    .from("v_roster_current")
-    .select("person_id")
-    .eq("pc_org_id", pc_org_id);
+  const { data: memRows, error: memErr } = await sb.from("v_roster_current").select("person_id").eq("pc_org_id", pc_org_id);
 
   if (memErr) {
     return <ErrorShell message={`Could not load roster membership (v_roster_current): ${memErr.message}`} />;
   }
 
-  const membershipSet = new Set<string>(
-    (memRows ?? [])
-      .map((r: any) => String(r?.person_id ?? "").trim())
-      .filter(Boolean)
-  );
+  const membershipSet = new Set<string>((memRows ?? []).map((r: any) => String(r?.person_id ?? "").trim()).filter(Boolean));
 
-  // Roster import (include co_name for affiliation display/search)
+  // ✅ Route Lock roster surface (decoupled from master_roster_v)
   const { data: rosterRows, error: rosterErr } = await sb
-    .from("master_roster_v")
+    .from("route_lock_roster_v")
     .select(
       [
         "assignment_id",
@@ -189,6 +183,7 @@ export default async function RouteLockSchedulePage() {
         "full_name",
         "tech_id",
         "position_title",
+        "start_date",
         "end_date",
         "assignment_active",
         "reports_to_assignment_id",
@@ -198,12 +193,11 @@ export default async function RouteLockSchedulePage() {
       ].join(",")
     )
     .eq("pc_org_id", pc_org_id)
-    // Default sort by tech_id (matches your requirement)
     .order("tech_id", { ascending: true })
     .order("full_name", { ascending: true });
 
   if (rosterErr) {
-    return <ErrorShell message={`Could not load roster (master_roster_v): ${rosterErr.message}`} />;
+    return <ErrorShell message={`Could not load roster (route_lock_roster_v): ${rosterErr.message}`} />;
   }
 
   const roster = (rosterRows ?? []) as unknown as RosterRow[];
@@ -234,22 +228,7 @@ export default async function RouteLockSchedulePage() {
   // Schedule surface (existing schedule rows)
   const { data: scheduleRows, error: scheduleErr } = await sb
     .from("schedule_admin_v")
-    .select(
-      [
-        "schedule_id",
-        "assignment_id",
-        "start_date",
-        "end_date",
-        "default_route_id",
-        "sun",
-        "mon",
-        "tue",
-        "wed",
-        "thu",
-        "fri",
-        "sat",
-      ].join(",")
-    )
+    .select(["schedule_id", "assignment_id", "start_date", "end_date", "default_route_id", "sun", "mon", "tue", "wed", "thu", "fri", "sat"].join(","))
     .eq("pc_org_id", pc_org_id)
     .order("start_date", { ascending: false })
     .order("end_date", { ascending: false, nullsFirst: true })
@@ -261,9 +240,7 @@ export default async function RouteLockSchedulePage() {
 
   const schedules = (scheduleRows ?? []) as unknown as ScheduleRow[];
 
-  // Pick the schedule row that is in-effect "today":
-  // start_date <= today AND (end_date IS NULL OR end_date >= today).
-  // If none exists for an assignment, we intentionally leave it missing so the client can fallback to default-ON.
+  // Pick the schedule row that is in-effect "today"
   const today = todayInNY();
   const scheduleByAssignment = new Map<string, ScheduleRow>();
 
@@ -274,11 +251,7 @@ export default async function RouteLockSchedulePage() {
     const start = String(s.start_date ?? "").trim();
     const end = String(s.end_date ?? "").trim();
 
-    const coversToday =
-      !!start &&
-      start <= today &&
-      (!end || end >= today);
-
+    const coversToday = !!start && start <= today && (!end || end >= today);
     if (coversToday) scheduleByAssignment.set(aid, s);
   }
 
@@ -314,7 +287,6 @@ export default async function RouteLockSchedulePage() {
     .lte("fiscal_month_start_date", today)
     .gte("fiscal_month_end_date", today);
 
-  // If quota fails, still render schedule editor (quota banner can be empty)
   const quota = (quotaRows ?? []) as unknown as QuotaRow[];
 
   const quotaLabel = String(quota?.[0]?.fiscal_month_label ?? "").trim();

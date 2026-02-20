@@ -4,12 +4,7 @@ import { useMemo } from "react";
 
 import type { BandKey, RubricRow } from "@/features/metrics-reports/lib/score";
 import type { KpiDef } from "@/features/metrics/lib/reports/kpis";
-import {
-  computeP4PRollup,
-  delta,
-  trendFromDelta,
-  fmtDelta as fmtDeltaNum,
-} from "@/features/metrics/lib/reports/rollup";
+import { computeP4PRollup, delta, trendFromDelta, fmtDelta as fmtDeltaNum } from "@/features/metrics/lib/reports/rollup";
 
 type Preset = Record<string, any>;
 
@@ -31,20 +26,11 @@ function deltaDir(current: number | null, prior: number | null): "UP" | "DOWN" |
 function DeltaArrow({ dir }: { dir: "UP" | "DOWN" | "FLAT" | null }) {
   if (!dir) return null;
   const glyph = dir === "UP" ? "↑" : dir === "DOWN" ? "↓" : "→";
-  const color =
-    dir === "UP"
-      ? "text-emerald-600"
-      : dir === "DOWN"
-        ? "text-red-600"
-        : "text-[var(--to-ink-muted)]";
+  const color = dir === "UP" ? "text-emerald-600" : dir === "DOWN" ? "text-red-600" : "text-[var(--to-ink-muted)]";
 
   return (
     <span
-      className={[
-        "ml-2 inline-flex items-center leading-none",
-        "text-[16px] font-semibold",
-        color,
-      ].join(" ")}
+      className={["ml-2 inline-flex items-center leading-none", "text-[16px] font-semibold", color].join(" ")}
       aria-hidden="true"
       title={dir === "UP" ? "Up vs prior" : dir === "DOWN" ? "Down vs prior" : "No change vs prior"}
     >
@@ -69,13 +55,7 @@ function hexToRgba(hex: string, alpha: number) {
 
 function isWhiteLike(bg: string) {
   const s = String(bg ?? "").trim().toLowerCase();
-  return (
-    s === "#fff" ||
-    s === "#ffffff" ||
-    s === "white" ||
-    s === "rgb(255,255,255)" ||
-    s === "rgb(255, 255, 255)"
-  );
+  return s === "#fff" || s === "#ffffff" || s === "white" || s === "rgb(255,255,255)" || s === "rgb(255, 255, 255)";
 }
 
 function bandForValue(rubricRows: RubricRow[], kpiKey: string, v: number | null): BandKey {
@@ -125,36 +105,21 @@ function fmtDelta(v: number | null, digits = 1) {
   return fmtDeltaNum(v, digits);
 }
 
-export default function ReportSummaryTiles({
-  rows,
-  priorRows,
-  kpis,
-  preset,
-  rubricRows,
-  rubricKeys,
-}: Props) {
-  const current = rows ?? [];
-  const prior = priorRows ?? [];
+export default function ReportSummaryTiles({ rows, priorRows, kpis, preset, rubricRows, rubricKeys }: Props) {
+  // Normalize arrays once so dependencies are stable even if props are undefined.
+  const currentRows = useMemo(() => rows ?? [], [rows]);
+  const priorRowsNorm = useMemo(() => priorRows ?? [], [priorRows]);
 
   // ✅ Use the weighted rollup helper so tiles match batch totals behavior.
-  const rollCur = useMemo(() => computeP4PRollup(current), [current]);
-  const rollPrev = useMemo(() => computeP4PRollup(prior), [prior]);
+  const rollCur = useMemo(() => computeP4PRollup(currentRows), [currentRows]);
+  const rollPrev = useMemo(() => computeP4PRollup(priorRowsNorm), [priorRowsNorm]);
 
   const headcount = rollCur.headcount;
   const headcountPrior = rollPrev.headcount;
 
-  const tnpsDef = useMemo(
-    () => kpis.find((k) => String(k.key).toLowerCase().includes("tnps")) ?? kpis[0],
-    [kpis]
-  );
-  const ftrDef = useMemo(
-    () => kpis.find((k) => String(k.key).toLowerCase().includes("ftr")) ?? kpis[1],
-    [kpis]
-  );
-  const toolDef = useMemo(
-    () => kpis.find((k) => String(k.key).toLowerCase().includes("tool")) ?? kpis[2],
-    [kpis]
-  );
+  const tnpsDef = useMemo(() => kpis.find((k) => String(k.key).toLowerCase().includes("tnps")) ?? kpis[0], [kpis]);
+  const ftrDef = useMemo(() => kpis.find((k) => String(k.key).toLowerCase().includes("ftr")) ?? kpis[1], [kpis]);
+  const toolDef = useMemo(() => kpis.find((k) => String(k.key).toLowerCase().includes("tool")) ?? kpis[2], [kpis]);
 
   const tnpsCur = tnpsDef ? rollCur.tnps_score : null;
   const tnpsPrev = tnpsDef ? rollPrev.tnps_score : null;
@@ -205,10 +170,7 @@ export default function ReportSummaryTiles({
       </div>
 
       {/* tNPS */}
-      <div
-        className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm"
-        style={tileSurfaceFromBand(preset, tnpsBand)}
-      >
+      <div className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm" style={tileSurfaceFromBand(preset, tnpsBand)}>
         <div className="text-xs text-[var(--to-ink-muted)]">tNPS</div>
 
         <div className="mt-2 flex items-center">
@@ -223,18 +185,13 @@ export default function ReportSummaryTiles({
 
           <div className="font-mono text-[var(--to-ink-muted)]">
             Δ prior:{" "}
-            <span className="tabular-nums text-[var(--to-ink)]">
-              {tnpsDelta === null ? "—" : fmtDelta(tnpsDelta, 2)}
-            </span>
+            <span className="tabular-nums text-[var(--to-ink)]">{tnpsDelta === null ? "—" : fmtDelta(tnpsDelta, 2)}</span>
           </div>
         </div>
       </div>
 
       {/* FTR */}
-      <div
-        className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm"
-        style={tileSurfaceFromBand(preset, ftrBand)}
-      >
+      <div className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm" style={tileSurfaceFromBand(preset, ftrBand)}>
         <div className="text-xs text-[var(--to-ink-muted)]">FTR%</div>
 
         <div className="mt-2 flex items-center">
@@ -249,18 +206,13 @@ export default function ReportSummaryTiles({
 
           <div className="font-mono text-[var(--to-ink-muted)]">
             Δ prior:{" "}
-            <span className="tabular-nums text-[var(--to-ink)]">
-              {ftrDelta === null ? "—" : fmtDelta(ftrDelta, 1)}
-            </span>
+            <span className="tabular-nums text-[var(--to-ink)]">{ftrDelta === null ? "—" : fmtDelta(ftrDelta, 1)}</span>
           </div>
         </div>
       </div>
 
       {/* Tool Usage */}
-      <div
-        className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm"
-        style={tileSurfaceFromBand(preset, toolBand)}
-      >
+      <div className="rounded-2xl border bg-[var(--to-surface)] p-4 shadow-sm" style={tileSurfaceFromBand(preset, toolBand)}>
         <div className="text-xs text-[var(--to-ink-muted)]">Tool Usage%</div>
 
         <div className="mt-2 flex items-center">
@@ -275,9 +227,7 @@ export default function ReportSummaryTiles({
 
           <div className="font-mono text-[var(--to-ink-muted)]">
             Δ prior:{" "}
-            <span className="tabular-nums text-[var(--to-ink)]">
-              {toolDelta === null ? "—" : fmtDelta(toolDelta, 1)}
-            </span>
+            <span className="tabular-nums text-[var(--to-ink)]">{toolDelta === null ? "—" : fmtDelta(toolDelta, 1)}</span>
           </div>
         </div>
       </div>

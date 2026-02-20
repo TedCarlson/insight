@@ -167,7 +167,6 @@ async function loadBatchMetaForFiscal(sb: any, pc_org_id: string, fiscal_end_dat
     .limit(1);
 
   if (error) {
-    // eslint-disable-next-line no-console
     console.error("[P4P REPORT] metrics_raw_batch current batch error", {
       message: (error as any)?.message,
       details: (error as any)?.details,
@@ -201,7 +200,6 @@ async function loadPriorBatchMetaSameFiscal(sb: any, pc_org_id: string, fiscal_e
     .limit(1);
 
   if (error) {
-    // eslint-disable-next-line no-console
     console.error("[P4P REPORT] metrics_raw_batch prior batch error", {
       message: (error as any)?.message,
       details: (error as any)?.details,
@@ -250,7 +248,6 @@ async function loadRowsForBatchFromView(sb: any, pc_org_id: string, batch_id: st
     .eq("batch_id", batch_id);
 
   if (error) {
-    // eslint-disable-next-line no-console
     console.error("[P4P REPORT] ui_master_metric_v rows error", {
       message: (error as any)?.message,
       details: (error as any)?.details,
@@ -340,7 +337,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
     .eq("status", "loaded");
 
   if (fiscalErr) {
-    // eslint-disable-next-line no-console
     console.error("[P4P REPORT] metrics_raw_batch fiscal options error", {
       message: (fiscalErr as any)?.message,
       details: (fiscalErr as any)?.details,

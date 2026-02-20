@@ -508,7 +508,6 @@ function RubricInputs(props: {
   // clear drafts so the UI reflects the saved state.
   React.useEffect(() => {
     setDraft({ min: "", max: "", score: "" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.classType, props.bandKey, props.kpiKey, r?.min_value, r?.max_value, r?.score_value]);
 
   function getVal(kind: "min" | "max" | "score"): string {

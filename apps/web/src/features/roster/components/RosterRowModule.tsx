@@ -411,10 +411,6 @@ function RosterRowModuleInner({
               loadOffices={(assignment as any).loadOffices}
               canManage={Boolean(canManage)}
               modifyMode={(modifyMode ?? "locked") as "open" | "locked"}
-              startAssignment={startAssignment}
-              endAssignment={endAssignment}
-              startingAssignment={startingAssignment}
-              endingAssignment={endingAssignment}
             />
           ) : null}
 

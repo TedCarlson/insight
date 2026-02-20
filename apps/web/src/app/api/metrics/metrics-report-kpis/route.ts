@@ -33,12 +33,10 @@ export async function GET(req: NextRequest) {
     return json(400, { error: "Missing required params" });
   }
 
-  // Enforce scope: request pc_org_id MUST match selected org
   if (pc_org_id !== selectedPcOrgId) {
     return json(403, { error: "Forbidden" });
   }
 
-  // Canonical gate for Metrics reads: is_owner OR metrics_manage (preferred) OR roster_manage (legacy)
   const { data: isOwner, error: ownerErr } = await sb.rpc("is_owner");
   if (ownerErr) {
     return json(403, { error: "Forbidden", detail: ownerErr.message });
@@ -64,18 +62,18 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 🔥 NEW SOURCE: ARCHIVE SNAPSHOT
   const { data, error } = await sb
-    .from("score_kpi")
+    .from("master_kpi_archive_snapshot")
     .select("*")
     .eq("pc_org_id", pc_org_id)
     .eq("class_type", classType)
-    .eq("entity_type", entityType)
     .eq("fiscal_end_date", fiscal)
-    .eq("entity_id", entity)
+    .eq("tech_id", entity)
     .order("kpi_key", { ascending: true });
 
   if (error) {
-    return json(500, { error: "Failed to load KPI breakdown" });
+    return json(500, { error: "Failed to load KPI breakdown", detail: error.message });
   }
 
   return json(200, data ?? []);

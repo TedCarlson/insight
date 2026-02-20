@@ -49,8 +49,8 @@ type UiMasterMetricRow = {
   ownership_mode: string | null;
   direct_reports_to_person_id: string | null;
 
-  composite_score: number | null;
-  rank_org: number | null;
+  composite_score: number | null; // DB truth (lower is better)
+  rank_org: number | null; // DB truth (1 is best)
   population_size: number | null;
 
   is_totals: boolean | null;
@@ -98,7 +98,6 @@ function dedupeByTechId(rows: any[]) {
       continue;
     }
 
-    // Prefer OK over non-OK; then lower rank; then stable fallback.
     const prevOk = String(prev.status_badge ?? "") === "OK";
     const curOk = String(r.status_badge ?? "") === "OK";
     if (curOk && !prevOk) {
@@ -139,8 +138,7 @@ function filterEmptyRubricGroups(rows: any[]) {
 function pickStatusBadge(s: { is_totals?: boolean | null; ownership_mode?: string | null; composite_score?: number | null }) {
   if (s.is_totals) return { status_badge: "TOTALS", status_sort: 999 };
 
-  // ✅ YOUR RULE:
-  // only ACTIVE may be OK; everything else is UNLINKED (no ORPHAN leakage)
+  // only ACTIVE may be OK; everything else is UNLINKED
   if (String(s.ownership_mode ?? "") !== "ACTIVE") return { status_badge: "UNLINKED", status_sort: 50 };
   if (s.composite_score == null) return { status_badge: "UNLINKED", status_sort: 50 };
 
@@ -151,7 +149,13 @@ function metricNum(metricsJson: unknown, key: string): number | null {
   if (!metricsJson || typeof metricsJson !== "object") return null;
   const v = (metricsJson as Record<string, unknown>)[key];
   if (v == null) return null;
-  const n = Number(v);
+
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+
+  // handle numeric strings
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -287,26 +291,28 @@ async function loadRowsForBatchFromView(sb: any, pc_org_id: string, batch_id: st
       metric_date: r.metric_date ?? null,
       fiscal_end_date: r.fiscal_end_date ?? null,
 
-      // ranking
-      weighted_score: r.composite_score ?? null,
-      rank_in_pc: r.rank_org ?? null,
+      // ranking (DB truth)
+      weighted_score: r.composite_score ?? null, // lower is better
+      rank_in_pc: r.rank_org ?? null, // 1 is best
       population_size: r.population_size ?? null,
 
-      // KPIs used by rubric + pills
-      tnps_score: metricNum(mj, "tnps_score"),
-      ftr_rate: metricNum(mj, "ftr_rate"),
-      tool_usage_rate: metricNum(mj, "tool_usage_rate"),
+      // KPI values (support canonical or legacy)
+      tnps_score: metricNum(mj, "tnps_score") ?? metricNum(mj, "tNPS Rate"),
+      ftr_rate: metricNum(mj, "ftr_rate") ?? metricNum(mj, "FTR%"),
+      tool_usage_rate: metricNum(mj, "tool_usage_rate") ?? metricNum(mj, "ToolUsage"),
 
-      // denominators / volume (best-effort keys)
-      tnps_surveys: metricNum(mj, "tnps_surveys"),
-      ftr_contact_jobs:
-        metricNum(mj, "ftr_contact_jobs") ??
-        metricNum(mj, "total_ftr_contact_jobs") ??
-        metricNum(mj, "total_ftr_contact_jobs_count") ??
-        metricNum(mj, "ftr_contacts"),
-      tu_eligible_jobs: metricNum(mj, "tu_eligible_jobs") ?? metricNum(mj, "tool_usage_eligible_jobs"),
+      // Volume / mix (raw keys in metrics_json)
+      total_jobs: metricNum(mj, "Total Jobs"),
+      installs: metricNum(mj, "Installs"),
+      sros: metricNum(mj, "SROs"),
+      tcs: metricNum(mj, "TCs"),
 
-      // misc (table expects these)
+      // Denominators (raw keys)
+      total_ftr_contact_jobs: metricNum(mj, "Total FTR/Contact Jobs"),
+      tnps_surveys: metricNum(mj, "tNPS Surveys"),
+      tu_eligible_jobs: metricNum(mj, "TUEligibleJobs"),
+
+      // misc
       job_volume_band: null,
       status_badge: badge.status_badge,
       status_sort: badge.status_sort,
@@ -327,9 +333,7 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
 
   const selectedReportsTo = sp.reports_to ?? "ALL";
 
-  // -----------------------------
-  // 1) Fiscal options (cheap + authoritative)
-  // -----------------------------
+  // 1) Fiscal options
   const { data: fiscalRowsRaw, error: fiscalErr } = await sb
     .from("metrics_raw_batch")
     .select("fiscal_end_date")
@@ -362,9 +366,7 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const defaultFiscal = fiscalOptions.includes(currentFiscal) ? currentFiscal : fiscalOptions[0];
   const selectedFiscal = sp.fiscal ?? defaultFiscal;
 
-  // -----------------------------
-  // 2) Current batch for selected fiscal (P4P rule)
-  // -----------------------------
+  // 2) Current batch
   const currentBatch = await loadBatchMetaForFiscal(sb, pc_org_id, selectedFiscal);
   if (!currentBatch) {
     return (
@@ -376,7 +378,7 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
 
   const latestMetricDate = currentBatch.metric_date;
 
-  // Pull rows from the UI view (wide/pivoted for UI)
+  // Current snapshot rows
   const snapshotRows = await loadRowsForBatchFromView(sb, pc_org_id, currentBatch.batch_id);
 
   const applyReportsTo = (arr: any[]) => {
@@ -386,18 +388,21 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
 
   let filteredRows = applyReportsTo(snapshotRows);
 
+  // ✅ Sort primary surface by DB rank (1 = best), then tech_id as stable tie-breaker
   filteredRows = filteredRows.sort((a: any, b: any) => {
     if (a.status_sort !== b.status_sort) return a.status_sort - b.status_sort;
-    if (a.rank_in_pc !== b.rank_in_pc) return numOrInf(a.rank_in_pc) - numOrInf(b.rank_in_pc);
+
+    const ar = numOrInf(a.rank_in_pc);
+    const br = numOrInf(b.rank_in_pc);
+    if (ar !== br) return ar - br;
+
     return String(a.tech_id).localeCompare(String(b.tech_id));
   });
 
   const okRows = filteredRows.filter((r: any) => r.status_badge === "OK");
   const nonOkRows = filteredRows.filter((r: any) => r.status_badge !== "OK");
 
-  // -----------------------------
-  // 3) Prior batch (same fiscal, previous metric_date)
-  // -----------------------------
+  // 3) Prior batch (same fiscal)
   const priorBatch = await loadPriorBatchMetaSameFiscal(sb, pc_org_id, selectedFiscal, latestMetricDate);
   const priorMetricDate = priorBatch?.metric_date ?? null;
 
@@ -413,9 +418,7 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
     });
   });
 
-  // -----------------------------
   // 4) Names (current snapshot only)
-  // -----------------------------
   const ids = new Set<string>();
   snapshotRows.forEach((r: any) => {
     if (r.person_id) ids.add(String(r.person_id));
@@ -430,19 +433,13 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
     });
   }
 
-  // -----------------------------
-  // 5) Band preset (DB)
-  // -----------------------------
+  // 5) Band preset
   const presetKeys = Object.keys(GLOBAL_BAND_PRESETS);
-
   const { data: sel } = await admin.from("metrics_band_style_selection").select("preset_key").eq("selection_key", "GLOBAL").maybeSingle();
-
   const activeKey = sel?.preset_key && presetKeys.includes(sel.preset_key) ? sel.preset_key : presetKeys[0] ?? "MODERN";
   const activePreset = GLOBAL_BAND_PRESETS[activeKey] ?? GLOBAL_BAND_PRESETS[presetKeys[0] ?? "MODERN"];
 
-  // -----------------------------
-  // 6) Rubric (DB)
-  // -----------------------------
+  // 6) Rubric
   const { data: rubricRowsRaw } = await admin
     .from("metrics_class_kpi_rubric")
     .select("class_type,kpi_key,band_key,min_value,max_value,score_value")
@@ -460,9 +457,7 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const okRowsBanded = applyBandsToRows(okRows, rubricMap, { tnpsKey, ftrKey, toolKey });
   const nonOkRowsBanded = applyBandsToRows(nonOkRows, rubricMap, { tnpsKey, ftrKey, toolKey });
 
-  // -----------------------------
   // 7) Reports To dropdown (current snapshot only)
-  // -----------------------------
   const reportsToMap = new Map<string, string>();
   snapshotRows.forEach((r: any) => {
     if (!r.reports_to_person_id) return;
@@ -475,14 +470,7 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
 
   return (
     <PageShell>
-      <ReportsClientShell
-        title="Reports"
-        subtitle="Metrics • Stack ranking + outliers (P4P Manager)"
-        preset={activePreset}
-        rubricRows={rubricRowsAll}
-        kpis={P4P_KPIS}
-        classType="P4P"
-      />
+      <ReportsClientShell title="Reports" subtitle="Metrics • Stack ranking + outliers (P4P Manager)" preset={activePreset} rubricRows={rubricRowsAll} kpis={P4P_KPIS} classType="P4P" />
 
       <Card>
         <div className="flex items-center gap-4 flex-wrap">
@@ -491,18 +479,11 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
         </div>
       </Card>
 
-      <ReportSummaryTiles
-        rows={filteredRows}
-        priorRows={priorRowsScoped}
-        kpis={P4P_KPIS}
-        preset={activePreset}
-        rubricRows={rubricRowsAll}
-        rubricKeys={{ tnpsKey, ftrKey, toolKey }}
-      />
+      <ReportSummaryTiles rows={filteredRows} priorRows={priorRowsScoped} kpis={P4P_KPIS} preset={activePreset} rubricRows={rubricRowsAll} rubricKeys={{ tnpsKey, ftrKey, toolKey }} />
 
       <Card>
         <div className="flex items-baseline justify-between gap-3 mb-3">
-          <div className="text-sm font-medium">Metrics (Stack Ranking)</div>
+          <div className="text-sm font-medium">Metrics (Stack Ranking) • Tech count {okRowsBanded.length}</div>
 
           <div className="text-xs text-[var(--to-ink-muted)]">
             As of <span className="font-mono tabular-nums">{String(latestMetricDate)}</span>
@@ -526,9 +507,8 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
         />
       </Card>
 
-      {/* Always render Outliers table so the UI shape never “disappears” */}
       <Card>
-        <div className="text-sm font-medium mb-3">Outliers (Attention Required)</div>
+        <div className="text-sm font-medium mb-3">Outliers (Attention Required) • Tech count {nonOkRowsBanded.length}</div>
         <ReportingTable
           rows={nonOkRowsBanded}
           showStatus={true}

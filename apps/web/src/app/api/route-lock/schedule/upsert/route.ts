@@ -1,3 +1,5 @@
+// RUN THIS
+// Replace the entire file:
 // apps/web/src/app/api/route-lock/schedule/upsert/route.ts
 
 import { NextResponse } from "next/server";
@@ -28,13 +30,6 @@ function asDate(v: unknown): string | null {
   return s;
 }
 
-function intDefault(v: unknown, fallback: number): number {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return fallback;
-  const i = Math.trunc(n);
-  return i > 0 ? i : fallback;
-}
-
 function bool(v: unknown): boolean {
   return v === true;
 }
@@ -51,6 +46,16 @@ function normalizeDays(days: any): DayFlags {
   };
 }
 
+function todayInNY(): string {
+  // YYYY-MM-DD in America/New_York
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 function addDaysISO(iso: string, days: number): string {
   // Treat ISO date as UTC midnight. We only care about YYYY-MM-DD.
   const d = new Date(`${iso}T00:00:00Z`);
@@ -58,28 +63,18 @@ function addDaysISO(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function deriveNumbers(days: DayFlags, hoursPerDay: number, unitsPerHour: number) {
-  const h = {
-    sun: days.sun ? hoursPerDay : 0,
-    mon: days.mon ? hoursPerDay : 0,
-    tue: days.tue ? hoursPerDay : 0,
-    wed: days.wed ? hoursPerDay : 0,
-    thu: days.thu ? hoursPerDay : 0,
-    fri: days.fri ? hoursPerDay : 0,
-    sat: days.sat ? hoursPerDay : 0,
-  };
+function clampStartDateToToday(startDateISO: string): string {
+  const today = todayInNY();
+  return startDateISO < today ? today : startDateISO;
+}
 
-  const u = {
-    sun: h.sun * unitsPerHour,
-    mon: h.mon * unitsPerHour,
-    tue: h.tue * unitsPerHour,
-    wed: h.wed * unitsPerHour,
-    thu: h.thu * unitsPerHour,
-    fri: h.fri * unitsPerHour,
-    sat: h.sat * unitsPerHour,
-  };
-
-  return { h, u };
+function cleanScheduleName(techId: string | null, fullName: string | null): string {
+  const a = String(techId ?? "").trim();
+  const b = String(fullName ?? "").trim();
+  const combined = [a, b].filter(Boolean).join(" ").trim();
+  // schedule_name is NOT NULL; give a stable fallback if roster text is missing
+  const out = combined || "planning_week";
+  return out.slice(0, 140);
 }
 
 async function guardSelectedOrgRouteLockManage() {
@@ -128,9 +123,11 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null);
 
-    const start_date = asDate(body?.start_date) ?? new Date().toISOString().slice(0, 10);
-    const hoursPerDay = intDefault(body?.hoursPerDay, 8);
-    const unitsPerHour = intDefault(body?.unitsPerHour, 12);
+    // IMPORTANT: Never allow planning writes to start before today (NY).
+    // This prevents “overwriting” past facts and keeps history intact.
+    const requestedStart = asDate(body?.start_date) ?? todayInNY();
+    const start_date = clampStartDateToToday(requestedStart);
+    const dayBefore = addDaysISO(start_date, -1);
 
     const rows = (body?.rows ?? []) as ScheduleWriteRow[];
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -154,6 +151,7 @@ export async function POST(req: Request) {
 
     // Validate assignment belongs to selected org (independent of schedule rows existing)
     const assignmentIds = Array.from(new Set(clean.map((r) => r.assignment_id!)));
+
     const { data: allowedAssignments, error: allowedErr } = await admin
       .from("assignment")
       .select("assignment_id")
@@ -171,17 +169,37 @@ export async function POST(req: Request) {
       );
     }
 
+    // Pull roster labels for schedule_name (tech_id + full_name), scoped to org.
+    // We prefer master_roster_v because it already knows how to build full_name.
+    const { data: rosterLabels, error: rosterErr } = await admin
+      .from("master_roster_v")
+      .select("assignment_id, tech_id, full_name")
+      .eq("pc_org_id", guard.pc_org_id)
+      .in("assignment_id", assignmentIds);
+
+    if (rosterErr) return NextResponse.json({ ok: false, error: rosterErr.message }, { status: 500 });
+
+    const labelByAssignment = new Map<string, { tech_id: string | null; full_name: string | null }>();
+    for (const r of rosterLabels ?? []) {
+      const aid = String((r as any).assignment_id ?? "").trim();
+      if (!aid) continue;
+      labelByAssignment.set(aid, {
+        tech_id: (r as any).tech_id == null ? null : String((r as any).tech_id),
+        full_name: (r as any).full_name == null ? null : String((r as any).full_name),
+      });
+    }
+
     const saved_schedule_ids: string[] = [];
-    const dayBefore = addDaysISO(start_date, -1);
 
     // Rolling baseline per assignment:
     // - If an open row already exists WITH THE SAME start_date => UPDATE it (no duplicate “covers today” rows)
     // - Else close open row => end_date = dayBeforeStart
     // - Insert new open row with end_date NULL
     for (const r of clean) {
-      const { h, u } = deriveNumbers(r.days, hoursPerDay, unitsPerHour);
+      const labels = labelByAssignment.get(String(r.assignment_id)) ?? { tech_id: null, full_name: null };
+      const schedule_name = cleanScheduleName(labels.tech_id, labels.full_name);
 
-      // Find the currently-open schedule row for this assignment (if any)
+      // Find currently-open schedule row for this assignment (if any)
       const { data: openRow, error: openErr } = await admin
         .from("schedule")
         .select("schedule_id,start_date")
@@ -194,7 +212,10 @@ export async function POST(req: Request) {
       const openStart = String(openRow?.start_date ?? "").trim();
       const openId = String(openRow?.schedule_id ?? "").trim();
 
+      // Payload: ONLY raw schedule facts (no derived hours/units).
+      // Derived numbers belong in views / report surfaces, not stored here.
       const commonPayload: any = {
+        schedule_name,
         default_route_id: r.default_route_id ?? null,
 
         sun: r.days.sun,
@@ -204,26 +225,9 @@ export async function POST(req: Request) {
         thu: r.days.thu,
         fri: r.days.fri,
         sat: r.days.sat,
-
-        sch_hours_sun: h.sun,
-        sch_hours_mon: h.mon,
-        sch_hours_tue: h.tue,
-        sch_hours_wed: h.wed,
-        sch_hours_thu: h.thu,
-        sch_hours_fri: h.fri,
-        sch_hours_sat: h.sat,
-
-        // ✅ FIX: write to REAL table columns (sch_units_*), not view aliases (units_*)
-        sch_units_sun: u.sun,
-        sch_units_mon: u.mon,
-        sch_units_tue: u.tue,
-        sch_units_wed: u.wed,
-        sch_units_thu: u.thu,
-        sch_units_fri: u.fri,
-        sch_units_sat: u.sat,
       };
 
-      // If open row exists and already starts on the requested start_date, update it in-place
+      // If open row exists and already starts on the effective start_date, update it in-place
       if (openId && openStart === start_date) {
         const { data: updated, error: updErr } = await admin
           .from("schedule")
@@ -237,14 +241,15 @@ export async function POST(req: Request) {
         continue;
       }
 
-      // Otherwise close the currently-open row (if any)
+      // Otherwise close currently-open row (if any)
       if (openId) {
+        // Closing a row is allowed even if it started in the past;
+        // we are NOT overwriting its flags, just ending the range before the new baseline begins.
         const { error: closeErr } = await admin.from("schedule").update({ end_date: dayBefore }).eq("schedule_id", openId);
-
         if (closeErr) return NextResponse.json({ ok: false, error: closeErr.message }, { status: 500 });
       }
 
-      // Insert the new open schedule row
+      // Insert new open row
       const { data: inserted, error: insErr } = await admin
         .from("schedule")
         .insert({
@@ -260,7 +265,11 @@ export async function POST(req: Request) {
       if (inserted?.schedule_id) saved_schedule_ids.push(String(inserted.schedule_id));
     }
 
-    return NextResponse.json({ ok: true, saved_schedule_ids });
+    return NextResponse.json({
+      ok: true,
+      effective_start_date: start_date,
+      saved_schedule_ids,
+    });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "unknown error" }, { status: 500 });
   }

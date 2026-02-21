@@ -14,8 +14,8 @@ import { Card } from "@/components/ui/Card";
 import FiscalSelector from "@/features/metrics/components/FiscalSelector";
 import ReportsFilterBar from "@/features/metrics/components/reports/ReportsFilterBar";
 import ReportsClientShell from "@/features/metrics/components/reports/ReportsClientShell";
+import ReportsTabbedTable from "@/features/metrics/components/reports/ReportsTabbedTable";
 
-import { ReportingTable } from "@/features/metrics/components/reports/ReportingTable";
 import ReportSummaryTiles from "@/features/metrics/components/reports/ReportSummaryTiles";
 
 import { numOrInf } from "@/features/metrics/lib/reports/format";
@@ -49,8 +49,8 @@ type UiMasterMetricRow = {
   ownership_mode: string | null;
   direct_reports_to_person_id: string | null;
 
-  composite_score: number | null; // DB truth (lower is better)
-  rank_org: number | null; // DB truth (1 is best)
+  composite_score: number | null;
+  rank_org: number | null;
   population_size: number | null;
 
   is_totals: boolean | null;
@@ -137,11 +137,8 @@ function filterEmptyRubricGroups(rows: any[]) {
 
 function pickStatusBadge(s: { is_totals?: boolean | null; ownership_mode?: string | null; composite_score?: number | null }) {
   if (s.is_totals) return { status_badge: "TOTALS", status_sort: 999 };
-
-  // only ACTIVE may be OK; everything else is UNLINKED
   if (String(s.ownership_mode ?? "") !== "ACTIVE") return { status_badge: "UNLINKED", status_sort: 50 };
   if (s.composite_score == null) return { status_badge: "UNLINKED", status_sort: 50 };
-
   return { status_badge: "OK", status_sort: 10 };
 }
 
@@ -152,7 +149,6 @@ function metricNum(metricsJson: unknown, key: string): number | null {
 
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
 
-  // handle numeric strings
   const s = String(v).trim();
   if (!s) return null;
   const n = Number(s);
@@ -191,7 +187,12 @@ async function loadBatchMetaForFiscal(sb: any, pc_org_id: string, fiscal_end_dat
   };
 }
 
-async function loadPriorBatchMetaSameFiscal(sb: any, pc_org_id: string, fiscal_end_date: string, before_metric_date: string): Promise<BatchMeta | null> {
+async function loadPriorBatchMetaSameFiscal(
+  sb: any,
+  pc_org_id: string,
+  fiscal_end_date: string,
+  before_metric_date: string
+): Promise<BatchMeta | null> {
   const { data, error } = await sb
     .from("metrics_raw_batch")
     .select("batch_id, metric_date, fiscal_end_date, uploaded_at, status")
@@ -281,38 +282,31 @@ async function loadRowsForBatchFromView(sb: any, pc_org_id: string, batch_id: st
     const mj = r.metrics_json ?? {};
 
     out.push({
-      // identity
       tech_id,
       person_id: r.person_id ?? null,
       reports_to_person_id: r.direct_reports_to_person_id ?? null,
 
-      // snapshot
       ownership_mode: r.ownership_mode ?? null,
       metric_date: r.metric_date ?? null,
       fiscal_end_date: r.fiscal_end_date ?? null,
 
-      // ranking (DB truth)
-      weighted_score: r.composite_score ?? null, // lower is better
-      rank_in_pc: r.rank_org ?? null, // 1 is best
+      weighted_score: r.composite_score ?? null,
+      rank_in_pc: r.rank_org ?? null,
       population_size: r.population_size ?? null,
 
-      // KPI values (support canonical or legacy)
       tnps_score: metricNum(mj, "tnps_score") ?? metricNum(mj, "tNPS Rate"),
       ftr_rate: metricNum(mj, "ftr_rate") ?? metricNum(mj, "FTR%"),
       tool_usage_rate: metricNum(mj, "tool_usage_rate") ?? metricNum(mj, "ToolUsage"),
 
-      // Volume / mix (raw keys in metrics_json)
       total_jobs: metricNum(mj, "Total Jobs"),
       installs: metricNum(mj, "Installs"),
       sros: metricNum(mj, "SROs"),
       tcs: metricNum(mj, "TCs"),
 
-      // Denominators (raw keys)
       total_ftr_contact_jobs: metricNum(mj, "Total FTR/Contact Jobs"),
       tnps_surveys: metricNum(mj, "tNPS Surveys"),
       tu_eligible_jobs: metricNum(mj, "TUEligibleJobs"),
 
-      // misc
       job_volume_band: null,
       status_badge: badge.status_badge,
       status_sort: badge.status_sort,
@@ -333,7 +327,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
 
   const selectedReportsTo = sp.reports_to ?? "ALL";
 
-  // 1) Fiscal options
   const { data: fiscalRowsRaw, error: fiscalErr } = await sb
     .from("metrics_raw_batch")
     .select("fiscal_end_date")
@@ -366,7 +359,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const defaultFiscal = fiscalOptions.includes(currentFiscal) ? currentFiscal : fiscalOptions[0];
   const selectedFiscal = sp.fiscal ?? defaultFiscal;
 
-  // 2) Current batch
   const currentBatch = await loadBatchMetaForFiscal(sb, pc_org_id, selectedFiscal);
   if (!currentBatch) {
     return (
@@ -378,7 +370,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
 
   const latestMetricDate = currentBatch.metric_date;
 
-  // Current snapshot rows
   const snapshotRows = await loadRowsForBatchFromView(sb, pc_org_id, currentBatch.batch_id);
 
   const applyReportsTo = (arr: any[]) => {
@@ -388,7 +379,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
 
   let filteredRows = applyReportsTo(snapshotRows);
 
-  // ✅ Sort primary surface by DB rank (1 = best), then tech_id as stable tie-breaker
   filteredRows = filteredRows.sort((a: any, b: any) => {
     if (a.status_sort !== b.status_sort) return a.status_sort - b.status_sort;
 
@@ -402,7 +392,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const okRows = filteredRows.filter((r: any) => r.status_badge === "OK");
   const nonOkRows = filteredRows.filter((r: any) => r.status_badge !== "OK");
 
-  // 3) Prior batch (same fiscal)
   const priorBatch = await loadPriorBatchMetaSameFiscal(sb, pc_org_id, selectedFiscal, latestMetricDate);
   const priorMetricDate = priorBatch?.metric_date ?? null;
 
@@ -418,7 +407,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
     });
   });
 
-  // 4) Names (current snapshot only)
   const ids = new Set<string>();
   snapshotRows.forEach((r: any) => {
     if (r.person_id) ids.add(String(r.person_id));
@@ -426,20 +414,112 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   });
 
   const personNameById = new Map<string, string>();
+  const personMetaById = new Map<string, { affiliation_kind: "company" | "contractor" | null; affiliation_name: string | null }>();
+
   if (ids.size > 0) {
-    const { data: people } = await admin.from("person").select("person_id, full_name").in("person_id", Array.from(ids));
-    people?.forEach((p: any) => {
+    const { data: people } = await admin
+      .from("person")
+      .select("person_id, full_name, co_ref_id, co_code")
+      .in("person_id", Array.from(ids));
+
+    (people ?? []).forEach((p: any) => {
       personNameById.set(String(p.person_id), p.full_name ?? "—");
+    });
+
+    const coRefIds = Array.from(
+      new Set(
+        (people ?? [])
+          .map((p: any) => (p.co_ref_id ? String(p.co_ref_id) : ""))
+          .filter((x: string) => x)
+      )
+    );
+
+    const coCodes = Array.from(
+      new Set(
+        (people ?? [])
+          .map((p: any) => (p.co_code ? String(p.co_code) : ""))
+          .filter((x: string) => x)
+      )
+    );
+
+    const companyById = new Map<string, { name: string; code: string | null }>();
+    const contractorById = new Map<string, { name: string; code: string | null }>();
+    const companyByCode = new Map<string, string>();
+    const contractorByCode = new Map<string, string>();
+
+    if (coRefIds.length > 0) {
+      const { data: companies } = await admin
+        .from("company")
+        .select("company_id, company_name, company_code")
+        .in("company_id", coRefIds);
+
+      (companies ?? []).forEach((c: any) => {
+        companyById.set(String(c.company_id), { name: c.company_name ?? "—", code: c.company_code ?? null });
+        if (c.company_code) companyByCode.set(String(c.company_code), c.company_name ?? "—");
+      });
+
+      const { data: contractors } = await admin
+        .from("contractor")
+        .select("contractor_id, contractor_name, contractor_code")
+        .in("contractor_id", coRefIds);
+
+      (contractors ?? []).forEach((c: any) => {
+        contractorById.set(String(c.contractor_id), { name: c.contractor_name ?? "—", code: c.contractor_code ?? null });
+        if (c.contractor_code) contractorByCode.set(String(c.contractor_code), c.contractor_name ?? "—");
+      });
+    }
+
+    if (coCodes.length > 0) {
+      const { data: companiesByCode } = await admin
+        .from("company")
+        .select("company_code, company_name")
+        .in("company_code", coCodes);
+
+      (companiesByCode ?? []).forEach((c: any) => {
+        if (c.company_code) companyByCode.set(String(c.company_code), c.company_name ?? "—");
+      });
+
+      const { data: contractorsByCode } = await admin
+        .from("contractor")
+        .select("contractor_code, contractor_name")
+        .in("contractor_code", coCodes);
+
+      (contractorsByCode ?? []).forEach((c: any) => {
+        if (c.contractor_code) contractorByCode.set(String(c.contractor_code), c.contractor_name ?? "—");
+      });
+    }
+
+    (people ?? []).forEach((p: any) => {
+      const pid = String(p.person_id);
+      const co_ref_id = p.co_ref_id ? String(p.co_ref_id) : null;
+      const co_code = p.co_code ? String(p.co_code) : null;
+
+      let affiliation_kind: "company" | "contractor" | null = null;
+      let affiliation_name: string | null = null;
+
+      if (co_ref_id && companyById.has(co_ref_id)) {
+        affiliation_kind = "company";
+        affiliation_name = companyById.get(co_ref_id)?.name ?? null;
+      } else if (co_ref_id && contractorById.has(co_ref_id)) {
+        affiliation_kind = "contractor";
+        affiliation_name = contractorById.get(co_ref_id)?.name ?? null;
+      } else if (co_code && companyByCode.has(co_code)) {
+        affiliation_kind = "company";
+        affiliation_name = companyByCode.get(co_code) ?? null;
+      } else if (co_code && contractorByCode.has(co_code)) {
+        affiliation_kind = "contractor";
+        affiliation_name = contractorByCode.get(co_code) ?? null;
+      }
+
+      personMetaById.set(pid, { affiliation_kind, affiliation_name });
     });
   }
 
-  // 5) Band preset
   const presetKeys = Object.keys(GLOBAL_BAND_PRESETS);
   const { data: sel } = await admin.from("metrics_band_style_selection").select("preset_key").eq("selection_key", "GLOBAL").maybeSingle();
   const activeKey = sel?.preset_key && presetKeys.includes(sel.preset_key) ? sel.preset_key : presetKeys[0] ?? "MODERN";
   const activePreset = GLOBAL_BAND_PRESETS[activeKey] ?? GLOBAL_BAND_PRESETS[presetKeys[0] ?? "MODERN"];
 
-  // 6) Rubric
   const { data: rubricRowsRaw } = await admin
     .from("metrics_class_kpi_rubric")
     .select("class_type,kpi_key,band_key,min_value,max_value,score_value")
@@ -457,7 +537,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const okRowsBanded = applyBandsToRows(okRows, rubricMap, { tnpsKey, ftrKey, toolKey });
   const nonOkRowsBanded = applyBandsToRows(nonOkRows, rubricMap, { tnpsKey, ftrKey, toolKey });
 
-  // 7) Reports To dropdown (current snapshot only)
   const reportsToMap = new Map<string, string>();
   snapshotRows.forEach((r: any) => {
     if (!r.reports_to_person_id) return;
@@ -470,7 +549,14 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
 
   return (
     <PageShell>
-      <ReportsClientShell title="Reports" subtitle="Metrics • Stack ranking + outliers (P4P Manager)" preset={activePreset} rubricRows={rubricRowsAll} kpis={P4P_KPIS} classType="P4P" />
+      <ReportsClientShell
+        title="Reports"
+        subtitle="Metrics • Stack ranking + outliers (P4P Manager)"
+        preset={activePreset}
+        rubricRows={rubricRowsAll}
+        kpis={P4P_KPIS}
+        classType="P4P"
+      />
 
       <Card>
         <div className="flex items-center gap-4 flex-wrap">
@@ -479,46 +565,26 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
         </div>
       </Card>
 
-      <ReportSummaryTiles rows={filteredRows} priorRows={priorRowsScoped} kpis={P4P_KPIS} preset={activePreset} rubricRows={rubricRowsAll} rubricKeys={{ tnpsKey, ftrKey, toolKey }} />
+      <ReportSummaryTiles
+        rows={filteredRows}
+        priorRows={priorRowsScoped}
+        kpis={P4P_KPIS}
+        preset={activePreset}
+        rubricRows={rubricRowsAll}
+        rubricKeys={{ tnpsKey, ftrKey, toolKey }}
+      />
 
-      <Card>
-        <div className="flex items-baseline justify-between gap-3 mb-3">
-          <div className="text-sm font-medium">Metrics (Stack Ranking) • Tech count {okRowsBanded.length}</div>
-
-          <div className="text-xs text-[var(--to-ink-muted)]">
-            As of <span className="font-mono tabular-nums">{String(latestMetricDate)}</span>
-            {priorMetricDate ? (
-              <>
-                <span className="px-2">•</span>
-                Prior <span className="font-mono tabular-nums">{String(priorMetricDate)}</span>
-              </>
-            ) : null}
-          </div>
-        </div>
-
-        <ReportingTable
-          rows={okRowsBanded}
-          showStatus={false}
-          personNameById={personNameById}
-          preset={activePreset}
-          kpis={P4P_KPIS}
-          slicerTitle="Metrics slicer"
-          priorSnapshotByTechId={priorByTechId}
-        />
-      </Card>
-
-      <Card>
-        <div className="text-sm font-medium mb-3">Outliers (Attention Required) • Tech count {nonOkRowsBanded.length}</div>
-        <ReportingTable
-          rows={nonOkRowsBanded}
-          showStatus={true}
-          personNameById={personNameById}
-          preset={activePreset}
-          kpis={P4P_KPIS}
-          slicerTitle="Outliers slicer"
-          priorSnapshotByTechId={priorByTechId}
-        />
-      </Card>
+      <ReportsTabbedTable
+        okRows={okRowsBanded}
+        nonOkRows={nonOkRowsBanded}
+        personNameById={personNameById}
+        personMetaById={personMetaById}
+        preset={activePreset}
+        kpis={P4P_KPIS}
+        latestMetricDate={latestMetricDate}
+        priorMetricDate={priorMetricDate}
+        priorSnapshotByTechId={priorByTechId}
+      />
     </PageShell>
   );
 }

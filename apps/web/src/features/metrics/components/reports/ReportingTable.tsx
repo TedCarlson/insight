@@ -204,12 +204,14 @@ export function ReportingTable({
   rows: any[];
   showStatus: boolean;
   personNameById: Map<string, string>;
-  personMetaById: Map<string, PersonMeta>;
+  personMetaById?: Map<string, PersonMeta>; // ✅ optional for backward-compat
   preset: Record<string, any>;
   kpis: KpiDef[];
   slicerTitle: string;
   priorSnapshotByTechId?: Map<string, PriorSnapshot>;
 }) {
+  const metaMap = personMetaById ?? new Map<string, PersonMeta>(); // ✅ default empty map
+
   const completionPctByTechId = React.useMemo(() => {
     const m = new Map<string, number>();
     for (const r of rows) {
@@ -286,7 +288,7 @@ export function ReportingTable({
         <DataTableHeader gridStyle={gridStyle}>
           <div>Tech • Name</div>
           <div className="text-center">Rank</div>
-          <div className="text-right font-mono">Weighted Score</div>
+          <div className="text-right font-mono">WS (x100)</div>
           {kpis.map((k) => (
             <div key={k.key} className="text-center">
               <KpiSlicerTrigger kpiKey={k.key}>{headerLabel(k)}</KpiSlicerTrigger>
@@ -303,7 +305,7 @@ export function ReportingTable({
             const fullName = pid ? personNameById.get(pid) ?? "—" : "—";
             const reportsToName = rid ? personNameById.get(rid) ?? "—" : "—";
 
-            const meta = pid ? personMetaById.get(pid) ?? null : null;
+            const meta = pid ? metaMap.get(pid) ?? null : null;
 
             const rowKey = `${r.tech_id}-${idx}`;
 

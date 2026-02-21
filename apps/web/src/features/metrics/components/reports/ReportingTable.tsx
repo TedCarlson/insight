@@ -338,7 +338,7 @@ export function ReportingTable({
         <DataTableHeader>
           <div>Tech</div>
           <div className="text-center">Rank</div>
-          <div className="text-right font-mono">WS (x100)</div>
+          <div className="text-right font-mono">Weighted Score</div>
           {kpis.map((k) => (
             <div key={k.key} className="text-center">
               <KpiSlicerTrigger kpiKey={k.key}>{headerLabel(k)}</KpiSlicerTrigger>

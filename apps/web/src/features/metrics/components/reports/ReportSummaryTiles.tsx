@@ -4,7 +4,7 @@ import { useMemo } from "react";
 
 import type { BandKey, RubricRow } from "@/features/metrics-reports/lib/score";
 import type { KpiDef } from "@/features/metrics/lib/reports/kpis";
-import { computeP4PRollup, delta, trendFromDelta, fmtDelta as fmtDeltaNum } from "@/features/metrics/lib/reports/rollup";
+import { delta, trendFromDelta, fmtDelta as fmtDeltaNum } from "@/features/metrics/lib/reports/rollup";
 
 type Preset = Record<string, any>;
 
@@ -18,6 +18,15 @@ type Props = {
   rubricRows: RubricRow[];
   rubricKeys: { tnpsKey: string; ftrKey: string; toolKey: string };
 };
+
+function toNum(v: any): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
 
 function deltaDir(current: number | null, prior: number | null): "UP" | "DOWN" | "FLAT" | null {
   return trendFromDelta(delta(current, prior), 0.0001);
@@ -90,14 +99,15 @@ function tileSurfaceFromBand(preset: Preset, bandKey: BandKey) {
   } as const;
 }
 
+// ----- Formatting (NO % in numbers; % belongs in label) -----
 function fmtTnps(v: number | null) {
   if (v === null) return "—";
   return v.toFixed(2);
 }
 
-function fmtPct1(v: number | null) {
+function fmtPct1NoSymbol(v: number | null) {
   if (v === null) return "—";
-  return `${v.toFixed(1)}%`;
+  return v.toFixed(1);
 }
 
 function fmtDelta(v: number | null, digits = 1) {
@@ -105,14 +115,65 @@ function fmtDelta(v: number | null, digits = 1) {
   return fmtDeltaNum(v, digits);
 }
 
+// ----- Rollup math: match “totals” behavior using denominators -----
+function weightedAvg(valueSum: number, denomSum: number): number | null {
+  if (!Number.isFinite(valueSum) || !Number.isFinite(denomSum) || denomSum <= 0) return null;
+  return valueSum / denomSum;
+}
+
+function rollupFromRows(rows: any[]) {
+  // Keep tiles aligned with Stack Ranking: OK rows only.
+  const ok = (rows ?? []).filter((r) => String(r?.status_badge ?? "") === "OK");
+
+  const headcount = ok.length;
+
+  let tnpsValueSum = 0;
+  let tnpsDenomSum = 0;
+
+  let ftrValueSum = 0;
+  let ftrDenomSum = 0;
+
+  let toolValueSum = 0;
+  let toolDenomSum = 0;
+
+  for (const r of ok) {
+    const tnps = toNum(r.tnps_score);
+    const tnpsSurveys = toNum(r.tnps_surveys);
+    if (tnps != null && tnpsSurveys != null && tnpsSurveys > 0) {
+      tnpsValueSum += tnps * tnpsSurveys;
+      tnpsDenomSum += tnpsSurveys;
+    }
+
+    const ftr = toNum(r.ftr_rate);
+    const ftrJobs = toNum(r.total_ftr_contact_jobs);
+    if (ftr != null && ftrJobs != null && ftrJobs > 0) {
+      ftrValueSum += ftr * ftrJobs;
+      ftrDenomSum += ftrJobs;
+    }
+
+    const tool = toNum(r.tool_usage_rate);
+    const toolEligible = toNum(r.tu_eligible_jobs);
+    if (tool != null && toolEligible != null && toolEligible > 0) {
+      toolValueSum += tool * toolEligible;
+      toolDenomSum += toolEligible;
+    }
+  }
+
+  return {
+    headcount,
+    tnps_score: weightedAvg(tnpsValueSum, tnpsDenomSum),
+    ftr_rate: weightedAvg(ftrValueSum, ftrDenomSum),
+    tool_usage_rate: weightedAvg(toolValueSum, toolDenomSum),
+  };
+}
+
 export default function ReportSummaryTiles({ rows, priorRows, kpis, preset, rubricRows, rubricKeys }: Props) {
-  // Normalize arrays once so dependencies are stable even if props are undefined.
   const currentRows = useMemo(() => rows ?? [], [rows]);
   const priorRowsNorm = useMemo(() => priorRows ?? [], [priorRows]);
 
-  // ✅ Use the weighted rollup helper so tiles match batch totals behavior.
-  const rollCur = useMemo(() => computeP4PRollup(currentRows), [currentRows]);
-  const rollPrev = useMemo(() => computeP4PRollup(priorRowsNorm), [priorRowsNorm]);
+  // ✅ Compute rollups from the SAME flattened row shape as the table.
+  const rollCur = useMemo(() => rollupFromRows(currentRows), [currentRows]);
+  const rollPrev = useMemo(() => rollupFromRows(priorRowsNorm), [priorRowsNorm]);
 
   const headcount = rollCur.headcount;
   const headcountPrior = rollPrev.headcount;
@@ -195,13 +256,13 @@ export default function ReportSummaryTiles({ rows, priorRows, kpis, preset, rubr
         <div className="text-xs text-[var(--to-ink-muted)]">FTR%</div>
 
         <div className="mt-2 flex items-center">
-          <div className="text-2xl font-semibold tabular-nums">{fmtPct1(ftrCur)}</div>
+          <div className="text-2xl font-semibold tabular-nums">{fmtPct1NoSymbol(ftrCur)}</div>
           <DeltaArrow dir={ftrDir} />
         </div>
 
         <div className="mt-3 flex items-center justify-between text-sm">
           <div className="text-[var(--to-ink-muted)]">
-            Prior: <span className="tabular-nums">{fmtPct1(ftrPrev)}</span>
+            Prior: <span className="tabular-nums">{fmtPct1NoSymbol(ftrPrev)}</span>
           </div>
 
           <div className="font-mono text-[var(--to-ink-muted)]">
@@ -216,13 +277,13 @@ export default function ReportSummaryTiles({ rows, priorRows, kpis, preset, rubr
         <div className="text-xs text-[var(--to-ink-muted)]">Tool Usage%</div>
 
         <div className="mt-2 flex items-center">
-          <div className="text-2xl font-semibold tabular-nums">{fmtPct1(toolCur)}</div>
+          <div className="text-2xl font-semibold tabular-nums">{fmtPct1NoSymbol(toolCur)}</div>
           <DeltaArrow dir={toolDir} />
         </div>
 
         <div className="mt-3 flex items-center justify-between text-sm">
           <div className="text-[var(--to-ink-muted)]">
-            Prior: <span className="tabular-nums">{fmtPct1(toolPrev)}</span>
+            Prior: <span className="tabular-nums">{fmtPct1NoSymbol(toolPrev)}</span>
           </div>
 
           <div className="font-mono text-[var(--to-ink-muted)]">

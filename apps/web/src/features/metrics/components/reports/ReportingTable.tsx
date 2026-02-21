@@ -102,10 +102,14 @@ function DeltaMini({ current, prior, digits }: { current: number | null; prior: 
 }
 
 function HoverMetaTooltip({
+  techId,
+  fullName,
   reportsToName,
   affiliationKind,
   affiliationName,
 }: {
+  techId: string;
+  fullName: string;
   reportsToName: string;
   affiliationKind: "company" | "contractor" | null;
   affiliationName: string | null;
@@ -114,7 +118,13 @@ function HoverMetaTooltip({
 
   return (
     <div className="pointer-events-none absolute left-0 top-full mt-2 z-50 hidden group-hover:block">
-      <div className="min-w-[240px] rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] shadow-lg px-3 py-2 text-xs">
+      <div className="min-w-[260px] rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] shadow-lg px-3 py-2 text-xs">
+        <div className="font-medium mb-2">
+          <span className="font-mono">{techId}</span>
+          <span className="px-2 text-[var(--to-ink-muted)]">•</span>
+          {fullName || "—"}
+        </div>
+
         <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           <div className="text-[var(--to-ink-muted)]">Reports To</div>
           <div className="font-medium">{reportsToName || "—"}</div>
@@ -136,6 +146,42 @@ function HoverMetaTooltip({
   );
 }
 
+function TnpsTooltip({
+  surveys,
+  promoters,
+  detractors,
+}: {
+  surveys: number | null;
+  promoters: number | null;
+  detractors: number | null;
+}) {
+  const s = surveys ?? 0;
+  const p = promoters ?? 0;
+  const d = detractors ?? 0;
+
+  const passives = Math.max(0, s - (p + d));
+
+  return (
+    <div className="pointer-events-none absolute left-1/2 top-full mt-2 z-50 hidden group-hover:block -translate-x-1/2">
+      <div className="min-w-[360px] rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] shadow-lg px-3 py-2 text-xs">
+        <div className="font-medium mb-2">tNPS Detail</div>
+
+        <div className="grid grid-cols-4 gap-x-6 gap-y-1">
+          <div className="text-[var(--to-ink-muted)] whitespace-nowrap text-center">Surveys</div>
+          <div className="text-[var(--to-ink-muted)] whitespace-nowrap text-center">Promoters</div>
+          <div className="text-[var(--to-ink-muted)] whitespace-nowrap text-center">Passives</div>
+          <div className="text-[var(--to-ink-muted)] whitespace-nowrap text-center">Detractors</div>
+
+          <div className="font-mono text-center tabular-nums">{fmtCount(surveys)}</div>
+          <div className="font-mono text-center tabular-nums">{fmtCount(promoters)}</div>
+          <div className="font-mono text-center tabular-nums">{fmtCount(passives)}</div>
+          <div className="font-mono text-center tabular-nums">{fmtCount(detractors)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function JobMixTooltip({
   total,
   installs,
@@ -151,28 +197,32 @@ function JobMixTooltip({
 
   return (
     <div className="pointer-events-none absolute right-0 top-full mt-2 z-50 hidden group-hover:block">
-      <div className="rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] shadow-lg px-3 py-2 text-xs">
-        <div className="font-medium mb-1">Work Mix</div>
+      <div className="min-w-[340px] rounded-xl border border-[var(--to-border)] bg-[var(--to-surface)] shadow-lg px-3 py-2 text-xs">
+        <div className="font-medium mb-2">Work Mix</div>
 
-        <div className="grid grid-cols-[auto_auto_auto] gap-x-3 gap-y-1">
-          <div className="text-[var(--to-ink-muted)]">Total Jobs</div>
-          <div className="font-mono text-right">{fmtCount(total)}</div>
+        <div className="grid grid-cols-4 gap-x-6 gap-y-1">
+          {/* labels */}
+          <div className="text-[var(--to-ink-muted)] whitespace-nowrap text-center">Total</div>
+          <div className="text-[var(--to-ink-muted)] whitespace-nowrap text-center">Installs</div>
+          <div className="text-[var(--to-ink-muted)] whitespace-nowrap text-center">SROs</div>
+          <div className="text-[var(--to-ink-muted)] whitespace-nowrap text-center">TCs</div>
+
+          {/* counts */}
+          <div className="font-mono text-center tabular-nums">{fmtCount(total)}</div>
+          <div className="font-mono text-center tabular-nums">{fmtCount(installs)}</div>
+          <div className="font-mono text-center tabular-nums">{fmtCount(sros)}</div>
+          <div className="font-mono text-center tabular-nums">{fmtCount(tcs)}</div>
+
+          {/* percents */}
           <div />
-
-          <div className="text-[var(--to-ink-muted)]">Installs</div>
-          <div className="font-mono text-right">{fmtCount(installs)}</div>
-          <div className="font-mono text-right">{fmtPct(installs ?? 0, denom)}</div>
-
-          <div className="text-[var(--to-ink-muted)]">SROs</div>
-          <div className="font-mono text-right">{fmtCount(sros)}</div>
-          <div className="font-mono text-right">{fmtPct(sros ?? 0, denom)}</div>
-
-          <div className="text-[var(--to-ink-muted)]">TCs</div>
-          <div className="font-mono text-right">{fmtCount(tcs)}</div>
-          <div className="font-mono text-right">{fmtPct(tcs ?? 0, denom)}</div>
+          <div className="font-mono text-center tabular-nums text-[var(--to-ink-muted)]">{fmtPct(installs ?? 0, denom)}</div>
+          <div className="font-mono text-center tabular-nums text-[var(--to-ink-muted)]">{fmtPct(sros ?? 0, denom)}</div>
+          <div className="font-mono text-center tabular-nums text-[var(--to-ink-muted)]">{fmtPct(tcs ?? 0, denom)}</div>
         </div>
 
-        <div className="mt-2 text-[var(--to-ink-muted)]">% is based on Total Jobs.</div>
+        <div className="mt-2 pt-2 border-t border-[var(--to-border)] text-[var(--to-ink-muted)] text-center">
+          % is based on Total Jobs.
+        </div>
       </div>
     </div>
   );
@@ -204,13 +254,13 @@ export function ReportingTable({
   rows: any[];
   showStatus: boolean;
   personNameById: Map<string, string>;
-  personMetaById?: Map<string, PersonMeta>; // ✅ optional for backward-compat
+  personMetaById?: Map<string, PersonMeta>;
   preset: Record<string, any>;
   kpis: KpiDef[];
   slicerTitle: string;
   priorSnapshotByTechId?: Map<string, PriorSnapshot>;
 }) {
-  const metaMap = personMetaById ?? new Map<string, PersonMeta>(); // ✅ default empty map
+  const metaMap = personMetaById ?? new Map<string, PersonMeta>();
 
   const completionPctByTechId = React.useMemo(() => {
     const m = new Map<string, number>();
@@ -274,7 +324,7 @@ export function ReportingTable({
 
   const gridStyle = {
     gridTemplateColumns: [
-      "minmax(260px, 340px)",
+      "minmax(120px, 220px)", // Tech id only; tooltip carries name
       "64px",
       "118px",
       ...kpis.map(() => "minmax(120px, 1fr)"),
@@ -284,9 +334,9 @@ export function ReportingTable({
 
   return (
     <KpiSlicerProvider title={slicerTitle} rows={rows} kpis={kpis} preset={preset}>
-      <DataTable zebra hover layout="fixed">
-        <DataTableHeader gridStyle={gridStyle}>
-          <div>Tech • Name</div>
+      <DataTable zebra hover layout="fixed" gridStyle={gridStyle}>
+        <DataTableHeader>
+          <div>Tech</div>
           <div className="text-center">Rank</div>
           <div className="text-right font-mono">WS (x100)</div>
           {kpis.map((k) => (
@@ -302,9 +352,9 @@ export function ReportingTable({
             const pid = r.person_id ? String(r.person_id) : "";
             const rid = r.reports_to_person_id ? String(r.reports_to_person_id) : "";
 
+            const techId = String(r.tech_id ?? "");
             const fullName = pid ? personNameById.get(pid) ?? "—" : "—";
             const reportsToName = rid ? personNameById.get(rid) ?? "—" : "—";
-
             const meta = pid ? metaMap.get(pid) ?? null : null;
 
             const rowKey = `${r.tech_id}-${idx}`;
@@ -314,40 +364,60 @@ export function ReportingTable({
             const sros = toNum(r.sros);
             const tcs = toNum(r.tcs);
 
-            const techId = String(r.tech_id ?? "");
             const priorSnap = priorSnapshotByTechId?.get(techId);
 
             return (
-              <DataTableRow key={rowKey} gridStyle={gridStyle}>
+              <DataTableRow key={rowKey}>
                 <div className="relative group">
-                  <span className="font-mono">{r.tech_id}</span>
-                  <span className="mx-2">•</span>
-                  {fullName}
+                  <span className="font-mono">{techId}</span>
                   {showStatus && r.status_badge && <StatusMini status={r.status_badge} />}
                   <HoverMetaTooltip
+                    techId={techId}
+                    fullName={fullName}
                     reportsToName={reportsToName}
                     affiliationKind={meta?.affiliation_kind ?? null}
                     affiliationName={meta?.affiliation_name ?? null}
                   />
                 </div>
 
-                <div className="text-center font-mono">{showStatus ? "" : rankByTechId.get(String(r.tech_id)) ?? ""}</div>
+                <div className="text-center font-mono">{showStatus ? "" : rankByTechId.get(techId) ?? ""}</div>
 
                 <div className="text-right font-mono tabular-nums">{fmtWs100(r.weighted_score)}</div>
 
                 {kpis.map((k) => {
                   const cur = toNum(r?.[k.valueField]);
                   const prev = toNum(priorSnap?.[String(k.valueField)]);
+
+                  const isTNPS = String(k.key ?? "").toLowerCase().includes("tnps");
+
                   return (
                     <div key={k.key} className="text-center">
                       <div className="inline-flex flex-col items-center">
                         <div className="font-mono">
-                          <BandChip
-                            bandKey={(r?.[k.bandField] ?? "NO_DATA") as BandKey}
-                            valueText={fmtCustomerKpi(k, r?.[k.valueField])}
-                            preset={preset}
-                          />
+                          {isTNPS ? (
+                            <div className="relative group inline-block">
+                              <div title="">
+                                <BandChip
+                                  bandKey={(r?.[k.bandField] ?? "NO_DATA") as BandKey}
+                                  valueText={fmtCustomerKpi(k, r?.[k.valueField])}
+                                  preset={preset}
+                                />
+                              </div>
+                              <TnpsTooltip
+                                surveys={toNum((r as any).tnps_surveys)}
+                                promoters={toNum((r as any).tnps_promoters)}
+                                detractors={toNum((r as any).tnps_detractors)}
+                              />
+                            </div>
+                          ) : (
+                            <BandChip
+                              bandKey={(r?.[k.bandField] ?? "NO_DATA") as BandKey}
+                              valueText={fmtCustomerKpi(k, r?.[k.valueField])}
+                              preset={preset}
+                            />
+                          )}
                         </div>
+
                         <DeltaMini current={cur} prior={prev} digits={deltaDigits(k)} />
                       </div>
                     </div>

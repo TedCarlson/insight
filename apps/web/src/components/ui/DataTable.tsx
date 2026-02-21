@@ -1,3 +1,7 @@
+// RUN THIS
+// Replace the entire file:
+// apps/web/src/components/ui/DataTable.tsx
+
 // apps/web/src/components/ui/DataTable.tsx
 import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 import { Children, cloneElement, isValidElement } from "react";
@@ -121,11 +125,7 @@ export function DataTableHeader({
 }
 
 export function DataTableBody({ children, zebra = false }: { children: ReactNode; zebra?: boolean }) {
-  return (
-    <div className={cls(zebra && "[&>div:nth-child(even)]:bg-[var(--to-row-zebra)]")}>
-      {children}
-    </div>
-  );
+  return <div className={cls(zebra && "[&>div:nth-child(even)]:bg-[var(--to-row-zebra)]")}>{children}</div>;
 }
 
 export function DataTableRow({

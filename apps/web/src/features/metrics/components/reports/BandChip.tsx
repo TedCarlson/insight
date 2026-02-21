@@ -1,3 +1,7 @@
+// RUN THIS
+// Replace the entire file:
+// apps/web/src/features/metrics/components/reports/BandChip.tsx
+
 import { hexToRgba, isWhiteLike } from "@/features/metrics/lib/reports/colors";
 import type { BandKey } from "@/features/metrics-reports/lib/score";
 
@@ -9,13 +13,15 @@ export type ChipTrend = "UP" | "DOWN" | "FLAT" | null;
  * - consistent width so columns read clean
  * - slightly softer surface, crisp border
  *
- * Optional `trend` renders a tiny arrow beside the pill.
+ * NOTE: We intentionally do NOT render any band tooltip text
+ * (e.g., EXCEEDS/MEETS) via `title` or similar. Color is the signal.
  */
 export function BandChip({
   bandKey,
   valueText,
   preset,
-  title,
+  // keep for backwards compatibility; intentionally unused (no native tooltip)
+  title: _title,
   trend = null,
 }: {
   bandKey: BandKey;
@@ -58,7 +64,7 @@ export function BandChip({
   }
 
   return (
-    <span className="inline-flex items-center gap-1" title={title ?? bandKey}>
+    <span className="inline-flex items-center gap-1">
       <span
         className={[
           // sizing

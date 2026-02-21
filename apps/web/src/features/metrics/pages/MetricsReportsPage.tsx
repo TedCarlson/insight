@@ -304,7 +304,10 @@ async function loadRowsForBatchFromView(sb: any, pc_org_id: string, batch_id: st
       tcs: metricNum(mj, "TCs"),
 
       total_ftr_contact_jobs: metricNum(mj, "Total FTR/Contact Jobs"),
+            // tNPS breakdown (raw keys)
       tnps_surveys: metricNum(mj, "tNPS Surveys"),
+      tnps_promoters: metricNum(mj, "Promoters"),
+      tnps_detractors: metricNum(mj, "Detractors"),
       tu_eligible_jobs: metricNum(mj, "TUEligibleJobs"),
 
       job_volume_band: null,

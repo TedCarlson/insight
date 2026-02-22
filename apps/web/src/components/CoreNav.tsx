@@ -119,7 +119,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
       <div className="flex w-full items-center justify-between px-6 py-3">
         <div className="flex items-center gap-4">
           <Link href={homeHref} prefetch={false} className="text-sm font-semibold">
-            TeamOptix
+            Insight
           </Link>
 
           <nav className="flex items-center gap-2">

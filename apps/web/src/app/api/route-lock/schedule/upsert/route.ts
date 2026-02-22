@@ -13,6 +13,7 @@ type DayFlags = Record<DayKey, boolean>;
 
 type ScheduleWriteRow = {
   assignment_id: string;
+  tech_id: string;
   default_route_id?: string | null;
   days: DayFlags;
 };
@@ -21,12 +22,6 @@ function asUuid(v: unknown): string | null {
   const s = typeof v === "string" ? v.trim() : "";
   if (!s) return null;
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)) return null;
-  return s;
-}
-
-function asDate(v: unknown): string | null {
-  const s = typeof v === "string" ? v.trim() : "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   return s;
 }
 
@@ -46,35 +41,13 @@ function normalizeDays(days: any): DayFlags {
   };
 }
 
-function todayInNY(): string {
-  // YYYY-MM-DD in America/New_York
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+function num(v: unknown, fallback = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-function addDaysISO(iso: string, days: number): string {
-  // Treat ISO date as UTC midnight. We only care about YYYY-MM-DD.
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function clampStartDateToToday(startDateISO: string): string {
-  const today = todayInNY();
-  return startDateISO < today ? today : startDateISO;
-}
-
-function cleanScheduleName(techId: string | null, fullName: string | null): string {
-  const a = String(techId ?? "").trim();
-  const b = String(fullName ?? "").trim();
-  const combined = [a, b].filter(Boolean).join(" ").trim();
-  // schedule_name is NOT NULL; give a stable fallback if roster text is missing
-  const out = combined || "planning_week";
-  return out.slice(0, 140);
+function clampNonNeg(n: number): number {
+  return n < 0 ? 0 : n;
 }
 
 async function guardSelectedOrgRouteLockManage() {
@@ -123,11 +96,13 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null);
 
-    // IMPORTANT: Never allow planning writes to start before today (NY).
-    // This prevents “overwriting” past facts and keeps history intact.
-    const requestedStart = asDate(body?.start_date) ?? todayInNY();
-    const start_date = clampStartDateToToday(requestedStart);
-    const dayBefore = addDaysISO(start_date, -1);
+    const fiscal_month_id = asUuid(body?.fiscal_month_id);
+    if (!fiscal_month_id) {
+      return NextResponse.json({ ok: false, error: "Missing/invalid fiscal_month_id (UUID)" }, { status: 400 });
+    }
+
+    const hoursPerDay = clampNonNeg(num(body?.hoursPerDay, 8));
+    const unitsPerHour = clampNonNeg(num(body?.unitsPerHour, 12));
 
     const rows = (body?.rows ?? []) as ScheduleWriteRow[];
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -136,6 +111,7 @@ export async function POST(req: Request) {
 
     const clean = rows.map((r) => ({
       assignment_id: asUuid(r.assignment_id),
+      tech_id: String(r.tech_id ?? "").trim(),
       default_route_id: r.default_route_id == null ? null : asUuid(r.default_route_id),
       days: normalizeDays(r.days),
     }));
@@ -143,14 +119,20 @@ export async function POST(req: Request) {
     if (clean.some((r) => !r.assignment_id)) {
       return NextResponse.json({ ok: false, error: "Invalid assignment_id (must be UUID)" }, { status: 400 });
     }
+    if (clean.some((r) => !r.tech_id)) {
+      return NextResponse.json({ ok: false, error: "Missing tech_id (must be non-empty text)" }, { status: 400 });
+    }
     if (clean.some((r) => r.default_route_id === undefined)) {
-      return NextResponse.json({ ok: false, error: "Invalid default_route_id (must be UUID or null)" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Invalid default_route_id (must be UUID or null)" },
+        { status: 400 }
+      );
     }
 
     const admin = supabaseAdmin();
 
     // Validate assignment belongs to selected org (independent of schedule rows existing)
-    const assignmentIds = Array.from(new Set(clean.map((r) => r.assignment_id!)));
+    const assignmentIds = Array.from(new Set(clean.map((r) => r.assignment_id!).filter(Boolean)));
 
     const { data: allowedAssignments, error: allowedErr } = await admin
       .from("assignment")
@@ -169,53 +151,43 @@ export async function POST(req: Request) {
       );
     }
 
-    // Pull roster labels for schedule_name (tech_id + full_name), scoped to org.
-    // We prefer master_roster_v because it already knows how to build full_name.
-    const { data: rosterLabels, error: rosterErr } = await admin
-      .from("master_roster_v")
-      .select("assignment_id, tech_id, full_name")
-      .eq("pc_org_id", guard.pc_org_id)
-      .in("assignment_id", assignmentIds);
+    // Upsert per-row WITHOUT guessing unique constraints (safe + compatible)
+    let rows_inserted = 0;
+    let rows_updated = 0;
 
-    if (rosterErr) return NextResponse.json({ ok: false, error: rosterErr.message }, { status: 500 });
-
-    const labelByAssignment = new Map<string, { tech_id: string | null; full_name: string | null }>();
-    for (const r of rosterLabels ?? []) {
-      const aid = String((r as any).assignment_id ?? "").trim();
-      if (!aid) continue;
-      labelByAssignment.set(aid, {
-        tech_id: (r as any).tech_id == null ? null : String((r as any).tech_id),
-        full_name: (r as any).full_name == null ? null : String((r as any).full_name),
-      });
-    }
-
-    const saved_schedule_ids: string[] = [];
-
-    // Rolling baseline per assignment:
-    // - If an open row already exists WITH THE SAME start_date => UPDATE it (no duplicate “covers today” rows)
-    // - Else close open row => end_date = dayBeforeStart
-    // - Insert new open row with end_date NULL
     for (const r of clean) {
-      const labels = labelByAssignment.get(String(r.assignment_id)) ?? { tech_id: null, full_name: null };
-      const schedule_name = cleanScheduleName(labels.tech_id, labels.full_name);
+      const sch_hours_sun = r.days.sun ? hoursPerDay : 0;
+      const sch_hours_mon = r.days.mon ? hoursPerDay : 0;
+      const sch_hours_tue = r.days.tue ? hoursPerDay : 0;
+      const sch_hours_wed = r.days.wed ? hoursPerDay : 0;
+      const sch_hours_thu = r.days.thu ? hoursPerDay : 0;
+      const sch_hours_fri = r.days.fri ? hoursPerDay : 0;
+      const sch_hours_sat = r.days.sat ? hoursPerDay : 0;
 
-      // Find currently-open schedule row for this assignment (if any)
-      const { data: openRow, error: openErr } = await admin
-        .from("schedule")
-        .select("schedule_id,start_date")
+      const sch_units_sun = sch_hours_sun * unitsPerHour;
+      const sch_units_mon = sch_hours_mon * unitsPerHour;
+      const sch_units_tue = sch_hours_tue * unitsPerHour;
+      const sch_units_wed = sch_hours_wed * unitsPerHour;
+      const sch_units_thu = sch_hours_thu * unitsPerHour;
+      const sch_units_fri = sch_hours_fri * unitsPerHour;
+      const sch_units_sat = sch_hours_sat * unitsPerHour;
+
+      // Find existing baseline row for (org, fiscal_month, assignment)
+      const { data: existing, error: exErr } = await admin
+        .from("schedule_baseline_month")
+        .select("schedule_baseline_month_id")
+        .eq("pc_org_id", guard.pc_org_id)
+        .eq("fiscal_month_id", fiscal_month_id)
         .eq("assignment_id", r.assignment_id!)
-        .is("end_date", null)
         .maybeSingle();
 
-      if (openErr) return NextResponse.json({ ok: false, error: openErr.message }, { status: 500 });
+      if (exErr) return NextResponse.json({ ok: false, error: exErr.message }, { status: 500 });
 
-      const openStart = String(openRow?.start_date ?? "").trim();
-      const openId = String(openRow?.schedule_id ?? "").trim();
-
-      // Payload: ONLY raw schedule facts (no derived hours/units).
-      // Derived numbers belong in views / report surfaces, not stored here.
-      const commonPayload: any = {
-        schedule_name,
+      const payload: any = {
+        pc_org_id: guard.pc_org_id,
+        fiscal_month_id,
+        tech_id: r.tech_id,
+        assignment_id: r.assignment_id!,
         default_route_id: r.default_route_id ?? null,
 
         sun: r.days.sun,
@@ -225,52 +197,62 @@ export async function POST(req: Request) {
         thu: r.days.thu,
         fri: r.days.fri,
         sat: r.days.sat,
+
+        sch_hours_sun,
+        sch_hours_mon,
+        sch_hours_tue,
+        sch_hours_wed,
+        sch_hours_thu,
+        sch_hours_fri,
+        sch_hours_sat,
+
+        sch_units_sun,
+        sch_units_mon,
+        sch_units_tue,
+        sch_units_wed,
+        sch_units_thu,
+        sch_units_fri,
+        sch_units_sat,
+
+        is_active: true,
+        updated_by: guard.auth_user_id,
+        updated_at: new Date().toISOString(),
       };
 
-      // If open row exists and already starts on the effective start_date, update it in-place
-      if (openId && openStart === start_date) {
-        const { data: updated, error: updErr } = await admin
-          .from("schedule")
-          .update(commonPayload)
-          .eq("schedule_id", openId)
-          .select("schedule_id")
-          .maybeSingle();
+      if (existing?.schedule_baseline_month_id) {
+        const { error: upErr } = await admin
+          .from("schedule_baseline_month")
+          .update(payload)
+          .eq("schedule_baseline_month_id", existing.schedule_baseline_month_id);
 
-        if (updErr) return NextResponse.json({ ok: false, error: updErr.message }, { status: 500 });
-        if (updated?.schedule_id) saved_schedule_ids.push(String(updated.schedule_id));
-        continue;
+        if (upErr) return NextResponse.json({ ok: false, error: upErr.message }, { status: 500 });
+        rows_updated += 1;
+      } else {
+        payload.created_at = new Date().toISOString();
+        const { error: insErr } = await admin.from("schedule_baseline_month").insert(payload);
+        if (insErr) return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
+        rows_inserted += 1;
       }
-
-      // Otherwise close currently-open row (if any)
-      if (openId) {
-        // Closing a row is allowed even if it started in the past;
-        // we are NOT overwriting its flags, just ending the range before the new baseline begins.
-        const { error: closeErr } = await admin.from("schedule").update({ end_date: dayBefore }).eq("schedule_id", openId);
-        if (closeErr) return NextResponse.json({ ok: false, error: closeErr.message }, { status: 500 });
-      }
-
-      // Insert new open row
-      const { data: inserted, error: insErr } = await admin
-        .from("schedule")
-        .insert({
-          assignment_id: r.assignment_id!,
-          start_date,
-          end_date: null,
-          ...commonPayload,
-        })
-        .select("schedule_id")
-        .maybeSingle();
-
-      if (insErr) return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
-      if (inserted?.schedule_id) saved_schedule_ids.push(String(inserted.schedule_id));
     }
+
+    // Immediately paint forward-only day facts for reporting surfaces
+    const { data: sweepRes, error: sweepErr } = await admin.rpc("schedule_sweep_month", {
+      p_pc_org_id: guard.pc_org_id,
+      p_fiscal_month_id: fiscal_month_id,
+    });
+
+    if (sweepErr) return NextResponse.json({ ok: false, error: sweepErr.message }, { status: 500 });
 
     return NextResponse.json({
       ok: true,
-      effective_start_date: start_date,
-      saved_schedule_ids,
+      pc_org_id: guard.pc_org_id,
+      fiscal_month_id,
+      rows_inserted,
+      rows_updated,
+      rows_total_written: rows_inserted + rows_updated,
+      sweep: sweepRes ?? null,
     });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "unknown error" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: String(e?.message ?? "unknown error") }, { status: 500 });
   }
 }

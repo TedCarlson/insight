@@ -14,7 +14,7 @@ export default async function Page() {
   // Logged-out users stay on "/" (prevents auth redirect loops)
   return (
     <main className="mx-auto flex min-h-[70vh] max-w-2xl flex-col justify-center gap-6 px-6 py-12">
-      <h1 className="text-3xl font-semibold tracking-tight">TeamOptix Insight</h1>
+      <h1 className="text-3xl font-semibold tracking-tight">ITG  •  Insight powered by TeamOptix</h1>
       <p className="text-base text-muted-foreground">Please sign in to continue.</p>
 
       <div className="flex gap-3">

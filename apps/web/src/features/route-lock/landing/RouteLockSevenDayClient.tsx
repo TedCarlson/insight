@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
 
 type Day = {
@@ -14,11 +15,14 @@ type Day = {
   total_headcount: number;
   util_pct: number | null;
 
+  // NOTE: this is ROUTES-space delta (same as calendar)
   delta_forecast: number | null;
 
   has_sv: boolean;
   has_check_in: boolean;
 };
+
+type UnitMode = "routes" | "hours" | "units";
 
 function weekdayShort(iso: string): string {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -100,50 +104,22 @@ function fmtSigned(n: number | null): string {
   return n > 0 ? `+${n}` : String(n);
 }
 
+function fmt(mode: UnitMode, routes: number | null, hours: number | null, units: number | null): string {
+  if (mode === "routes") return routes === null ? "—" : String(routes);
+  if (mode === "hours") return hours === null ? "—" : String(hours);
+  return units === null ? "—" : String(units);
+}
+
 export function RouteLockSevenDayClient(props: { days: Day[] }) {
-  const days = props.days ?? [];
+  // eslint fix: memoize the fallback [] so deps don't change every render
+  const days = useMemo(() => props.days ?? [], [props.days]);
 
-  if (!days.length) {
-    return (
-      <Card>
-        <div className="text-sm font-semibold">Next 7 Days</div>
-        <div className="mt-1 text-xs text-[var(--to-ink-muted)]">No days available for this window.</div>
-      </Card>
-    );
-  }
+  const [mode, setMode] = useState<UnitMode>("routes");
 
-  // --- totals (7-day summary) ---
-  const totals = days.reduce(
-    (acc, d) => {
-      const qh = d.quota_hours;
-      const qr = d.quota_routes;
-      const on = d.scheduled_routes;
+  const totals = useMemo(() => {
+    if (!days.length) return null;
 
-      acc.scheduled_routes += n0(on);
-      acc.scheduled_hours += n0(on) * 8;
-      acc.scheduled_units += n0(on) * 96;
-
-      acc.quota_hours += n0(qh);
-      acc.quota_routes += qr == null ? 0 : n0(qr);
-      acc.quota_units += n0(qh) * 12;
-
-      // for a clean "7-day delta" we compare totals in routes space
-      if (qr != null) acc.delta_routes += n0(on) - n0(qr);
-
-      acc.scheduled_techs += n0(d.scheduled_techs);
-
-      // utilization (weighted by headcount days)
-      if (d.total_headcount) {
-        acc.headcount_days += n0(d.total_headcount);
-        acc.on_days += n0(d.scheduled_techs);
-      }
-
-      acc.sv_days += d.has_sv ? 1 : 0;
-      acc.ci_days += d.has_check_in ? 1 : 0;
-
-      return acc;
-    },
-    {
+    const acc = {
       scheduled_routes: 0,
       scheduled_hours: 0,
       scheduled_units: 0,
@@ -152,35 +128,78 @@ export function RouteLockSevenDayClient(props: { days: Day[] }) {
       quota_routes: 0,
       quota_units: 0,
 
+      // stays ROUTES-space (same as calendar)
       delta_routes: 0,
-
-      scheduled_techs: 0,
 
       headcount_days: 0,
       on_days: 0,
 
       sv_days: 0,
       ci_days: 0,
-    }
-  );
+    };
 
-  const totalUtil = pct(totals.on_days, totals.headcount_days);
+    for (const d of days) {
+      const onR = n0(d.scheduled_routes);
+      const onH = onR * 8;
+      const onU = onR * 96;
+
+      const qH = d.quota_hours;
+      const qR = d.quota_routes;
+      const qU = qH ? qH * 12 : null;
+
+      acc.scheduled_routes += onR;
+      acc.scheduled_hours += onH;
+      acc.scheduled_units += onU;
+
+      acc.quota_hours += n0(qH);
+      acc.quota_routes += qR == null ? 0 : n0(qR);
+      acc.quota_units += n0(qU);
+
+      if (qR != null) acc.delta_routes += onR - n0(qR);
+
+      if (d.total_headcount) {
+        acc.headcount_days += n0(d.total_headcount);
+        acc.on_days += n0(d.scheduled_techs);
+      }
+
+      acc.sv_days += d.has_sv ? 1 : 0;
+      acc.ci_days += d.has_check_in ? 1 : 0;
+    }
+
+    return acc;
+  }, [days]);
+
+  if (!days.length) {
+    return (
+      <Card>
+        <div className="text-sm font-semibold">Next 7-Days</div>
+        <div className="mt-1 text-xs text-[var(--to-ink-muted)]">No days available for this window.</div>
+      </Card>
+    );
+  }
+
+  const totalUtil = totals ? pct(totals.on_days, totals.headcount_days) : "—";
 
   return (
     <Card>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-semibold">Next 7 Days</div>
-          <div className="text-xs text-[var(--to-ink-muted)]">
-            Short forecast readiness • Routes / Hours / Units shown together • Option B coloring on the day pill
-          </div>
+          <div className="text-sm font-semibold">7-Day • Route Lock Forecast</div>
+          <div className="text-xs text-[var(--to-ink-muted)]">Short forecast readiness • Toggle Routes / Hours / Units</div>
         </div>
-        <div className="text-xs text-[var(--to-ink-muted)]">Rolling view</div>
+
+        <div className="flex items-center gap-2">
+          <select className="to-input h-8 text-xs" value={mode} onChange={(e) => setMode(e.target.value as UnitMode)}>
+            <option value="routes">Routes</option>
+            <option value="hours">Hours</option>
+            <option value="units">Units</option>
+          </select>
+        </div>
       </div>
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
         {days.map((d) => {
-          const delta = d.delta_forecast;
+          const delta = d.delta_forecast; // ROUTES-space delta (matches calendar)
 
           const onR = d.scheduled_routes;
           const onH = onR * 8;
@@ -218,15 +237,11 @@ export function RouteLockSevenDayClient(props: { days: Day[] }) {
               <div className="mt-2 space-y-1 text-xs tabular-nums">
                 <div className="flex justify-between">
                   <span className="text-[var(--to-ink-muted)]">On</span>
-                  <span>
-                    {onR}r • {onH}h • {onU}u
-                  </span>
+                  <span>{fmt(mode, onR, onH, onU)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-[var(--to-ink-muted)]">Quota</span>
-                  <span>
-                    {qR ?? "—"}r • {qH ?? "—"}h • {qU ?? "—"}u
-                  </span>
+                  <span>{fmt(mode, qR, qH, qU)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-[var(--to-ink-muted)]">Δ</span>
@@ -240,9 +255,7 @@ export function RouteLockSevenDayClient(props: { days: Day[] }) {
                   </span>
                 </div>
 
-                {delta === 0 ? (
-                  <div className="mt-1 text-[10px] text-[var(--to-ink-muted)]">MEETS (no cushion)</div>
-                ) : null}
+                {delta === 0 ? <div className="mt-1 text-[10px] text-[var(--to-ink-muted)]">MEETS</div> : null}
               </div>
             </div>
           );
@@ -250,51 +263,49 @@ export function RouteLockSevenDayClient(props: { days: Day[] }) {
       </div>
 
       {/* 7-day summary */}
-      <div className="mt-4 rounded-xl border border-[var(--to-border)] bg-[var(--to-surface-2)] p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold">7-Day Summary</div>
+      {totals ? (
+        <div className="mt-4 rounded-xl border border-[var(--to-border)] bg-[var(--to-surface-2)] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">7-Day Summary</div>
+              <div className="text-xs text-[var(--to-ink-muted)]">
+                Totals across the rolling window • Utilization is weighted by headcount-days
+              </div>
+            </div>
             <div className="text-xs text-[var(--to-ink-muted)]">
-              Totals across the rolling window • Utilization is weighted by headcount-days
-            </div>
-          </div>
-          <div className="text-xs text-[var(--to-ink-muted)]">
-            SV: {totals.sv_days}/{days.length} • CI: {totals.ci_days}/{days.length}
-          </div>
-        </div>
-
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-lg border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
-            <div className="text-xs text-[var(--to-ink-muted)]">On (Total)</div>
-            <div className="mt-1 text-sm font-semibold tabular-nums">
-              {totals.scheduled_routes}r • {totals.scheduled_hours}h • {totals.scheduled_units}u
+              SV: {totals.sv_days}/{days.length} • CI: {totals.ci_days}/{days.length}
             </div>
           </div>
 
-          <div className="rounded-lg border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
-            <div className="text-xs text-[var(--to-ink-muted)]">Quota (Total)</div>
-            <div className="mt-1 text-sm font-semibold tabular-nums">
-              {totals.quota_routes}r • {totals.quota_hours}h • {totals.quota_units}u
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-lg border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
+              <div className="text-xs text-[var(--to-ink-muted)]">On (Total)</div>
+              <div className="mt-1 text-sm font-semibold tabular-nums">
+                {fmt(mode, totals.scheduled_routes, totals.scheduled_hours, totals.scheduled_units)}
+              </div>
             </div>
-          </div>
 
-          <div className="rounded-lg border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
-            <div className="text-xs text-[var(--to-ink-muted)]">Δ (Total)</div>
-            <div className="mt-1 text-sm font-semibold tabular-nums">{fmtSigned(totals.delta_routes)}</div>
-            <div className="mt-1 text-[10px] text-[var(--to-ink-muted)]">
-              (Computed on routes where quota exists)
+            <div className="rounded-lg border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
+              <div className="text-xs text-[var(--to-ink-muted)]">Quota (Total)</div>
+              <div className="mt-1 text-sm font-semibold tabular-nums">
+                {fmt(mode, totals.quota_routes, totals.quota_hours, totals.quota_units)}
+              </div>
             </div>
-          </div>
 
-          <div className="rounded-lg border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
-            <div className="text-xs text-[var(--to-ink-muted)]">Utilization (7-day)</div>
-            <div className="mt-1 text-sm font-semibold tabular-nums">{totalUtil}</div>
-            <div className="mt-1 text-[10px] text-[var(--to-ink-muted)]">
-              Σ scheduled techs / Σ headcount (by day)
+            <div className="rounded-lg border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
+              <div className="text-xs text-[var(--to-ink-muted)]">Δ (Total)</div>
+              <div className="mt-1 text-sm font-semibold tabular-nums">{fmtSigned(totals.delta_routes)}</div>
+              <div className="mt-1 text-[10px] text-[var(--to-ink-muted)]">(Computed in routes-space)</div>
+            </div>
+
+            <div className="rounded-lg border border-[var(--to-border)] bg-[var(--to-surface)] p-3">
+              <div className="text-xs text-[var(--to-ink-muted)]">Utilization (7-day)</div>
+              <div className="mt-1 text-sm font-semibold tabular-nums">{totalUtil}</div>
+              <div className="mt-1 text-[10px] text-[var(--to-ink-muted)]">Σ scheduled techs / Σ headcount (by day)</div>
             </div>
           </div>
         </div>
-      </div>
+      ) : null}
     </Card>
   );
 }

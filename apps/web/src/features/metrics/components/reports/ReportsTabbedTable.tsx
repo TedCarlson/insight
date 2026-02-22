@@ -63,7 +63,7 @@ export default function ReportsTabbedTable({
   const allRows = React.useMemo(() => [...okRows, ...nonOkRows], [okRows, nonOkRows]);
 
   const view = React.useMemo(() => {
-    if (tab === "STACK") return { title: "Metrics (Stack Ranking)", rows: okRows, showStatus: false, slicerTitle: "Metrics slicer" };
+    if (tab === "STACK") return { title: "Metrics (Ranking)", rows: okRows, showStatus: false, slicerTitle: "Metrics slicer" };
     if (tab === "OUTLIERS") return { title: "Outliers (Attention Required)", rows: nonOkRows, showStatus: true, slicerTitle: "Outliers slicer" };
     return { title: "All (Full Set)", rows: allRows, showStatus: true, slicerTitle: "All slicer" };
   }, [tab, okRows, nonOkRows, allRows]);
@@ -87,7 +87,7 @@ export default function ReportsTabbedTable({
       </div>
 
       <div className="mt-3 flex items-center gap-2 overflow-x-auto">
-        <TabButton active={tab === "STACK"} onClick={() => setTab("STACK")} label="Stack Ranking" />
+        <TabButton active={tab === "STACK"} onClick={() => setTab("STACK")} label="Ranking" />
         <TabButton active={tab === "OUTLIERS"} onClick={() => setTab("OUTLIERS")} label="Outliers" />
         <TabButton active={tab === "ALL"} onClick={() => setTab("ALL")} label="All" />
       </div>

@@ -1,47 +1,41 @@
-// RUN THIS
-// Replace the entire file:
 // apps/web/src/app/(app)/route-lock/schedule/page.tsx
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { unstable_noStore as noStore } from "next/cache";
 
 import { PageShell } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
 import { Toolbar } from "@/components/ui/Toolbar";
-import { unstable_noStore as noStore } from "next/cache";
-import { supabaseServer } from "@/shared/data/supabase/server";
-import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 
+import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
+import { supabaseServer } from "@/shared/data/supabase/server";
+
+import { todayInNY } from "@/features/route-lock/calendar/lib/fiscalMonth";
 import { ScheduleGridClient } from "@/features/route-lock/schedule/ScheduleGridClient";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type RosterRow = {
-  assignment_id: string | null;
-  person_id: string | null;
-  full_name: string | null;
-  tech_id: string | null;
-  position_title: string | null;
+type SearchParams = { month?: string };
+type Props = { searchParams?: Promise<SearchParams> };
 
-  start_date: string | null;
-  end_date: string | null;
-  assignment_active: boolean | null;
+type FiscalMonth = { fiscal_month_id: string; start_date: string; end_date: string; label: string | null };
 
-  reports_to_assignment_id: string | null;
-  reports_to_person_id: string | null;
-  reports_to_full_name: string | null;
-
+type Technician = {
+  assignment_id: string;
+  tech_id: string;
+  full_name: string;
   co_name: string | null;
 };
 
-type ScheduleRow = {
-  schedule_id: string;
-  assignment_id: string;
-  start_date: string;
-  end_date: string | null;
-  default_route_id: string | null;
+type RouteRow = { route_id: string; route_name: string };
 
+type ScheduleBaselineRow = {
+  schedule_baseline_month_id?: string;
+  assignment_id: string;
+  tech_id: string;
+  default_route_id: string | null;
   sun: boolean | null;
   mon: boolean | null;
   tue: boolean | null;
@@ -51,72 +45,58 @@ type ScheduleRow = {
   sat: boolean | null;
 };
 
-type RouteRow = { route_id: string; route_name: string };
-
-type QuotaRow = {
-  route_id: string;
-  route_name: string | null;
-  fiscal_month_label: string | null;
-  fiscal_month_start_date: string | null;
-  fiscal_month_end_date: string | null;
-  qt_hours: number | null;
-  qt_units: number | null;
-
-  qh_sun: number;
-  qh_mon: number;
-  qh_tue: number;
-  qh_wed: number;
-  qh_thu: number;
-  qh_fri: number;
-  qh_sat: number;
-
-  qu_sun: number | null;
-  qu_mon: number | null;
-  qu_tue: number | null;
-  qu_wed: number | null;
-  qu_thu: number | null;
-  qu_fri: number | null;
-  qu_sat: number | null;
-};
-
-function roleText(r: any): string {
-  return String(r?.position_title ?? "").trim();
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
 }
 
-function isSupervisorRow(r: any): boolean {
-  return /supervisor/i.test(roleText(r));
+async function resolveFiscalMonthForDate(sb: any, anchorISO: string): Promise<FiscalMonth | null> {
+  const { data, error } = await sb
+    .from("fiscal_month_dim")
+    .select("fiscal_month_id,start_date,end_date,label")
+    .lte("start_date", anchorISO)
+    .gte("end_date", anchorISO)
+    .maybeSingle();
+
+  if (error || !data?.fiscal_month_id) return null;
+  return {
+    fiscal_month_id: String(data.fiscal_month_id),
+    start_date: String(data.start_date),
+    end_date: String(data.end_date),
+    label: (data.label as string | null) ?? null,
+  };
 }
 
-function isTechnicianRow(r: any): boolean {
-  const t = roleText(r);
-  if (/technician/i.test(t)) return true;
-  return Boolean(String(r?.tech_id ?? "").trim()) && !isSupervisorRow(r);
+async function resolveNextFiscalMonth(sb: any, currentEndISO: string): Promise<FiscalMonth | null> {
+  const { data, error } = await sb
+    .from("fiscal_month_dim")
+    .select("fiscal_month_id,start_date,end_date,label")
+    .gt("start_date", currentEndISO)
+    .order("start_date", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data?.fiscal_month_id) return null;
+  return {
+    fiscal_month_id: String(data.fiscal_month_id),
+    start_date: String(data.start_date),
+    end_date: String(data.end_date),
+    label: (data.label as string | null) ?? null,
+  };
 }
 
-function isPOLAReady(r: RosterRow, membershipSet: Set<string>): boolean {
-  // P
-  const personOk = !!String(r.full_name ?? "").trim();
-
-  // O (membership)
-  const pid = String(r.person_id ?? "").trim();
-  const orgOk = !!pid && membershipSet.has(pid);
-
-  // L (has leader)
-  const leadershipOk =
-    !!String(r.reports_to_assignment_id ?? "").trim() ||
-    !!String(r.reports_to_person_id ?? "").trim() ||
-    !!String(r.reports_to_full_name ?? "").trim();
-
-  // A (active assignment)
-  const assignmentIdOk = !!String(r.assignment_id ?? "").trim();
-  const assignmentEnd = String(r.end_date ?? "").trim();
-  const assignmentActive = !!r.assignment_active;
-  const assignmentOk = assignmentIdOk && assignmentActive && !assignmentEnd;
-
-  return personOk && orgOk && leadershipOk && assignmentOk;
-}
-
-function RouteLockBackHeader() {
+function MonthToggle({
+  active,
+  currentHref,
+  nextHref,
+  currentLabel,
+  nextLabel,
+}: {
+  active: "current" | "next";
+  currentHref: string;
+  nextHref: string;
+  currentLabel: string;
+  nextLabel: string;
+}) {
   return (
     <Card variant="subtle">
       <Toolbar
@@ -127,8 +107,26 @@ function RouteLockBackHeader() {
             </Link>
             <div className="min-w-0">
               <div className="text-sm font-medium truncate">Schedule</div>
-              <div className="text-xs text-[var(--to-ink-muted)] truncate">Route Lock • Schedule setup</div>
+              <div className="text-xs text-[var(--to-ink-muted)] truncate">
+                Planning baseline • commit paints schedule_day_fact forward-only
+              </div>
             </div>
+          </div>
+        }
+        right={
+          <div className="flex items-center gap-2">
+            <Link
+              href={currentHref}
+              className={cls("to-btn h-8 px-3 text-xs", active === "current" ? "to-btn--primary" : "to-btn--secondary")}
+            >
+              Current • {currentLabel}
+            </Link>
+            <Link
+              href={nextHref}
+              className={cls("to-btn h-8 px-3 text-xs", active === "next" ? "to-btn--primary" : "to-btn--secondary")}
+            >
+              Next • {nextLabel}
+            </Link>
           </div>
         }
       />
@@ -136,180 +134,168 @@ function RouteLockBackHeader() {
   );
 }
 
-function ErrorShell({ message }: { message: string }) {
-  return (
-    <PageShell>
-      <RouteLockBackHeader />
-      <Card>
-        <div className="text-sm text-[var(--to-warning)]">{message}</div>
-      </Card>
-    </PageShell>
-  );
-}
-
-function todayInNY(): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
-export default async function RouteLockSchedulePage() {
+export default async function RouteLockSchedulePage({ searchParams }: Props) {
   noStore();
+
   const scope = await requireSelectedPcOrgServer();
   if (!scope.ok) redirect("/home");
 
   const sb = await supabaseServer();
   const pc_org_id = scope.selected_pc_org_id;
 
-  // Membership set for "O"
-  const { data: memRows, error: memErr } = await sb.from("v_roster_current").select("person_id").eq("pc_org_id", pc_org_id);
-
-  if (memErr) {
-    return <ErrorShell message={`Could not load roster membership (v_roster_current): ${memErr.message}`} />;
+  const today = todayInNY();
+  const fmCurrent = await resolveFiscalMonthForDate(sb, today);
+  if (!fmCurrent) {
+    return (
+      <PageShell>
+        <Card>
+          <div className="text-sm text-[var(--to-warning)]">Could not resolve current fiscal month (fiscal_month_dim).</div>
+        </Card>
+      </PageShell>
+    );
   }
 
-  const membershipSet = new Set<string>((memRows ?? []).map((r: any) => String(r?.person_id ?? "").trim()).filter(Boolean));
-
-  // ✅ Route Lock roster surface (decoupled from master_roster_v)
-  const { data: rosterRows, error: rosterErr } = await sb
-    .from("route_lock_roster_v")
-    .select(
-      [
-        "assignment_id",
-        "person_id",
-        "full_name",
-        "tech_id",
-        "position_title",
-        "start_date",
-        "end_date",
-        "assignment_active",
-        "reports_to_assignment_id",
-        "reports_to_person_id",
-        "reports_to_full_name",
-        "co_name",
-      ].join(",")
-    )
-    .eq("pc_org_id", pc_org_id)
-    .order("tech_id", { ascending: true })
-    .order("full_name", { ascending: true });
-
-  if (rosterErr) {
-    return <ErrorShell message={`Could not load roster (route_lock_roster_v): ${rosterErr.message}`} />;
+  const fmNext = await resolveNextFiscalMonth(sb, fmCurrent.end_date);
+  if (!fmNext) {
+    return (
+      <PageShell>
+        <Card>
+          <div className="text-sm text-[var(--to-warning)]">Could not resolve next fiscal month (fiscal_month_dim).</div>
+        </Card>
+      </PageShell>
+    );
   }
 
-  const roster = (rosterRows ?? []) as unknown as RosterRow[];
+  const sp = (await searchParams) ?? {};
+  const monthMode = String(sp?.month ?? "current") === "next" ? "next" : "current";
+  const activeFm = monthMode === "next" ? fmNext : fmCurrent;
 
-  const technicians = roster
-    .filter((r) => isTechnicianRow(r) && isPOLAReady(r, membershipSet))
-    .map((r) => ({
-      assignment_id: String(r.assignment_id ?? ""),
-      tech_id: String(r.tech_id ?? ""),
-      full_name: String(r.full_name ?? ""),
-      co_name: String(r.co_name ?? "").trim() || null,
-    }))
-    .filter((r) => r.assignment_id && r.tech_id && r.full_name);
+  const currentHref = "/route-lock/schedule?month=current";
+  const nextHref = "/route-lock/schedule?month=next";
 
-  // Routes surface
-  const { data: routeRows, error: routeErr } = await sb
-    .from("route_admin_v")
-    .select("route_id, route_name")
+  // Routes (dropdown)
+  const { data: routeRows, error: routesErr } = await sb
+    .from("route")
+    .select("route_id,route_name")
     .eq("pc_org_id", pc_org_id)
     .order("route_name", { ascending: true });
 
-  if (routeErr) {
-    return <ErrorShell message={`Could not load routes (route_admin_v): ${routeErr.message}`} />;
+  if (routesErr) {
+    return (
+      <PageShell>
+        <MonthToggle
+          active={monthMode}
+          currentHref={currentHref}
+          nextHref={nextHref}
+          currentLabel={String(fmCurrent.label ?? `${fmCurrent.start_date} → ${fmCurrent.end_date}`)}
+          nextLabel={String(fmNext.label ?? `${fmNext.start_date} → ${fmNext.end_date}`)}
+        />
+        <Card>
+          <div className="text-sm text-[var(--to-warning)]">{routesErr.message}</div>
+        </Card>
+      </PageShell>
+    );
   }
 
-  const routes = (routeRows ?? []) as unknown as RouteRow[];
+  const routes = (routeRows ?? []) as RouteRow[];
 
-  // Schedule surface (existing schedule rows)
-  const { data: scheduleRows, error: scheduleErr } = await sb
-    .from("schedule_admin_v")
-    .select(["schedule_id", "assignment_id", "start_date", "end_date", "default_route_id", "sun", "mon", "tue", "wed", "thu", "fri", "sat"].join(","))
+  // Roster techs (DO NOT POLA-GATE schedule planning)
+  // Planning must be possible even if leadership/membership data is incomplete.
+  const { data: rosterRows, error: rosterErr } = await sb
+    .from("route_lock_roster_v")
+    .select("assignment_id,tech_id,full_name,co_name,assignment_active,end_date")
+    .eq("pc_org_id", pc_org_id);
+
+  if (rosterErr) {
+    return (
+      <PageShell>
+        <MonthToggle
+          active={monthMode}
+          currentHref={currentHref}
+          nextHref={nextHref}
+          currentLabel={String(fmCurrent.label ?? `${fmCurrent.start_date} → ${fmCurrent.end_date}`)}
+          nextLabel={String(fmNext.label ?? `${fmNext.start_date} → ${fmNext.end_date}`)}
+        />
+        <Card>
+          <div className="text-sm text-[var(--to-warning)]">{rosterErr.message}</div>
+        </Card>
+      </PageShell>
+    );
+  }
+
+  const techs: Technician[] = (rosterRows ?? [])
+    .map((r: any) => ({
+      assignment_id: String(r?.assignment_id ?? "").trim(),
+      tech_id: String(r?.tech_id ?? "").trim(),
+      full_name: String(r?.full_name ?? "").trim(),
+      co_name: r?.co_name == null ? null : String(r.co_name),
+      assignment_active: !!r?.assignment_active,
+      end_date: r?.end_date == null ? null : String(r.end_date),
+    }))
+    .filter((r) => r.assignment_id && r.tech_id) // tech_id is the external truth key
+    .filter((r) => r.assignment_active && !r.end_date)
+    .map(({ assignment_active: _a, end_date: _e, ...rest }) => rest);
+
+  // Existing baselines for this fiscal month
+  const { data: baselineRows, error: baselineErr } = await sb
+    .from("schedule_baseline_month")
+    .select("schedule_baseline_month_id,assignment_id,tech_id,default_route_id,sun,mon,tue,wed,thu,fri,sat")
     .eq("pc_org_id", pc_org_id)
-    .order("start_date", { ascending: false })
-    .order("end_date", { ascending: false, nullsFirst: true })
-    .order("schedule_id", { ascending: false });
+    .eq("fiscal_month_id", activeFm.fiscal_month_id)
+    .eq("is_active", true);
 
-  if (scheduleErr) {
-    return <ErrorShell message={`Could not load schedules (schedule_admin_v): ${scheduleErr.message}`} />;
+  if (baselineErr) {
+    return (
+      <PageShell>
+        <MonthToggle
+          active={monthMode}
+          currentHref={currentHref}
+          nextHref={nextHref}
+          currentLabel={String(fmCurrent.label ?? `${fmCurrent.start_date} → ${fmCurrent.end_date}`)}
+          nextLabel={String(fmNext.label ?? `${fmNext.start_date} → ${fmNext.end_date}`)}
+        />
+        <Card>
+          <div className="text-sm text-[var(--to-warning)]">{baselineErr.message}</div>
+        </Card>
+      </PageShell>
+    );
   }
 
-  const schedules = (scheduleRows ?? []) as unknown as ScheduleRow[];
+  const scheduleByAssignment: Record<string, ScheduleBaselineRow> = {};
+  for (const r of (baselineRows ?? []) as any[]) {
+    const assignment_id = String(r?.assignment_id ?? "").trim();
+    if (!assignment_id) continue;
 
-  // Pick the schedule row that is in-effect "today"
-  const today = todayInNY();
-  const scheduleByAssignment = new Map<string, ScheduleRow>();
-
-  for (const s of schedules) {
-    const aid = String(s.assignment_id ?? "").trim();
-    if (!aid || scheduleByAssignment.has(aid)) continue;
-
-    const start = String(s.start_date ?? "").trim();
-    const end = String(s.end_date ?? "").trim();
-
-    const coversToday = !!start && start <= today && (!end || end >= today);
-    if (coversToday) scheduleByAssignment.set(aid, s);
+    scheduleByAssignment[assignment_id] = {
+      schedule_baseline_month_id: r?.schedule_baseline_month_id ? String(r.schedule_baseline_month_id) : undefined,
+      assignment_id,
+      tech_id: String(r?.tech_id ?? "").trim(),
+      default_route_id: r?.default_route_id ? String(r.default_route_id) : null,
+      sun: r?.sun ?? null,
+      mon: r?.mon ?? null,
+      tue: r?.tue ?? null,
+      wed: r?.wed ?? null,
+      thu: r?.thu ?? null,
+      fri: r?.fri ?? null,
+      sat: r?.sat ?? null,
+    };
   }
-
-  // Quota rollup totals for current fiscal month (existing behavior)
-  const { data: quotaRows, error: quotaErr } = await sb
-    .from("quota_admin_v")
-    .select(
-      [
-        "route_id",
-        "route_name",
-        "fiscal_month_label",
-        "fiscal_month_start_date",
-        "fiscal_month_end_date",
-        "qt_hours",
-        "qt_units",
-        "qh_sun",
-        "qh_mon",
-        "qh_tue",
-        "qh_wed",
-        "qh_thu",
-        "qh_fri",
-        "qh_sat",
-        "qu_sun",
-        "qu_mon",
-        "qu_tue",
-        "qu_wed",
-        "qu_thu",
-        "qu_fri",
-        "qu_sat",
-      ].join(",")
-    )
-    .eq("pc_org_id", pc_org_id)
-    .lte("fiscal_month_start_date", today)
-    .gte("fiscal_month_end_date", today);
-
-  const quota = (quotaRows ?? []) as unknown as QuotaRow[];
-
-  const quotaLabel = String(quota?.[0]?.fiscal_month_label ?? "").trim();
-  const totalHours = quota.reduce((acc, r) => acc + (Number(r.qt_hours ?? 0) || 0), 0);
-  const totalUnits = quota.reduce((acc, r) => acc + (Number(r.qt_units ?? 0) || 0), 0);
 
   return (
     <PageShell>
-      <RouteLockBackHeader />
-
-      <Card>
-        <div className="text-sm font-medium">{quotaLabel ? `${quotaLabel} · Quota totals` : "Quota totals"}</div>
-        <div className="text-xs text-[var(--to-ink-muted)]">
-          Total Hours: {Math.round(totalHours)} · Total Units: {Math.round(totalUnits)}
-          {quotaErr ? <span className="ml-2 text-[var(--to-warning)]">(quota unavailable)</span> : null}
-        </div>
-      </Card>
+      <MonthToggle
+        active={monthMode}
+        currentHref={currentHref}
+        nextHref={nextHref}
+        currentLabel={String(fmCurrent.label ?? `${fmCurrent.start_date} → ${fmCurrent.end_date}`)}
+        nextLabel={String(fmNext.label ?? `${fmNext.start_date} → ${fmNext.end_date}`)}
+      />
 
       <ScheduleGridClient
-        key={`${pc_org_id}-${today}`}
-        technicians={technicians}
+        technicians={techs}
         routes={routes}
-        scheduleByAssignment={Object.fromEntries(scheduleByAssignment.entries())}
+        scheduleByAssignment={scheduleByAssignment}
+        fiscalMonthId={activeFm.fiscal_month_id}
         defaults={{ unitsPerHour: 12, hoursPerDay: 8 }}
       />
     </PageShell>

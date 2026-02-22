@@ -1,8 +1,12 @@
-// apps/web/src/app/route-lock/schedule/ScheduleGridClient.tsx
+// RUN THIS
+// Replace the entire file:
+// apps/web/src/features/route-lock/schedule/ScheduleGridClient.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import { useRouter } from "next/navigation";
+
 import { Card } from "@/components/ui/Card";
 import { DataTable, DataTableBody, DataTableHeader, DataTableRow } from "@/components/ui/DataTable";
 import { useToast } from "@/components/ui/Toast";
@@ -16,11 +20,10 @@ type Technician = {
 
 type RouteRow = { route_id: string; route_name: string };
 
-type ScheduleRow = {
-  schedule_id: string;
+type ScheduleBaselineRow = {
+  schedule_baseline_month_id?: string;
   assignment_id: string;
-  start_date: string;
-  end_date: string | null;
+  tech_id: string;
   default_route_id: string | null;
   sun: boolean | null;
   mon: boolean | null;
@@ -95,31 +98,33 @@ function DayToggle({
   );
 }
 
-function isoToday(): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
+/**
+ * IMPORTANT:
+ * - If NO persisted baseline row exists for this tech in this fiscal month,
+ *   we default to OFF (all days false) so "next month empty until seed" is respected
+ *   and so missing hydration doesn't silently appear as "all scheduled".
+ */
+function normalizeFromBaselineRow(s?: ScheduleBaselineRow) {
+  const hasRow = !!s;
 
-function normalizeFromScheduleRow(s?: ScheduleRow) {
   return {
     routeId: String(s?.default_route_id ?? ""),
     days: {
-      sun: s?.sun ?? true,
-      mon: s?.mon ?? true,
-      tue: s?.tue ?? true,
-      wed: s?.wed ?? true,
-      thu: s?.thu ?? true,
-      fri: s?.fri ?? true,
-      sat: s?.sat ?? true,
+      sun: hasRow ? !!s?.sun : false,
+      mon: hasRow ? !!s?.mon : false,
+      tue: hasRow ? !!s?.tue : false,
+      wed: hasRow ? !!s?.wed : false,
+      thu: hasRow ? !!s?.thu : false,
+      fri: hasRow ? !!s?.fri : false,
+      sat: hasRow ? !!s?.sat : false,
     } as Record<DayKey, boolean>,
   };
 }
 
-function buildRows(technicians: Technician[], scheduleByAssignment: Record<string, ScheduleRow>): RowState[] {
+function buildRows(
+  technicians: Technician[],
+  scheduleByAssignment: Record<string, ScheduleBaselineRow>
+): RowState[] {
   const sorted = [...technicians].sort((a, b) => {
     const ak = techSortKey(String(a.tech_id ?? ""));
     const bk = techSortKey(String(b.tech_id ?? ""));
@@ -132,7 +137,7 @@ function buildRows(technicians: Technician[], scheduleByAssignment: Record<strin
 
   return sorted.map((t) => {
     const s = scheduleByAssignment[t.assignment_id];
-    const norm = normalizeFromScheduleRow(s);
+    const norm = normalizeFromBaselineRow(s);
     return {
       assignmentId: t.assignment_id,
       techId: t.tech_id,
@@ -152,22 +157,30 @@ function rowsEqual(a: RowState, b: { routeId: string; days: Record<DayKey, boole
   return true;
 }
 
+function fmtInt(v: unknown): string {
+  const n = Number(v);
+  return Number.isFinite(n) ? String(Math.trunc(n)) : "0";
+}
+
 export function ScheduleGridClient({
   technicians,
   routes,
   scheduleByAssignment,
+  fiscalMonthId,
   defaults,
   onTotalsChange,
 }: {
   technicians: Technician[];
   routes: RouteRow[];
-  scheduleByAssignment: Record<string, ScheduleRow>;
+  scheduleByAssignment: Record<string, ScheduleBaselineRow>;
+  fiscalMonthId: string;
   defaults: { unitsPerHour: number; hoursPerDay: number };
   onTotalsChange?: (t: ScheduleTotals) => void;
 }) {
-  const [startDate, setStartDate] = useState<string>(isoToday());
-  const [search, setSearch] = useState<string>("");
+  const router = useRouter();
+  const toast = useToast();
 
+  const [search, setSearch] = useState<string>("");
   const [rows, setRows] = useState<RowState[]>(() => buildRows(technicians, scheduleByAssignment));
 
   // Baseline snapshot used for dirty detection
@@ -178,20 +191,15 @@ export function ScheduleGridClient({
     const snap: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
     for (const t of technicians) {
       const s = scheduleByAssignment[t.assignment_id];
-      snap[t.assignment_id] = normalizeFromScheduleRow(s);
+      snap[t.assignment_id] = normalizeFromBaselineRow(s);
     }
     baselineRef.current = snap;
   }
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string>("");
-  const toast = useToast();
 
-  /**
-   * ✅ C) HYDRATION FIX (THIS IS THE ONE YOU ASKED “WHERE DOES IT GO?”)
-   * Put this INSIDE the component, AFTER rows state + baselineRef exist.
-   * It guarantees: when you return to /schedule and props are fresh, the UI resets to DB truth.
-   */
+  // Hydrate on prop changes (return visits / server refresh)
   useEffect(() => {
     const nextRows = buildRows(technicians, scheduleByAssignment);
     setRows(nextRows);
@@ -199,7 +207,7 @@ export function ScheduleGridClient({
     const snap: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
     for (const t of technicians) {
       const s = scheduleByAssignment[t.assignment_id];
-      snap[t.assignment_id] = normalizeFromScheduleRow(s);
+      snap[t.assignment_id] = normalizeFromBaselineRow(s);
     }
     baselineRef.current = snap;
 
@@ -254,11 +262,12 @@ export function ScheduleGridClient({
     setIsSaving(true);
     try {
       const payload = {
-        start_date: startDate,
+        fiscal_month_id: fiscalMonthId,
         hoursPerDay: defaults.hoursPerDay,
         unitsPerHour: defaults.unitsPerHour,
         rows: dirtyRows.map((r) => ({
           assignment_id: r.assignmentId,
+          tech_id: r.techId,
           default_route_id: r.routeId ? r.routeId : null,
           days: r.days,
         })),
@@ -279,7 +288,24 @@ export function ScheduleGridClient({
         return;
       }
 
-      // Update baseline to match committed state
+      // Stats (API may return different keys depending on implementation)
+      const inserted = fmtInt(json?.inserted ?? json?.rows_inserted ?? json?.baseline_inserted);
+      const updated = fmtInt(json?.updated ?? json?.rows_updated ?? json?.baseline_updated);
+
+      const sweepUp = fmtInt(
+        json?.sweep?.rows_upserted ??
+          json?.sweep_rows_upserted ??
+          json?.rows_upserted ??
+          json?.sweep_upserted
+      );
+      const sweepDel = fmtInt(
+        json?.sweep?.rows_deleted ??
+          json?.sweep_rows_deleted ??
+          json?.rows_deleted ??
+          json?.sweep_deleted
+      );
+
+      // Update baseline snapshot immediately to clear "dirty" state
       const nextBase: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
       for (const r of rows) {
         nextBase[r.assignmentId] = { routeId: r.routeId, days: { ...r.days } };
@@ -288,12 +314,13 @@ export function ScheduleGridClient({
 
       toast.push({
         variant: "success",
-        title: "Schedule committed",
-        message: `Committed ${dirtyRows.length} row(s).`,
-        durationMs: 1800,
+        title: "Schedule saved",
+        message: `Baseline: +${inserted} inserted, ${updated} updated • Sweep: ${sweepUp} upserted, ${sweepDel} deleted`,
+        durationMs: 2600,
       });
 
-      window.location.href = "/route-lock";
+      // Critical: refresh so server props rehydrate from persisted baselines
+      router.refresh();
     } catch (e: any) {
       const msg = String(e?.message ?? "Commit failed");
       setSaveMsg(msg);
@@ -360,11 +387,6 @@ export function ScheduleGridClient({
       <div className="flex flex-col gap-2 p-3 border-b border-[var(--to-border)]">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
-            <div className="text-xs text-[var(--to-ink-muted)]">Effective start date</div>
-            <input className="to-input h-8 text-xs" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </div>
-
-          <div className="flex flex-col gap-1">
             <div className="text-xs text-[var(--to-ink-muted)]">Schedule Changes</div>
             <div className="text-sm font-medium">{dirtyRows.length}</div>
           </div>
@@ -394,7 +416,7 @@ export function ScheduleGridClient({
 
         {saveMsg ? <div className="text-sm text-[var(--to-ink-muted)]">{saveMsg}</div> : null}
         <div className="text-xs text-[var(--to-ink-muted)]">
-          Commits only changed rows. Rolling baseline: prior open row closes, new row opens with end_date NULL.
+          Commits update schedule_baseline_month for the selected fiscal month, then re-paints schedule_day_fact forward-only.
         </div>
       </div>
 
@@ -443,7 +465,11 @@ export function ScheduleGridClient({
                 </div>
 
                 <div className="flex items-center">
-                  <select className="to-select h-8 text-xs" value={r.routeId} onChange={(e) => setRoute(r.assignmentId, e.target.value)}>
+                  <select
+                    className="to-select h-8 text-xs"
+                    value={r.routeId}
+                    onChange={(e) => setRoute(r.assignmentId, e.target.value)}
+                  >
                     <option value="">—</option>
                     {routes.map((rt) => (
                       <option key={rt.route_id} value={rt.route_id}>
@@ -455,7 +481,11 @@ export function ScheduleGridClient({
 
                 {DAYS.map((d) => (
                   <div key={d.key} className="flex items-center">
-                    <DayToggle dayLabel={d.label} value={!!r.days[d.key]} onToggle={() => toggleDay(r.assignmentId, d.key)} />
+                    <DayToggle
+                      dayLabel={d.label}
+                      value={!!r.days[d.key]}
+                      onToggle={() => toggleDay(r.assignmentId, d.key)}
+                    />
                   </div>
                 ))}
 

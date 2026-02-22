@@ -1,16 +1,22 @@
 // apps/web/src/features/route-lock/pages/RouteLockPage.tsx
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { unstable_noStore as noStore } from "next/cache";
 
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
 
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
-import { supabaseServer } from "@/shared/data/supabase/server";
+
+// IMPORTANT: use admin for reads (avoids RLS filtering facts to empty)
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 import { todayInNY } from "@/features/route-lock/calendar/lib/fiscalMonth";
 import { getRouteLockDaysForCurrentFiscalMonth } from "@/features/route-lock/calendar/lib/getRouteLockDays.server";
 import { RouteLockSevenDayClient } from "@/features/route-lock/landing/RouteLockSevenDayClient";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -27,10 +33,12 @@ function SectionCard({ title, href }: { title: string; href: string }) {
 }
 
 export default async function RouteLockPage() {
+  noStore();
+
   const scope = await requireSelectedPcOrgServer();
   if (!scope.ok) redirect("/home");
 
-  const sb = await supabaseServer();
+  const sb = supabaseAdmin(); // admin reads
   const pc_org_id = scope.selected_pc_org_id;
 
   const res = await getRouteLockDaysForCurrentFiscalMonth(sb, pc_org_id);
@@ -40,18 +48,17 @@ export default async function RouteLockPage() {
 
   return (
     <PageShell>
-      <PageHeader title="Route Lock" subtitle="Configure schedule, quotas, routes, and validation." />
+      <PageHeader title="Route Lock" subtitle="Configure schedule, quotas, routes, shift-validation, and check-in." />
 
-      {/* Tightened to 3 per row on large screens */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <SectionCard title="Schedule" href="/route-lock/schedule" />
-        <SectionCard title="Quota" href="/route-lock/quota" />
-        <SectionCard title="Routes" href="/route-lock/routes" />
-        <SectionCard title="Shift Validation" href="/route-lock/shift-validation" />
-        <SectionCard title="Calendar" href="/route-lock/calendar" />
+      <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-6">
+        <SectionCard title="View Lock Calendar" href="/route-lock/calendar" />
+        <SectionCard title="Set Baseline Schedule" href="/route-lock/schedule" />
+        <SectionCard title="Shift Validation Upload" href="/route-lock/shift-validation" />
+        <SectionCard title="Check-In Upload" href="/route-lock/check-in" />
+        <SectionCard title="Load Review Quota" href="/route-lock/quota" />
+        <SectionCard title="Manage Routes" href="/route-lock/routes" />
       </div>
 
-      {/* Rolling 7-day readiness detail + 7-day summary totals */}
       <RouteLockSevenDayClient days={next7} />
     </PageShell>
   );

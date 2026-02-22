@@ -554,7 +554,7 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
     <PageShell>
       <ReportsClientShell
         title="Reports"
-        subtitle="Metrics • Stack ranking + outliers (P4P Manager)"
+        subtitle="Metrics •  Ranking + outliers (P4P Manager)"
         preset={activePreset}
         rubricRows={rubricRowsAll}
         kpis={P4P_KPIS}

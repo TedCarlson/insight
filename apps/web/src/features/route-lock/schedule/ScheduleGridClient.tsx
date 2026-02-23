@@ -1,6 +1,7 @@
 // RUN THIS
 // Replace the entire file:
 // apps/web/src/features/route-lock/schedule/ScheduleGridClient.tsx
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -160,6 +161,17 @@ function rowsEqual(a: RowState, b: { routeId: string; days: Record<DayKey, boole
 function fmtInt(v: unknown): string {
   const n = Number(v);
   return Number.isFinite(n) ? String(Math.trunc(n)) : "0";
+}
+
+function allDaysOff(days: Record<DayKey, boolean>): boolean {
+  for (const d of DAYS) {
+    if (days[d.key]) return false;
+  }
+  return true;
+}
+
+function setAllDays(next: boolean): Record<DayKey, boolean> {
+  return { sun: next, mon: next, tue: next, wed: next, thu: next, fri: next, sat: next };
 }
 
 export function ScheduleGridClient({
@@ -330,9 +342,11 @@ export function ScheduleGridClient({
     }
   }
 
+  // Columns:
+  // TechId | Name | Add/Remove | Route | 7 Days | Stats
   const gridStyle: CSSProperties = useMemo(
     () => ({
-      gridTemplateColumns: "6rem minmax(14rem,1fr) 11rem repeat(7, 5.25rem) minmax(16rem, 0.9fr) 5.25rem",
+      gridTemplateColumns: "6rem minmax(14rem,1fr) 5.75rem 11rem repeat(7, 5.25rem) minmax(16rem, 0.9fr)",
     }),
     []
   );
@@ -347,14 +361,15 @@ export function ScheduleGridClient({
     );
   }
 
-  function clearRow(assignmentId: string) {
+  function toggleAllDays(assignmentId: string) {
     setRows((prev) =>
       prev.map((r) => {
         if (r.assignmentId !== assignmentId) return r;
+        const isAllOff = allDaysOff(r.days);
         return {
           ...r,
-          routeId: "",
-          days: { sun: false, mon: false, tue: false, wed: false, thu: false, fri: false, sat: false },
+          // Keep route as-is. This is a schedule utility button (days only).
+          days: setAllDays(isAllOff ? true : false),
         };
       })
     );
@@ -415,14 +430,12 @@ export function ScheduleGridClient({
         </div>
 
         {saveMsg ? <div className="text-sm text-[var(--to-ink-muted)]">{saveMsg}</div> : null}
-        <div className="text-xs text-[var(--to-ink-muted)]">
-          Commits update schedule_baseline_month for the selected fiscal month, then re-paints schedule_day_fact forward-only.
-        </div>
       </div>
 
       <DataTableRow gridStyle={gridStyle} className="items-center">
         <div className="whitespace-nowrap font-medium"></div>
         <div className="min-w-0 font-medium"></div>
+        <div className="whitespace-nowrap font-medium"></div>
         <div className="min-w-0 font-medium">Scheduled Totals</div>
 
         {DAYS.map((d) => (
@@ -432,13 +445,13 @@ export function ScheduleGridClient({
         ))}
 
         <div />
-        <div />
       </DataTableRow>
 
       <DataTable layout="fixed" gridStyle={gridStyle}>
         <DataTableHeader gridStyle={gridStyle}>
           <div className="whitespace-nowrap">Tech Id</div>
           <div className="min-w-0">Name</div>
+          <div className="whitespace-nowrap text-center"> </div>
           <div className="whitespace-nowrap">Route</div>
           {DAYS.map((d) => (
             <div key={d.key} className="text-center whitespace-nowrap">
@@ -446,11 +459,13 @@ export function ScheduleGridClient({
             </div>
           ))}
           <div className="whitespace-nowrap">Stats</div>
-          <div className="whitespace-nowrap text-right"> </div>
         </DataTableHeader>
 
         <DataTableBody zebra>
           {viewRows.map((r) => {
+            const isAllOff = allDaysOff(r.days);
+            const btnLabel = isAllOff ? "Add" : "Remove";
+
             const daysOn = Object.values(r.days).reduce((acc, v) => acc + (v ? 1 : 0), 0);
             const hours = daysOn * defaults.hoursPerDay;
             const units = hours * defaults.unitsPerHour;
@@ -462,6 +477,17 @@ export function ScheduleGridClient({
                 <div className="min-w-0">
                   <div className="truncate">{r.name}</div>
                   {r.coName ? <div className="truncate text-xs text-[var(--to-ink-muted)]">{r.coName}</div> : null}
+                </div>
+
+                <div className="flex items-center justify-center">
+                  <button
+                    type="button"
+                    className="to-btn to-btn--secondary h-7 px-2 text-xs"
+                    onClick={() => toggleAllDays(r.assignmentId)}
+                    title={isAllOff ? "Add all 7 days" : "Remove all 7 days"}
+                  >
+                    {btnLabel}
+                  </button>
                 </div>
 
                 <div className="flex items-center">
@@ -481,27 +507,12 @@ export function ScheduleGridClient({
 
                 {DAYS.map((d) => (
                   <div key={d.key} className="flex items-center">
-                    <DayToggle
-                      dayLabel={d.label}
-                      value={!!r.days[d.key]}
-                      onToggle={() => toggleDay(r.assignmentId, d.key)}
-                    />
+                    <DayToggle dayLabel={d.label} value={!!r.days[d.key]} onToggle={() => toggleDay(r.assignmentId, d.key)} />
                   </div>
                 ))}
 
                 <div className="whitespace-nowrap text-sm">
                   {daysOn} days • {Math.round(units)} units • {hours.toFixed(0)} hours
-                </div>
-
-                <div className="flex items-center justify-end">
-                  <button
-                    type="button"
-                    className="to-btn to-btn--secondary h-7 px-2 text-xs"
-                    onClick={() => clearRow(r.assignmentId)}
-                    title="Clear schedule (route + all days off)"
-                  >
-                    Remove
-                  </button>
                 </div>
               </DataTableRow>
             );

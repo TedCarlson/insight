@@ -1,3 +1,5 @@
+// RUN THIS
+// Replace the entire file:
 // apps/web/src/app/(app)/route-lock/schedule/page.tsx
 
 import Link from "next/link";
@@ -199,10 +201,9 @@ export default async function RouteLockSchedulePage({ searchParams }: Props) {
 
   const routes = (routeRows ?? []) as RouteRow[];
 
-  // Roster techs (DO NOT POLA-GATE schedule planning)
-  // Planning must be possible even if leadership/membership data is incomplete.
+  // Roster techs (TECH-ONLY for Schedule)
   const { data: rosterRows, error: rosterErr } = await sb
-    .from("route_lock_roster_v")
+    .from("route_lock_roster_tech_v")
     .select("assignment_id,tech_id,full_name,co_name,assignment_active,end_date")
     .eq("pc_org_id", pc_org_id);
 

@@ -55,7 +55,7 @@ export default async function RouteLockPage() {
         <SectionCard title="Set Baseline Schedule" href="/route-lock/schedule" />
         <SectionCard title="Shift Validation Upload" href="/route-lock/shift-validation" />
         <SectionCard title="Check-In Upload" href="/route-lock/check-in" />
-        <SectionCard title="Load Review Quota" href="/route-lock/quota" />
+        <SectionCard title="Load/Review Quota" href="/route-lock/quota" />
         <SectionCard title="Manage Routes" href="/route-lock/routes" />
       </div>
 

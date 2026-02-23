@@ -1,7 +1,3 @@
-// RUN THIS
-// Replace the entire file:
-// apps/web/src/features/route-lock/schedule/ScheduleGridClient.tsx
-
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -17,6 +13,7 @@ type Technician = {
   tech_id: string;
   full_name: string;
   co_name: string | null;
+  not_on_roster?: boolean;
 };
 
 type RouteRow = { route_id: string; route_name: string };
@@ -51,6 +48,7 @@ type RowState = {
   techId: string;
   name: string;
   coName: string | null;
+  notOnRoster: boolean;
   routeId: string; // "" means unset
   days: Record<DayKey, boolean>;
 };
@@ -144,6 +142,7 @@ function buildRows(
       techId: t.tech_id,
       name: t.full_name,
       coName: t.co_name ?? null,
+      notOnRoster: !!t.not_on_roster,
       routeId: norm.routeId,
       days: norm.days,
     };
@@ -195,10 +194,8 @@ export function ScheduleGridClient({
   const [search, setSearch] = useState<string>("");
   const [rows, setRows] = useState<RowState[]>(() => buildRows(technicians, scheduleByAssignment));
 
-  // Baseline snapshot used for dirty detection
   const baselineRef = useRef<Record<string, { routeId: string; days: Record<DayKey, boolean> }> | null>(null);
 
-  // Initialize baseline once (first render)
   if (baselineRef.current === null) {
     const snap: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
     for (const t of technicians) {
@@ -211,7 +208,7 @@ export function ScheduleGridClient({
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string>("");
 
-  // Hydrate on prop changes (return visits / server refresh)
+  // Hydrate on prop changes
   useEffect(() => {
     const nextRows = buildRows(technicians, scheduleByAssignment);
     setRows(nextRows);
@@ -300,24 +297,24 @@ export function ScheduleGridClient({
         return;
       }
 
-      // Stats (API may return different keys depending on implementation)
-      const inserted = fmtInt(json?.inserted ?? json?.rows_inserted ?? json?.baseline_inserted);
+      const inserted = fmtInt(json?.inserted ?? json?.rows_inserted ?? json?.baseline_inserted ?? json?.baseline_upserted);
       const updated = fmtInt(json?.updated ?? json?.rows_updated ?? json?.baseline_updated);
 
       const sweepUp = fmtInt(
         json?.sweep?.rows_upserted ??
           json?.sweep_rows_upserted ??
           json?.rows_upserted ??
-          json?.sweep_upserted
+          json?.sweep_upserted ??
+          json?.sweep?.rows_upserted
       );
       const sweepDel = fmtInt(
         json?.sweep?.rows_deleted ??
           json?.sweep_rows_deleted ??
           json?.rows_deleted ??
-          json?.sweep_deleted
+          json?.sweep_deleted ??
+          json?.sweep?.rows_deleted
       );
 
-      // Update baseline snapshot immediately to clear "dirty" state
       const nextBase: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
       for (const r of rows) {
         nextBase[r.assignmentId] = { routeId: r.routeId, days: { ...r.days } };
@@ -331,7 +328,6 @@ export function ScheduleGridClient({
         durationMs: 2600,
       });
 
-      // Critical: refresh so server props rehydrate from persisted baselines
       router.refresh();
     } catch (e: any) {
       const msg = String(e?.message ?? "Commit failed");
@@ -368,7 +364,6 @@ export function ScheduleGridClient({
         const isAllOff = allDaysOff(r.days);
         return {
           ...r,
-          // Keep route as-is. This is a schedule utility button (days only).
           days: setAllDays(isAllOff ? true : false),
         };
       })
@@ -399,6 +394,7 @@ export function ScheduleGridClient({
 
   return (
     <Card>
+      {/* Top controls */}
       <div className="flex flex-col gap-2 p-3 border-b border-[var(--to-border)]">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
@@ -432,93 +428,125 @@ export function ScheduleGridClient({
         {saveMsg ? <div className="text-sm text-[var(--to-ink-muted)]">{saveMsg}</div> : null}
       </div>
 
-      <DataTableRow gridStyle={gridStyle} className="items-center">
-        <div className="whitespace-nowrap font-medium"></div>
-        <div className="min-w-0 font-medium"></div>
-        <div className="whitespace-nowrap font-medium"></div>
-        <div className="min-w-0 font-medium">Scheduled Totals</div>
-
-        {DAYS.map((d) => (
-          <div key={d.key} className="text-center">
-            <span className="text-sm font-medium">{totals.perDay[d.key]}</span>
-          </div>
-        ))}
-
-        <div />
-      </DataTableRow>
-
-      <DataTable layout="fixed" gridStyle={gridStyle}>
-        <DataTableHeader gridStyle={gridStyle}>
-          <div className="whitespace-nowrap">Tech Id</div>
-          <div className="min-w-0">Name</div>
-          <div className="whitespace-nowrap text-center"> </div>
-          <div className="whitespace-nowrap">Route</div>
-          {DAYS.map((d) => (
-            <div key={d.key} className="text-center whitespace-nowrap">
-              {d.label}
-            </div>
-          ))}
-          <div className="whitespace-nowrap">Stats</div>
-        </DataTableHeader>
-
-        <DataTableBody zebra>
-          {viewRows.map((r) => {
-            const isAllOff = allDaysOff(r.days);
-            const btnLabel = isAllOff ? "Add" : "Remove";
-
-            const daysOn = Object.values(r.days).reduce((acc, v) => acc + (v ? 1 : 0), 0);
-            const hours = daysOn * defaults.hoursPerDay;
-            const units = hours * defaults.unitsPerHour;
-
-            return (
-              <DataTableRow key={r.assignmentId} gridStyle={gridStyle} className="items-center">
-                <div className="whitespace-nowrap">{r.techId}</div>
-
-                <div className="min-w-0">
-                  <div className="truncate">{r.name}</div>
-                  {r.coName ? <div className="truncate text-xs text-[var(--to-ink-muted)]">{r.coName}</div> : null}
+      {/* Scroll container: header + body + footer */}
+      <div
+        className={cls(
+          "relative",
+          "max-h-[calc(100vh-16rem)]", // keeps it usable on big teams
+          "overflow-auto"
+        )}
+      >
+        {/* Sticky header */}
+        <div className="sticky top-0 z-20 bg-[var(--to-surface)] border-b border-[var(--to-border)]">
+          <DataTable layout="fixed" gridStyle={gridStyle}>
+            <DataTableHeader gridStyle={gridStyle}>
+              <div className="whitespace-nowrap">Tech Id</div>
+              <div className="min-w-0">Name</div>
+              <div className="whitespace-nowrap text-center"> </div>
+              <div className="whitespace-nowrap">Route</div>
+              {DAYS.map((d) => (
+                <div key={d.key} className="text-center whitespace-nowrap">
+                  {d.label}
                 </div>
+              ))}
+              <div className="whitespace-nowrap">Stats</div>
+            </DataTableHeader>
+          </DataTable>
+        </div>
 
-                <div className="flex items-center justify-center">
-                  <button
-                    type="button"
-                    className="to-btn to-btn--secondary h-7 px-2 text-xs"
-                    onClick={() => toggleAllDays(r.assignmentId)}
-                    title={isAllOff ? "Add all 7 days" : "Remove all 7 days"}
-                  >
-                    {btnLabel}
-                  </button>
-                </div>
+        {/* Body */}
+        <DataTable layout="fixed" gridStyle={gridStyle}>
+          <DataTableBody zebra>
+            {viewRows.map((r) => {
+              const isAllOff = allDaysOff(r.days);
+              const btnLabel = isAllOff ? "Add" : "Remove";
 
-                <div className="flex items-center">
-                  <select
-                    className="to-select h-8 text-xs"
-                    value={r.routeId}
-                    onChange={(e) => setRoute(r.assignmentId, e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {routes.map((rt) => (
-                      <option key={rt.route_id} value={rt.route_id}>
-                        {rt.route_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              const daysOn = Object.values(r.days).reduce((acc, v) => acc + (v ? 1 : 0), 0);
+              const hours = daysOn * defaults.hoursPerDay;
+              const units = hours * defaults.unitsPerHour;
 
-                {DAYS.map((d) => (
-                  <div key={d.key} className="flex items-center">
-                    <DayToggle dayLabel={d.label} value={!!r.days[d.key]} onToggle={() => toggleDay(r.assignmentId, d.key)} />
+              return (
+                <DataTableRow key={r.assignmentId} gridStyle={gridStyle} className="items-center">
+                  <div className="whitespace-nowrap">{r.techId}</div>
+
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="truncate">{r.name}</div>
+                      {r.notOnRoster ? (
+                        <span
+                          className={cls(
+                            "to-pill",
+                            "h-6 px-2 text-[10px] leading-none inline-flex items-center",
+                            "border-[var(--to-danger)] text-[var(--to-danger)] bg-[var(--to-surface-soft)]"
+                          )}
+                          title="This baseline exists, but the tech is not an active roster member for this org."
+                        >
+                          NOT ON ROSTER
+                        </span>
+                      ) : null}
+                    </div>
+                    {r.coName ? <div className="truncate text-xs text-[var(--to-ink-muted)]">{r.coName}</div> : null}
                   </div>
-                ))}
 
-                <div className="whitespace-nowrap text-sm">
-                  {daysOn} days • {Math.round(units)} units • {hours.toFixed(0)} hours
-                </div>
-              </DataTableRow>
-            );
-          })}
-        </DataTableBody>
-      </DataTable>
+                  <div className="flex items-center justify-center">
+                    <button
+                      type="button"
+                      className="to-btn to-btn--secondary h-7 px-2 text-xs"
+                      onClick={() => toggleAllDays(r.assignmentId)}
+                      title={isAllOff ? "Add all 7 days" : "Remove all 7 days"}
+                    >
+                      {btnLabel}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center">
+                    <select
+                      className="to-select h-8 text-xs"
+                      value={r.routeId}
+                      onChange={(e) => setRoute(r.assignmentId, e.target.value)}
+                    >
+                      <option value="">—</option>
+                      {routes.map((rt) => (
+                        <option key={rt.route_id} value={rt.route_id}>
+                          {rt.route_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {DAYS.map((d) => (
+                    <div key={d.key} className="flex items-center">
+                      <DayToggle dayLabel={d.label} value={!!r.days[d.key]} onToggle={() => toggleDay(r.assignmentId, d.key)} />
+                    </div>
+                  ))}
+
+                  <div className="whitespace-nowrap text-sm">
+                    {daysOn} days • {Math.round(units)} units • {hours.toFixed(0)} hours
+                  </div>
+                </DataTableRow>
+              );
+            })}
+          </DataTableBody>
+        </DataTable>
+
+        {/* Sticky footer (totals row) */}
+        <div className="sticky bottom-0 z-20 bg-[var(--to-surface)] border-t border-[var(--to-border)]">
+          <DataTableRow gridStyle={gridStyle} className="items-center">
+            <div className="whitespace-nowrap font-medium"></div>
+            <div className="min-w-0 font-medium"></div>
+            <div className="whitespace-nowrap font-medium"></div>
+            <div className="min-w-0 font-medium">Scheduled Totals</div>
+
+            {DAYS.map((d) => (
+              <div key={d.key} className="text-center">
+                <span className="text-sm font-medium">{totals.perDay[d.key]}</span>
+              </div>
+            ))}
+
+            <div />
+          </DataTableRow>
+        </div>
+      </div>
     </Card>
   );
 }

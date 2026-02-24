@@ -299,7 +299,7 @@ export function RouteLockCalendarClient(props: { fiscal: Fiscal; days: Day[] }) 
 
                     <div className="mt-2 space-y-1 text-xs tabular-nums">
                       <div className="flex justify-between">
-                        <span className="text-[var(--to-ink-muted)]">Sch</span>
+                        <span className="text-[var(--to-ink-muted)]">Capacity</span>
                         <span className="text-[var(--to-ink-muted)] mr-auto ml-2 text-[10px]">{schLabelForState(state)}</span>
                         <span>{fmt(mode, schQuotaDelta.sch)}</span>
                       </div>
@@ -322,7 +322,7 @@ export function RouteLockCalendarClient(props: { fiscal: Fiscal; days: Day[] }) 
                       </div>
 
                       <div className="flex justify-between pt-1">
-                        <span className="text-[var(--to-ink-muted)]">HC</span>
+                        <span className="text-[var(--to-ink-muted)]">Utilization</span>
                         <span>
                           {hcRatio} <span className="text-[var(--to-ink-muted)]">({hcPct})</span>
                         </span>

@@ -51,9 +51,16 @@ function safePct(num: number, den: number): number | null {
   return Math.round(p * 1000) / 10; // 1 decimal place percent
 }
 
-function ceilRoutesFromHours(hours: number): number {
-  // 8 hrs == 1 route-day
-  return Math.ceil(hours / 8);
+function isoDateOnly(v: any): string {
+  return String(v ?? "").slice(0, 10);
+}
+
+// ISO yyyy-mm-dd compares lexicographically
+function dateLTE(aISO: string, bISO: string): boolean {
+  return aISO <= bISO;
+}
+function dateGTE(aISO: string, bISO: string): boolean {
+  return aISO >= bISO;
 }
 
 async function resolveFiscalMonthForDate(sb: Sb, anchorISO: string): Promise<FiscalMonth | null> {
@@ -92,18 +99,53 @@ async function resolveFiscalMonthById(sb: Sb, fiscal_month_id: string): Promise<
 }
 
 /**
- * Headcount (stable) — keep your existing roster logic simple here:
- * If this fails for any org, calendar still renders (HC becomes 0).
+ * ✅ Headcount BY DAY (technicians only, as-of date)
+ * Source: route_lock_roster_tech_v
+ *
+ * Active-on-day rule:
+ * (start_date is null OR start_date <= day) AND (end_date is null OR end_date >= day)
  */
-async function computeHeadcount(sb: Sb, pc_org_id: string): Promise<number> {
-  // v_roster_current is already pc_org scoped
-  const { data, error } = await sb.from("v_roster_current").select("person_id").eq("pc_org_id", pc_org_id);
+async function computeHeadcountByDay(
+  sb: Sb,
+  pc_org_id: string,
+  start: string,
+  end: string
+): Promise<Map<string, number>> {
+  const { data, error } = await sb
+    .from("route_lock_roster_tech_v")
+    .select("person_id,start_date,end_date")
+    .eq("pc_org_id", pc_org_id);
+
   if (error) {
-    console.warn("headcount(v_roster_current) failed:", error.message);
-    return 0;
+    console.warn("headcount(route_lock_roster_tech_v) failed:", error.message);
+    return new Map();
   }
-  const set = new Set<string>((data ?? []).map((r: any) => String(r?.person_id ?? "").trim()).filter(Boolean));
-  return set.size;
+
+  const rows = (data ?? []) as Array<{ person_id: any; start_date: any; end_date: any }>;
+  const days = eachDayISO(start, end);
+
+  const out = new Map<string, number>();
+
+  for (const d of days) {
+    const people = new Set<string>();
+
+    for (const r of rows) {
+      const pid = String(r.person_id ?? "").trim();
+      if (!pid) continue;
+
+      const s = isoDateOnly(r.start_date);
+      const e = isoDateOnly(r.end_date);
+
+      const startOk = !s || dateLTE(s, d);
+      const endOk = !e || dateGTE(e, d);
+
+      if (startOk && endOk) people.add(pid);
+    }
+
+    out.set(d, people.size);
+  }
+
+  return out;
 }
 
 async function computeScheduleAgg(
@@ -148,7 +190,11 @@ async function computeScheduleAgg(
  * For calendar, we need DAY-GRAIN totals:
  *  - quota_hours = sum(quota_hours) per shift_date
  *  - quota_units = sum(quota_units) per shift_date
- *  - quota_routes = ceil(quota_hours / 8)   (routes are derived, NOT row_count)
+ *  - quota_routes = ceil(sum_hours / 8)
+ *
+ * IMPORTANT:
+ * Supabase/PostgREST can truncate rows via implicit limits.
+ * We explicitly order + request a large limit so we don't "lose quota".
  */
 async function computeQuota(
   sb: Sb,
@@ -158,10 +204,12 @@ async function computeQuota(
 ): Promise<Map<string, { quota_hours: number | null; quota_routes: number | null; quota_units: number | null }>> {
   const { data, error } = await sb
     .from("quota_day_fact")
-    .select("shift_date,quota_hours,quota_units")
+    .select("shift_date,route_id,quota_hours,quota_units")
     .eq("pc_org_id", pc_org_id)
     .gte("shift_date", start)
-    .lte("shift_date", end);
+    .lte("shift_date", end)
+    .order("shift_date", { ascending: true })
+    .limit(50000);
 
   if (error) {
     console.warn("quota_day_fact query failed:", error.message);
@@ -257,8 +305,8 @@ export async function getRouteLockDaysForFiscalMonth(sb: Sb, pc_org_id: string, 
 
   const days = eachDayISO(start, end);
 
-  const [total_headcount, scheduleByDay, quotaByDay, svSet, actualByDay] = await Promise.all([
-    computeHeadcount(sb, pc_org_id),
+  const [headcountByDay, scheduleByDay, quotaByDay, svSet, actualByDay] = await Promise.all([
+    computeHeadcountByDay(sb, pc_org_id, start, end),
     computeScheduleAgg(sb, pc_org_id, start, end),
     computeQuota(sb, pc_org_id, start, end),
     computeShiftValidationPresence(sb, pc_org_id, start, end),
@@ -272,6 +320,7 @@ export async function getRouteLockDaysForFiscalMonth(sb: Sb, pc_org_id: string, 
 
     const quota = quotaByDay.get(d) ?? { quota_hours: null, quota_routes: null, quota_units: null };
 
+    const total_headcount = headcountByDay.get(d) ?? 0;
     const util_pct = safePct(scheduled_techs, total_headcount);
 
     const delta_forecast = quota.quota_routes === null ? null : scheduled_routes - quota.quota_routes;

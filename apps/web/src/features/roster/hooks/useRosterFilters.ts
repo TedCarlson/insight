@@ -7,6 +7,8 @@ import { pickName } from "@/features/roster/lib/rosterFormat";
 
 type RoleFilter = "technician" | "supervisor" | "all";
 
+const DEFAULT_ROLE_FILTER: RoleFilter = "technician";
+
 function roleText(r: any): string {
   return String(r?.position_title ?? r?.title ?? r?.role_title ?? "").trim();
 }
@@ -24,9 +26,8 @@ function isTechnicianRow(r: any): boolean {
 export function useRosterFilters(args: { roster: RosterRow[]; validatedOrgId: string | null }) {
   const { roster, validatedOrgId } = args;
 
-  // IMPORTANT:
-  // Default to "all" so current memberships show even when assignment/tech_id is not set yet.
-  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  // Default to Technician per UX request.
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>(DEFAULT_ROLE_FILTER);
   const [query, setQuery] = useState("");
   const [affKey, setAffKey] = useState("all");
   const [supervisorKey, setSupervisorKey] = useState("all");
@@ -176,12 +177,16 @@ export function useRosterFilters(args: { roster: RosterRow[]; validatedOrgId: st
     };
   }, [filteredRoster]);
 
+  // Treat DEFAULT_ROLE_FILTER as the baseline, so "Clear" doesn't show by default.
   const anyFiltersActive =
-    Boolean(query.trim()) || roleFilter !== "all" || effAffKey !== "all" || effSupervisorKey !== "all";
+    Boolean(query.trim()) ||
+    roleFilter !== DEFAULT_ROLE_FILTER ||
+    effAffKey !== "all" ||
+    effSupervisorKey !== "all";
 
   const clearFilters = () => {
     setQuery("");
-    setRoleFilter("all");
+    setRoleFilter(DEFAULT_ROLE_FILTER);
     setAffKey("all");
     setSupervisorKey("all");
   };

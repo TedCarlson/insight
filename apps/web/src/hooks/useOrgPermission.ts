@@ -1,3 +1,9 @@
+/**
+ * IMPORTANT:
+ * Do NOT query pc_org_permission_grant directly.
+ * All permission checks must use api.has_pc_org_permission()
+ * to stay aligned with RLS contract.
+ */
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -10,10 +16,15 @@ type Result = {
   error: string | null;
 };
 
+type CacheEntry = { value: boolean; at: number };
+
+// Short TTL so the UI reflects toggles quickly but still avoids API spam.
+const TTL_MS = 15_000;
+
 export function useOrgPermission(permissionKey: string): Result {
-  const { selectedOrgId } = useOrg(); // This is your selected_pc_org_id (pc_org_id)
+  const { selectedOrgId } = useOrg();
   const supabase = useMemo(() => createClient(), []);
-  const cacheRef = useRef<Map<string, boolean>>(new Map());
+  const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
 
   const [loading, setLoading] = useState(false);
   const [allowed, setAllowed] = useState(false);
@@ -25,46 +36,49 @@ export function useOrgPermission(permissionKey: string): Result {
     async function run() {
       setError(null);
 
-      if (!selectedOrgId || !permissionKey) {
+      const pcOrgId = String(selectedOrgId ?? "").trim();
+      const permKey = String(permissionKey ?? "").trim();
+
+      if (!pcOrgId || !permKey) {
         setLoading(false);
         setAllowed(false);
         return;
       }
 
-      const cacheKey = `${selectedOrgId}::${permissionKey}`;
+      const cacheKey = `${pcOrgId}::${permKey}`;
       const cached = cacheRef.current.get(cacheKey);
-      if (cached !== undefined) {
+      if (cached && Date.now() - cached.at < TTL_MS) {
         setLoading(false);
-        setAllowed(cached);
+        setAllowed(cached.value);
         return;
       }
 
       setLoading(true);
 
       try {
-        // Avoid RPC/schema exposure issues by reading the grants table directly.
-        const { data, error: qErr } = await supabase
-          .from("pc_org_permission_grant")
-          .select("pc_org_permission_grant_id")
-          .eq("pc_org_id", selectedOrgId)
-          .eq("permission_key", permissionKey)
-          .maybeSingle();
+        // Use the canonical permission check (same contract RLS relies on).
+        const apiClient: any = (supabase as any).schema ? (supabase as any).schema("api") : supabase;
+
+        const { data, error: rpcErr } = await apiClient.rpc("has_pc_org_permission", {
+          p_pc_org_id: pcOrgId,
+          p_permission_key: permKey,
+        });
 
         if (!alive) return;
 
-        if (qErr) {
-          setError(qErr.message ?? "Query error");
-          cacheRef.current.set(cacheKey, false);
+        if (rpcErr) {
+          setError(rpcErr.message ?? "Permission check failed");
+          cacheRef.current.set(cacheKey, { value: false, at: Date.now() });
           setAllowed(false);
         } else {
-          const ok = !!data;
-          cacheRef.current.set(cacheKey, ok);
+          const ok = Boolean(data);
+          cacheRef.current.set(cacheKey, { value: ok, at: Date.now() });
           setAllowed(ok);
         }
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message ?? "Unknown error");
-        cacheRef.current.set(cacheKey, false);
+        cacheRef.current.set(cacheKey, { value: false, at: Date.now() });
         setAllowed(false);
       } finally {
         if (!alive) return;

@@ -31,19 +31,15 @@ async function requireDispatchAccess(pc_org_id: string) {
     return { ok: false as const, status: 401 as const, error: "unauthorized" as const, user: null };
   }
 
-  // IMPORTANT:
-  // api.has_pc_org_permission() relies on auth.uid()
-  // so it MUST run through the user-scoped client (supabaseServer), not service role.
-  const perm = await sb.schema("api").rpc("has_pc_org_permission", {
-    p_pc_org_id: pc_org_id,
-    p_permission_key: "dispatch_manage",
-  });
+  // KEEP THIS CONSISTENT with /api/dispatch-console/workforce
+  // (and avoid role/permission drift that causes 403s)
+  const access = await sb.rpc("has_dispatch_console_access", { p_pc_org_id: pc_org_id });
 
-  if (perm.error) {
-    return { ok: false as const, status: 500 as const, error: "permission_check_failed" as const, user: null };
+  if (access.error) {
+    return { ok: false as const, status: 500 as const, error: "access_check_failed" as const, user: null };
   }
 
-  if (!perm.data) {
+  if (access.data !== true) {
     return { ok: false as const, status: 403 as const, error: "forbidden" as const, user: null };
   }
 
@@ -98,11 +94,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 });
   }
 
-  const pc_org_id = String(body.pc_org_id ?? "");
-  const shift_date = String(body.shift_date ?? "");
-  const assignment_id = String(body.assignment_id ?? "");
-  const event_type = String(body.event_type ?? "");
-  const message = String(body.message ?? "").trim();
+  const pc_org_id = String((body as any).pc_org_id ?? "");
+  const shift_date = String((body as any).shift_date ?? "");
+  const assignment_id = String((body as any).assignment_id ?? "");
+  const event_type = String((body as any).event_type ?? "");
+  const message = String((body as any).message ?? "").trim();
 
   if (!pc_org_id) return NextResponse.json({ ok: false, error: "missing_pc_org_id" }, { status: 400 });
   if (!shift_date || !isISODate(shift_date))
@@ -129,8 +125,8 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   let person_id: string | null = day.data?.person_id ?? null;
-  let tech_id: string | null = day.data?.tech_id ?? null;
-  let affiliation_id: string | null = day.data?.affiliation_id ?? null;
+  let tech_id: string | null = (day.data?.tech_id as any) ?? null;
+  let affiliation_id: string | null = (day.data?.affiliation_id as any) ?? null;
 
   if (!person_id || !tech_id) {
     const roster = await admin
@@ -144,7 +140,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "roster_lookup_failed", details: roster.error }, { status: 400 });
     }
 
-    person_id = person_id ?? roster.data?.person_id ?? null;
+    person_id = person_id ?? (roster.data?.person_id as any) ?? null;
     tech_id = tech_id ?? (roster.data?.tech_id ? String(roster.data.tech_id) : null);
   }
 

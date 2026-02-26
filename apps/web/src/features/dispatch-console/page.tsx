@@ -1,10 +1,6 @@
-// RUN THIS
-// Replace the entire file:
-// apps/web/src/features/dispatch-console/page.tsx
-
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PageShell, PageHeader } from "@/components/ui/PageShell";
 import { Card } from "@/components/ui/Card";
@@ -18,7 +14,7 @@ import { useToast } from "@/components/ui/Toast";
 import { useOrg } from "@/state/org";
 import { todayInNY } from "@/features/route-lock/calendar/lib/fiscalMonth";
 
-type EventType = "ALL" | "CALL_OUT" | "ADD_IN" | "INCIDENT" | "NOTE" | "TECH_MOVE";
+type EventType = "ALL" | "CALL_OUT" | "ADD_IN" | "BP_LOW" | "INCIDENT" | "NOTE" | "TECH_MOVE";
 type EntryType = Exclude<EventType, "ALL">;
 
 type WorkforceRow = {
@@ -63,6 +59,7 @@ type DaySummary = {
 
   call_out_count: number;
   add_in_count: number;
+  bp_low_count?: number;
   incident_count: number;
   note_count: number;
 
@@ -82,11 +79,14 @@ type LogRow = {
   person_id: string;
   tech_id: string;
   affiliation_id: string | null;
-  event_type: "CALL_OUT" | "ADD_IN" | "INCIDENT" | "NOTE" | "TECH_MOVE";
+  event_type: "CALL_OUT" | "ADD_IN" | "BP_LOW" | "INCIDENT" | "NOTE" | "TECH_MOVE";
   capacity_delta_routes: number;
   message: string;
   created_at: string;
   created_by_user_id: string;
+
+  // ✅ NEW: from API join
+  created_by_name?: string | null;
 };
 
 function cls(...parts: Array<string | false | undefined>) {
@@ -100,12 +100,22 @@ function fmtDelta(n: number) {
 function deltaForEntry(t: EntryType) {
   if (t === "CALL_OUT") return -1;
   if (t === "ADD_IN") return 1;
-  return 0;
+  return 0; // BP_LOW / INCIDENT / NOTE / TECH_MOVE
 }
 
 function labelForEvent(t: LogRow["event_type"]) {
   if (t === "CALL_OUT") return "Call Out";
   if (t === "ADD_IN") return "Add In";
+  if (t === "BP_LOW") return "BP-Low";
+  if (t === "INCIDENT") return "Incident";
+  if (t === "TECH_MOVE") return "Tech Move";
+  return "Note";
+}
+
+function labelForEntryType(t: EntryType) {
+  if (t === "CALL_OUT") return "Call Out";
+  if (t === "ADD_IN") return "Add In";
+  if (t === "BP_LOW") return "BP-Low";
   if (t === "INCIDENT") return "Incident";
   if (t === "TECH_MOVE") return "Tech Move";
   return "Note";
@@ -121,7 +131,14 @@ function routeLabel(r: { planned_route_name?: string | null; planned_route_id?: 
   return "Unassigned";
 }
 
-const EVENT_ORDER: EntryType[] = ["CALL_OUT", "ADD_IN", "INCIDENT", "TECH_MOVE", "NOTE"];
+function buildAutoDraft(entryType: EntryType, tech: WorkforceRow) {
+  const t = String(tech.tech_id ?? "").trim();
+  const n = String(tech.full_name ?? "").trim();
+  const r = routeLabel(tech);
+  return `${labelForEntryType(entryType)} — ${t} • ${n} • ${r}`;
+}
+
+const EVENT_ORDER: EntryType[] = ["CALL_OUT", "ADD_IN", "BP_LOW", "INCIDENT", "TECH_MOVE", "NOTE"];
 
 export default function DispatchConsolePage() {
   const { selectedOrgId } = useOrg();
@@ -134,7 +151,8 @@ export default function DispatchConsolePage() {
   const [workforce, setWorkforce] = useState<WorkforceRow[]>([]);
   const [summary, setSummary] = useState<DaySummary | null>(null);
 
-  const [workforceQuery, setWorkforceQuery] = useState("");
+  const [nameQuery, setNameQuery] = useState("");
+  const [routeQuery, setRouteQuery] = useState("");
 
   const [selectedAssignmentId, setSelectedAssignmentId] = useState<string | null>(null);
 
@@ -142,30 +160,65 @@ export default function DispatchConsolePage() {
   const [loadingLog, setLoadingLog] = useState(false);
   const [logRows, setLogRows] = useState<LogRow[]>([]);
 
-  // Day-wide rollup for workforce chips
   const [loadingRollup, setLoadingRollup] = useState(false);
   const [logRollupRows, setLogRollupRows] = useState<LogRow[]>([]);
 
   const [entryType, setEntryType] = useState<EntryType>("NOTE");
   const [message, setMessage] = useState("");
 
+  const lastAutoDraftRef = useRef<string>("");
+
   const selectedTech = useMemo(() => {
     if (!selectedAssignmentId) return null;
     return workforce.find((r) => r.assignment_id === selectedAssignmentId) ?? null;
   }, [selectedAssignmentId, workforce]);
 
-  const filteredWorkforce = useMemo(() => {
-    const q = workforceQuery.trim().toLowerCase();
-    if (!q) return workforce;
-    return workforce.filter((r) => {
-      const name = (r.full_name ?? "").toLowerCase();
-      const tech = String(r.tech_id ?? "").toLowerCase();
-      const co = (r.co_name ?? "").toLowerCase();
-      return name.includes(q) || tech.includes(q) || co.includes(q);
-    });
-  }, [workforce, workforceQuery]);
+  useEffect(() => {
+    if (!selectedTech) return;
 
-  // assignment_id -> ordered list of unique event types present that day
+    const nextAuto = buildAutoDraft(entryType, selectedTech);
+    const cur = message.trim();
+    const lastAuto = lastAutoDraftRef.current.trim();
+
+    const safeToReplace = cur.length === 0 || cur === lastAuto;
+
+    if (safeToReplace) {
+      setMessage(nextAuto);
+    }
+
+    lastAutoDraftRef.current = nextAuto;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTech?.assignment_id, selectedTech?.planned_route_id, selectedTech?.planned_route_name, entryType]);
+
+  const filteredWorkforce = useMemo(() => {
+    const qName = nameQuery.trim().toLowerCase();
+    const qRoute = routeQuery.trim().toLowerCase();
+
+    return workforce.filter((r) => {
+      if (qName) {
+        const name = (r.full_name ?? "").toLowerCase();
+        const tech = String(r.tech_id ?? "").toLowerCase();
+        const co = (r.co_name ?? "").toLowerCase();
+        if (!name.includes(qName) && !tech.includes(qName) && !co.includes(qName)) return false;
+      }
+
+      if (qRoute) {
+        const routeName = (r.planned_route_name ?? "").toLowerCase();
+        const routeId = String(r.planned_route_id ?? "").toLowerCase();
+        const isUnassigned = !routeName.trim() && !routeId.trim();
+        const routeDisplay = routeLabel(r).toLowerCase();
+
+        if (qRoute === "unassigned" || qRoute === "none") {
+          if (!isUnassigned) return false;
+        } else {
+          if (!routeName.includes(qRoute) && !routeId.includes(qRoute) && !routeDisplay.includes(qRoute)) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [workforce, nameQuery, routeQuery]);
+
   const chipsByAssignment = useMemo(() => {
     const m = new Map<string, Set<EntryType>>();
     for (const r of logRollupRows) {
@@ -184,7 +237,6 @@ export default function DispatchConsolePage() {
   const loadWorkforce = useCallback(async () => {
     if (!pc_org_id) return;
 
-    // Clean start after refresh/load
     setSelectedAssignmentId(null);
 
     setLoadingWorkforce(true);
@@ -209,7 +261,6 @@ export default function DispatchConsolePage() {
     }
   }, [pc_org_id, shiftDate, toast]);
 
-  // Day-wide log for chips (no assignment_id filter, no event_type filter)
   const loadLogRollup = useCallback(async () => {
     if (!pc_org_id) return;
 
@@ -232,7 +283,6 @@ export default function DispatchConsolePage() {
     }
   }, [pc_org_id, shiftDate, toast]);
 
-  // Visible log list (respects filters + selected tech)
   const loadLog = useCallback(async () => {
     if (!pc_org_id) return;
 
@@ -299,9 +349,10 @@ export default function DispatchConsolePage() {
       if (!res.ok || !json?.ok) throw new Error(json?.error ?? "Failed to add log entry");
 
       setMessage("");
-      await loadWorkforce(); // refresh summary + list
-      await loadLog(); // refresh visible log
-      await loadLogRollup(); // refresh chips
+      lastAutoDraftRef.current = "";
+      await loadWorkforce();
+      await loadLog();
+      await loadLogRollup();
     } catch (e: any) {
       toast.push({ title: "Dispatch Console", message: e?.message ?? "Failed to add log entry", variant: "danger" });
     }
@@ -318,7 +369,6 @@ export default function DispatchConsolePage() {
     );
   }
 
-  // shared "panel" height for internal scroll areas
   const panelH = "lg:h-[calc(100vh-260px)]";
 
   return (
@@ -326,9 +376,8 @@ export default function DispatchConsolePage() {
       <PageHeader title="Dispatch Console" subtitle="Daily workforce + immutable dispatch chronicle." />
 
       <div className="grid gap-4 lg:grid-cols-12">
-        {/* LEFT: Workforce */}
+        {/* LEFT */}
         <Card className={cls("lg:col-span-5 flex flex-col", panelH)}>
-          {/* Sticky header */}
           <div
             className="sticky top-0 z-10 border-b bg-[var(--to-surface)] p-4"
             style={{ borderColor: "var(--to-border)" }}
@@ -352,11 +401,16 @@ export default function DispatchConsolePage() {
               </Button>
             </div>
 
-            <div className="mt-3">
+            <div className="mt-3 grid grid-cols-2 gap-2">
               <TextInput
-                value={workforceQuery}
-                onChange={(e) => setWorkforceQuery(e.target.value)}
-                placeholder="Search name or tech id…"
+                value={nameQuery}
+                onChange={(e) => setNameQuery(e.target.value)}
+                placeholder="Search name / tech id…"
+              />
+              <TextInput
+                value={routeQuery}
+                onChange={(e) => setRouteQuery(e.target.value)}
+                placeholder="Filter route… (name/id/unassigned)"
               />
             </div>
 
@@ -364,6 +418,7 @@ export default function DispatchConsolePage() {
               <div className="mt-3 flex flex-wrap gap-2">
                 <Badge>{summary.call_out_count} call outs</Badge>
                 <Badge>{summary.add_in_count} add ins</Badge>
+                <Badge>{(summary.bp_low_count ?? 0)} BP-low</Badge>
                 <Badge>{summary.incident_count} incidents</Badge>
 
                 {(() => {
@@ -378,10 +433,9 @@ export default function DispatchConsolePage() {
             ) : null}
           </div>
 
-          {/* Scroll body */}
           <div className="flex-1 overflow-auto px-4 py-4">
             {filteredWorkforce.length === 0 ? (
-              <div className="text-sm text-[var(--to-ink-muted)]">No scheduled techs for this day.</div>
+              <div className="text-sm text-[var(--to-ink-muted)]">No scheduled techs match your filters.</div>
             ) : (
               <div className="grid gap-2">
                 {filteredWorkforce.map((r) => {
@@ -408,7 +462,6 @@ export default function DispatchConsolePage() {
                             <span className="text-xs text-[var(--to-ink-muted)]">({r.tech_id})</span>
                           </div>
 
-                          {/* ✅ HUMAN READ: prefer route name, fallback to id */}
                           <div className="mt-0.5 text-xs text-[var(--to-ink-muted)]">
                             {r.planned_hours ?? "—"}h / {r.planned_units ?? "—"}u • {routeLabel(r)}
                           </div>
@@ -429,7 +482,6 @@ export default function DispatchConsolePage() {
             )}
           </div>
 
-          {/* Sticky footer (reserved) */}
           <div
             className="sticky bottom-0 border-t bg-[var(--to-surface)] px-4 py-2"
             style={{ borderColor: "var(--to-border)" }}
@@ -440,7 +492,6 @@ export default function DispatchConsolePage() {
 
         {/* RIGHT */}
         <div className={cls("lg:col-span-7 grid gap-4", panelH)}>
-          {/* Top right: Tech selected */}
           <Card className="border" style={{ borderColor: "var(--to-border)" }}>
             <div className="p-4">
               <div className="text-sm font-semibold">Tech selected</div>
@@ -458,6 +509,7 @@ export default function DispatchConsolePage() {
                   options={[
                     { value: "CALL_OUT", label: "Call Out" },
                     { value: "ADD_IN", label: "Add In" },
+                    { value: "BP_LOW", label: "BP-Low" },
                     { value: "INCIDENT", label: "Incident" },
                     { value: "TECH_MOVE", label: "Tech Move" },
                     { value: "NOTE", label: "Note" },
@@ -482,9 +534,7 @@ export default function DispatchConsolePage() {
             </div>
           </Card>
 
-          {/* Bottom right: Day log */}
           <Card className="flex flex-col min-h-0">
-            {/* Sticky header */}
             <div
               className="sticky top-0 z-10 border-b bg-[var(--to-surface)] p-4"
               style={{ borderColor: "var(--to-border)" }}
@@ -509,6 +559,7 @@ export default function DispatchConsolePage() {
                     { value: "ALL", label: "All" },
                     { value: "CALL_OUT", label: "Call Out" },
                     { value: "ADD_IN", label: "Add In" },
+                    { value: "BP_LOW", label: "BP-Low" },
                     { value: "INCIDENT", label: "Incident" },
                     { value: "TECH_MOVE", label: "Tech Move" },
                     { value: "NOTE", label: "Note" },
@@ -517,34 +568,37 @@ export default function DispatchConsolePage() {
               </div>
             </div>
 
-            {/* Scroll body */}
             <div className="flex-1 overflow-auto px-4 py-4 min-h-0">
               {logRows.length === 0 ? (
                 <div className="text-sm text-[var(--to-ink-muted)]">No entries yet.</div>
               ) : (
                 <div className="grid gap-2">
-                  {logRows.map((r) => (
-                    <div
-                      key={r.dispatch_console_log_id}
-                      className="rounded-xl border px-3 py-2"
-                      style={{ borderColor: "var(--to-border)" }}
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge>{labelForEvent(r.event_type)}</Badge>
-                        {r.capacity_delta_routes !== 0 ? <Badge>Δ {fmtDelta(r.capacity_delta_routes)}</Badge> : null}
-                        <span className="text-xs text-[var(--to-ink-muted)]">
-                          {new Date(r.created_at).toLocaleTimeString()}
-                        </span>
+                  {logRows.map((r) => {
+                    const who = (r.created_by_name ?? "").trim();
+                    const whoDisplay = who.length ? who : "Unknown";
+
+                    return (
+                      <div
+                        key={r.dispatch_console_log_id}
+                        className="rounded-xl border px-3 py-2"
+                        style={{ borderColor: "var(--to-border)" }}
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge>{labelForEvent(r.event_type)}</Badge>
+                          {r.capacity_delta_routes !== 0 ? <Badge>Δ {fmtDelta(r.capacity_delta_routes)}</Badge> : null}
+                          <span className="text-xs text-[var(--to-ink-muted)]">
+                            {new Date(r.created_at).toLocaleTimeString()} • {whoDisplay}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-sm leading-snug">{r.message}</div>
+                        <div className="mt-1 text-xs text-[var(--to-ink-muted)]">{r.tech_id}</div>
                       </div>
-                      <div className="mt-1 text-sm leading-snug">{r.message}</div>
-                      <div className="mt-1 text-xs text-[var(--to-ink-muted)]">{r.tech_id}</div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
 
-            {/* Sticky footer (reserved) */}
             <div
               className="sticky bottom-0 border-t bg-[var(--to-surface)] px-4 py-2"
               style={{ borderColor: "var(--to-border)" }}

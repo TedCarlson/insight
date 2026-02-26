@@ -8,8 +8,8 @@ import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 export const runtime = "nodejs";
 
-type EventType = "CALL_OUT" | "ADD_IN" | "INCIDENT" | "NOTE" | "TECH_MOVE";
-const EVENT_TYPES: EventType[] = ["CALL_OUT", "ADD_IN", "INCIDENT", "NOTE", "TECH_MOVE"];
+type EventType = "CALL_OUT" | "ADD_IN" | "BP_LOW" | "INCIDENT" | "NOTE" | "TECH_MOVE";
+const EVENT_TYPES: EventType[] = ["CALL_OUT", "ADD_IN", "BP_LOW", "INCIDENT", "NOTE", "TECH_MOVE"];
 
 function isISODate(d: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(d);
@@ -18,11 +18,11 @@ function isISODate(d: string) {
 function deltaForEventType(t: EventType): number {
   if (t === "CALL_OUT") return -1;
   if (t === "ADD_IN") return 1;
-  // INCIDENT / NOTE / TECH_MOVE do not change capacity
+  // BP_LOW / INCIDENT / NOTE / TECH_MOVE do not change capacity
   return 0;
 }
 
-async function requireDispatchAccess(pc_org_id: string) {
+async function requireDispatchAccess(_pc_org_id: string) {
   const sb = await supabaseServer();
   const { data, error } = await sb.auth.getUser();
   const user = data?.user ?? null;
@@ -31,19 +31,64 @@ async function requireDispatchAccess(pc_org_id: string) {
     return { ok: false as const, status: 401 as const, error: "unauthorized" as const, user: null };
   }
 
-  // KEEP THIS CONSISTENT with /api/dispatch-console/workforce
-  // (and avoid role/permission drift that causes 403s)
-  const access = await sb.rpc("has_dispatch_console_access", { p_pc_org_id: pc_org_id });
+  // Dispatch access is derived from profile.selected_pc_org_id + membership + assignment title
+  // -> api.can_access_dispatch(auth_user_id)
+  const can = await sb.schema("api").rpc("can_access_dispatch", {
+    p_auth_user_id: user.id,
+  });
 
-  if (access.error) {
-    return { ok: false as const, status: 500 as const, error: "access_check_failed" as const, user: null };
+  if (can.error) {
+    return { ok: false as const, status: 500 as const, error: "permission_check_failed" as const, user: null };
   }
 
-  if (access.data !== true) {
+  if (!can.data) {
     return { ok: false as const, status: 403 as const, error: "forbidden" as const, user: null };
   }
 
   return { ok: true as const, status: 200 as const, error: null, user };
+}
+
+type LogRowDb = {
+  dispatch_console_log_id: string;
+  pc_org_id: string;
+  shift_date: string;
+  assignment_id: string;
+  person_id: string;
+  tech_id: string;
+  affiliation_id: string | null;
+  event_type: EventType;
+  capacity_delta_routes: number;
+  message: string;
+  tags: string[] | null;
+  meta: any | null;
+  created_at: string;
+  created_by_user_id: string;
+};
+
+async function attachCreatedByName(admin: ReturnType<typeof supabaseAdmin>, rows: LogRowDb[]) {
+  const ids = Array.from(new Set(rows.map((r) => r.created_by_user_id).filter(Boolean)));
+  if (ids.length === 0) return rows.map((r) => ({ ...r, created_by_name: null as string | null }));
+
+  // Expect: user_profile.auth_user_id -> person.full_name (via user_profile.person_id)
+  const prof = await admin
+    .from("user_profile")
+    .select("auth_user_id, person:person_id(full_name)")
+    .in("auth_user_id", ids);
+
+  const nameByAuth = new Map<string, string>();
+
+  if (!prof.error && Array.isArray(prof.data)) {
+    for (const r of prof.data as any[]) {
+      const authId = String(r.auth_user_id ?? "");
+      const fullName = String(r.person?.full_name ?? "").trim();
+      if (authId && fullName) nameByAuth.set(authId, fullName);
+    }
+  }
+
+  return rows.map((r) => ({
+    ...r,
+    created_by_name: nameByAuth.get(r.created_by_user_id) ?? null,
+  }));
 }
 
 export async function GET(req: NextRequest) {
@@ -85,7 +130,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "log_fetch_failed", details: res.error }, { status: 400 });
   }
 
-  return NextResponse.json({ ok: true, rows: res.data ?? [] }, { status: 200 });
+  const baseRows = (res.data ?? []) as LogRowDb[];
+  const rows = await attachCreatedByName(admin, baseRows);
+
+  return NextResponse.json({ ok: true, rows }, { status: 200 });
 }
 
 export async function POST(req: NextRequest) {
@@ -114,8 +162,6 @@ export async function POST(req: NextRequest) {
   const user = gate.user!;
   const admin = supabaseAdmin();
 
-  // Identity stamping: prefer dispatch_day_tech for the day (fast & stable)
-  // Fallback to route_lock_roster_tech_v if dispatch_day_tech doesn't have it (e.g., Add before seed).
   const day = await admin
     .from("dispatch_day_tech")
     .select("person_id,tech_id,affiliation_id")
@@ -125,8 +171,8 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   let person_id: string | null = day.data?.person_id ?? null;
-  let tech_id: string | null = (day.data?.tech_id as any) ?? null;
-  let affiliation_id: string | null = (day.data?.affiliation_id as any) ?? null;
+  let tech_id: string | null = day.data?.tech_id ?? null;
+  let affiliation_id: string | null = day.data?.affiliation_id ?? null;
 
   if (!person_id || !tech_id) {
     const roster = await admin
@@ -140,7 +186,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "roster_lookup_failed", details: roster.error }, { status: 400 });
     }
 
-    person_id = person_id ?? (roster.data?.person_id as any) ?? null;
+    person_id = person_id ?? roster.data?.person_id ?? null;
     tech_id = tech_id ?? (roster.data?.tech_id ? String(roster.data.tech_id) : null);
   }
 
@@ -176,5 +222,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "log_insert_failed", details: ins.error }, { status: 400 });
   }
 
-  return NextResponse.json({ ok: true, row: ins.data }, { status: 200 });
+  const rowWithName = (await attachCreatedByName(admin, [ins.data as LogRowDb]))[0];
+
+  return NextResponse.json({ ok: true, row: rowWithName }, { status: 200 });
 }

@@ -1,4 +1,4 @@
-// RUN THIS #2
+// RUN THIS
 // Replace the entire file:
 // apps/web/src/app/api/dispatch-console/log/route.ts
 
@@ -21,7 +21,7 @@ function deltaForEventType(t: EventType): number {
   return 0; // BP_LOW / INCIDENT / NOTE / TECH_MOVE
 }
 
-async function requireDispatchAccess(_pc_org_id: string) {
+async function requireDispatchAccess(pc_org_id: string) {
   const sb = await supabaseServer();
   const { data, error } = await sb.auth.getUser();
   const user = data?.user ?? null;
@@ -30,18 +30,22 @@ async function requireDispatchAccess(_pc_org_id: string) {
     return { ok: false as const, status: 401 as const, error: "unauthorized" as const, user: null };
   }
 
-  const can = await sb.schema("api").rpc("can_access_dispatch", { p_auth_user_id: user.id });
+  // Keep consistent with /api/dispatch-console/workforce (pc_org scoped)
+  const can = await sb.rpc("has_dispatch_console_access", { p_pc_org_id: pc_org_id });
 
   if (can.error) {
     return { ok: false as const, status: 500 as const, error: "permission_check_failed" as const, user: null };
   }
 
-  if (!can.data) {
+  if (can.data !== true) {
     return { ok: false as const, status: 403 as const, error: "forbidden" as const, user: null };
   }
 
   return { ok: true as const, status: 200 as const, error: null, user };
 }
+
+const SELECT_COLS =
+  "dispatch_console_log_id,pc_org_id,shift_date,assignment_id,person_id,tech_id,affiliation_id,event_type,capacity_delta_routes,message,tags,meta,created_at,created_by_user_id";
 
 export async function GET(req: NextRequest) {
   const pc_org_id = req.nextUrl.searchParams.get("pc_org_id") ?? "";
@@ -61,9 +65,7 @@ export async function GET(req: NextRequest) {
 
   let q = admin
     .from("dispatch_console_log")
-    .select(
-      "dispatch_console_log_id,pc_org_id,shift_date,assignment_id,person_id,tech_id,affiliation_id,event_type,capacity_delta_routes,message,tags,meta,created_at,created_by_user_id,created_by_display_name"
-    )
+    .select(SELECT_COLS)
     .eq("pc_org_id", pc_org_id)
     .eq("shift_date", shift_date)
     .order("created_at", { ascending: false });
@@ -113,8 +115,6 @@ export async function POST(req: NextRequest) {
 
   // NOTE: allowed without technician context
   if (event_type === "NOTE" && !assignment_id) {
-    const capDelta = 0;
-
     const ins = await admin
       .from("dispatch_console_log")
       .insert({
@@ -125,13 +125,11 @@ export async function POST(req: NextRequest) {
         tech_id: null,
         affiliation_id: null,
         event_type,
-        capacity_delta_routes: capDelta,
+        capacity_delta_routes: 0,
         message,
         created_by_user_id: user.id,
       })
-      .select(
-        "dispatch_console_log_id,pc_org_id,shift_date,assignment_id,person_id,tech_id,affiliation_id,event_type,capacity_delta_routes,message,tags,meta,created_at,created_by_user_id,created_by_display_name"
-      )
+      .select(SELECT_COLS)
       .single();
 
     if (ins.error) {
@@ -195,9 +193,7 @@ export async function POST(req: NextRequest) {
       message,
       created_by_user_id: user.id,
     })
-    .select(
-      "dispatch_console_log_id,pc_org_id,shift_date,assignment_id,person_id,tech_id,affiliation_id,event_type,capacity_delta_routes,message,tags,meta,created_at,created_by_user_id,created_by_display_name"
-    )
+    .select(SELECT_COLS)
     .single();
 
   if (ins.error) {

@@ -1,108 +1,175 @@
-// RUN THIS
-// Replace the entire file:
-// apps/web/src/features/metrics/components/reports/ReportsTabbedTable.tsx
-
 "use client";
 
-import React from "react";
+import { useMemo, useState } from "react";
 
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Card } from "@/components/ui/Card";
-import { ReportingTable, type PersonMeta } from "@/features/metrics/components/reports/ReportingTable";
-import type { KpiDef } from "@/features/metrics/lib/reports/kpis";
 
-type TabKey = "STACK" | "OUTLIERS" | "ALL";
+type AnyRow = Record<string, any>;
 
-type PriorSnapshot = Record<string, number | null | undefined>;
+type KpiDefLike = {
+  kpi_key?: string;
+  key?: string;
+  kpiKey?: string;
 
-type Props = {
-  okRows: any[];
-  nonOkRows: any[];
+  kpi_name?: string | null;
+  label?: string | null;
+  name?: string | null;
 
-  personNameById: Map<string, string>;
-  personMetaById: Map<string, PersonMeta>;
-
-  preset: Record<string, any>;
-  kpis: KpiDef[];
-
-  latestMetricDate: string;
-  priorMetricDate?: string | null;
-
-  priorSnapshotByTechId?: Map<string, PriorSnapshot>;
+  format?: string | null; // "PERCENT" | "NUMBER" | etc (optional)
+  show_in_table?: boolean | null;
 };
 
-function TabButton({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={[
-        "h-9 px-3 rounded-xl text-sm font-medium",
-        "border border-[var(--to-border)]",
-        active ? "bg-[var(--to-surface)] shadow-sm" : "bg-transparent text-[var(--to-ink-muted)] hover:bg-[var(--to-surface)]/60",
-      ].join(" ")}
-    >
-      {label}
-    </button>
-  );
+type Props = {
+  okRows: AnyRow[];
+  nonOkRows: AnyRow[];
+  kpis: KpiDefLike[];
+
+  personNameById: Map<string, string>;
+  personMetaById: Map<string, any>;
+  preset: any;
+
+  latestMetricDate: string;
+  priorMetricDate: string | null;
+  priorSnapshotByTechId: Map<string, any>;
+};
+
+function getKpiKey(k: KpiDefLike): string {
+  return String(k.kpi_key ?? k.key ?? k.kpiKey ?? "").trim();
 }
 
-export default function ReportsTabbedTable({
-  okRows,
-  nonOkRows,
-  personNameById,
-  personMetaById,
-  preset,
-  kpis,
-  latestMetricDate,
-  priorMetricDate,
-  priorSnapshotByTechId,
-}: Props) {
-  const [tab, setTab] = React.useState<TabKey>("STACK");
+function metricFromPayload(row: AnyRow, kpi_key: string): number | null {
+  if (!row) return null;
 
-  const allRows = React.useMemo(() => [...okRows, ...nonOkRows], [okRows, nonOkRows]);
+  // 1) direct (some banding/normalization may materialize values)
+  const direct = row[kpi_key];
+  if (direct != null) {
+    if (typeof direct === "number") return Number.isFinite(direct) ? direct : null;
+    const s = String(direct).trim();
+    if (s) {
+      const n = Number(s);
+      if (Number.isFinite(n)) return n;
+    }
+  }
 
-  const view = React.useMemo(() => {
-    if (tab === "STACK") return { title: "Metrics (Ranking)", rows: okRows, showStatus: false, slicerTitle: "Metrics slicer" };
-    if (tab === "OUTLIERS") return { title: "Outliers (Attention Required)", rows: nonOkRows, showStatus: true, slicerTitle: "Outliers slicer" };
-    return { title: "All (Full Set)", rows: allRows, showStatus: true, slicerTitle: "All slicer" };
-  }, [tab, okRows, nonOkRows, allRows]);
+  // 2) computed/raw json (main path)
+  const comp = row?.computed_metrics_json ?? null;
+  const raw = row?.raw_metrics_json ?? null;
+
+  const v =
+    (comp && typeof comp === "object" ? comp[kpi_key] : undefined) ??
+    (raw && typeof raw === "object" ? raw[kpi_key] : undefined);
+
+  if (v == null) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtNumber(v: number | null): string {
+  if (v == null) return "—";
+  return Number.isInteger(v) ? String(v) : v.toFixed(3);
+}
+
+function fmtMaybePercent(v: number | null, kpi: KpiDefLike): string {
+  if (v == null) return "—";
+  const f = String(kpi.format ?? "").toUpperCase();
+  if (f.includes("PCT") || f.includes("PERCENT")) return v.toFixed(1);
+  return fmtNumber(v);
+}
+
+function kpiLabel(k: KpiDefLike): string {
+  return String(k.label ?? k.kpi_name ?? k.name ?? getKpiKey(k));
+}
+
+export default function ReportsTabbedTable(props: Props) {
+  const { okRows, nonOkRows, kpis } = props;
+
+  const [tab, setTab] = useState<"RANKING" | "OUTLIERS">("RANKING");
+
+  const rows = tab === "RANKING" ? okRows : nonOkRows;
+
+  const tabs = useMemo(
+    () => [
+      { value: "RANKING", label: "Ranking" },
+      { value: "OUTLIERS", label: "Outliers" },
+    ],
+    []
+  );
+
+  const visibleKpis = (kpis ?? []).filter((k) => {
+    const key = getKpiKey(k);
+    if (!key) return false;
+    if (k.show_in_table == null) return true;
+    return Boolean(k.show_in_table);
+  });
 
   return (
     <Card>
-      <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <div className="text-sm font-medium">
-          {view.title} • Tech count {view.rows.length}
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-semibold">Metrics (Ranking) · Tech count {rows.length}</div>
 
-        <div className="text-xs text-[var(--to-ink-muted)]">
-          As of <span className="font-mono tabular-nums">{String(latestMetricDate)}</span>
-          {priorMetricDate ? (
-            <>
-              <span className="px-2">•</span>
-              Prior <span className="font-mono tabular-nums">{String(priorMetricDate)}</span>
-            </>
-          ) : null}
-        </div>
+        <SegmentedControl value={tab} onChange={(v) => setTab(v as any)} options={tabs} size="sm" />
       </div>
 
-      <div className="mt-3 flex items-center gap-2 overflow-x-auto">
-        <TabButton active={tab === "STACK"} onClick={() => setTab("STACK")} label="Ranking" />
-        <TabButton active={tab === "OUTLIERS"} onClick={() => setTab("OUTLIERS")} label="Outliers" />
-        <TabButton active={tab === "ALL"} onClick={() => setTab("ALL")} label="All" />
-      </div>
+      <div className="mt-3 overflow-auto">
+        <table className="min-w-[900px] w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--to-border)] text-[var(--to-ink-muted)]">
+              <th className="text-left py-2 pr-3 font-medium">Tech</th>
+              <th className="text-center py-2 px-3 font-medium">Rank</th>
+              <th className="text-center py-2 px-3 font-medium">Weighted Score</th>
 
-      <div className="mt-4">
-        <ReportingTable
-          rows={view.rows}
-          showStatus={view.showStatus}
-          personNameById={personNameById}
-          personMetaById={personMetaById}
-          preset={preset}
-          kpis={kpis}
-          slicerTitle={view.slicerTitle}
-          priorSnapshotByTechId={priorSnapshotByTechId}
-        />
+              {visibleKpis.map((k) => {
+                const kk = getKpiKey(k);
+                return (
+                  <th key={kk} className="text-center py-2 px-3 font-medium whitespace-nowrap">
+                    {kpiLabel(k)}
+                  </th>
+                );
+              })}
+
+              <th className="text-center py-2 pl-3 font-medium whitespace-nowrap">Total Jobs</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.map((r, idx) => {
+              const techId = String(r.tech_id ?? "—");
+              const rank = r.rank_in_pc ?? r.rank_org ?? null;
+              const score = r.weighted_score ?? r.composite_score ?? null;
+
+              const totalJobs =
+                metricFromPayload(r, "total_jobs") ??
+                metricFromPayload(r, "Total Jobs") ??
+                r.total_jobs ??
+                null;
+
+              return (
+                <tr key={`${techId}-${idx}`} className={idx % 2 === 1 ? "bg-[var(--to-surface-2)]" : undefined}>
+                  <td className="py-2 pr-3 font-medium">{techId}</td>
+                  <td className="py-2 px-3 text-center">{rank ?? "—"}</td>
+                  <td className="py-2 px-3 text-center">{fmtNumber(score)}</td>
+
+                  {visibleKpis.map((k) => {
+                    const kk = getKpiKey(k);
+                    const v = metricFromPayload(r, kk);
+                    return (
+                      <td key={kk} className="py-2 px-3 text-center">
+                        {fmtMaybePercent(v, k)}
+                      </td>
+                    );
+                  })}
+
+                  <td className="py-2 pl-3 text-center">{totalJobs ?? "—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </Card>
   );

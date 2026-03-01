@@ -1,7 +1,3 @@
-// RUN THIS
-// Replace the entire file:
-// apps/web/src/features/metrics/pages/MetricsReportsPage.tsx
-
 import { redirect } from "next/navigation";
 
 import { supabaseServer } from "@/shared/data/supabase/server";
@@ -30,7 +26,7 @@ export const revalidate = 0;
 type SearchParams = {
   fiscal?: string;
   reports_to?: string;
-  class?: string; // optional future: P4P/SMART/TECH
+  class?: string; // P4P / SMART / TECH (future)
 };
 
 type SnapshotRow = {
@@ -65,6 +61,8 @@ type SnapshotRow = {
 
   created_at: string;
 };
+
+type ReportKpi = (typeof P4P_KPIS)[number];
 
 function currentFiscalEndDateISO_NY(): string {
   const fmt = new Intl.DateTimeFormat("en-US", {
@@ -132,6 +130,75 @@ function filterEmptyRubricGroups(rows: any[]) {
     out.push(...group);
   }
   return out;
+}
+
+function getKpiKey(k: any): string {
+  return String(k?.kpi_key ?? k?.key ?? k?.kpiKey ?? "").trim();
+}
+
+function getKpiLabel(k: any): string {
+  return String(k?.label ?? k?.kpi_name ?? k?.name ?? getKpiKey(k) ?? "").trim();
+}
+
+function rowMetricFromPayload(row: any, kpiKey: string): number | null {
+  if (!row) return null;
+
+  // First try top-level field (some pipelines denormalize)
+  const direct = row[kpiKey];
+  if (direct != null) {
+    if (typeof direct === "number" && Number.isFinite(direct)) return direct;
+    const s = String(direct).trim();
+    if (s) {
+      const n = Number(s);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+
+  // Then try computed/raw JSON (the main payload)
+  const comp = row.computed_metrics_json ?? null;
+  const raw = row.raw_metrics_json ?? null;
+
+  return (
+    metricNum(comp, kpiKey) ??
+    metricNum(raw, kpiKey) ??
+    null
+  );
+}
+
+/**
+ * Config-driven validation:
+ * If a KPI is enabled for the class and has no facts/value for a row,
+ * that row is an OUTLIER (NO_DATA) and should not be ranked.
+ */
+function applyNoDataOutlierRule(rows: any[], kpis: any[]) {
+  const enabledKeys = (kpis ?? [])
+    .map((k) => ({
+      key: getKpiKey(k),
+      label: getKpiLabel(k),
+      show:
+        k?.show_in_table != null ? Boolean(k.show_in_table) :
+        k?.show != null ? Boolean(k.show) :
+        true,
+    }))
+    .filter((x) => x.key && x.show)
+    .map((x) => x.key);
+
+  if (!enabledKeys.length) return rows;
+
+  return rows.map((r) => {
+    // Only evaluate “OK” rows (ACTIVE + has composite) for no-data displacement
+    if (String(r?.status_badge ?? "") !== "OK") return r;
+
+    const missingAny = enabledKeys.some((k) => rowMetricFromPayload(r, k) == null);
+
+    if (!missingAny) return r;
+
+    return {
+      ...r,
+      status_badge: "NO_DATA",
+      status_sort: 30,
+    };
+  });
 }
 
 function toUiRow(r: SnapshotRow) {
@@ -212,6 +279,10 @@ function toUiRow(r: SnapshotRow) {
     tnps_detractors,
     tu_eligible_jobs,
 
+    // ✅ CRITICAL: carry payload JSON through to the table (this is what your KPI cells read)
+    raw_metrics_json: r.raw_metrics_json ?? null,
+    computed_metrics_json: r.computed_metrics_json ?? null,
+
     status_badge: badge.status_badge,
     status_sort: badge.status_sort,
   };
@@ -232,8 +303,7 @@ async function loadFiscalOptions(sb: any, pc_org_id: string, classType: string):
     .order("fiscal_end_date", { ascending: false });
 
   if (error) return [];
-  const opts: string[] = Array.from(new Set((data ?? []).map((r: any) => String(r.fiscal_end_date))));
-  return opts;
+  return Array.from(new Set((data ?? []).map((r: any) => String(r.fiscal_end_date))));
 }
 
 async function loadLatestBatchMeta(sb: any, pc_org_id: string, classType: string, fiscal_end_date: string) {
@@ -251,10 +321,7 @@ async function loadLatestBatchMeta(sb: any, pc_org_id: string, classType: string
   const row = data?.[0];
   if (!row?.batch_id) return null;
 
-  return {
-    batch_id: String(row.batch_id),
-    metric_date: String(row.metric_date),
-  };
+  return { batch_id: String(row.batch_id), metric_date: String(row.metric_date) };
 }
 
 async function loadPriorBatchMetaSameFiscal(sb: any, pc_org_id: string, classType: string, fiscal_end_date: string, before_metric_date: string) {
@@ -273,19 +340,10 @@ async function loadPriorBatchMetaSameFiscal(sb: any, pc_org_id: string, classTyp
   const row = data?.[0];
   if (!row?.batch_id) return null;
 
-  return {
-    batch_id: String(row.batch_id),
-    metric_date: String(row.metric_date),
-  };
+  return { batch_id: String(row.batch_id), metric_date: String(row.metric_date) };
 }
 
-async function loadSnapshotRows(
-  sb: any,
-  pc_org_id: string,
-  classType: string,
-  fiscal_end_date: string,
-  batch_id: string
-): Promise<SnapshotRow[]> {
+async function loadSnapshotRows(sb: any, pc_org_id: string, classType: string, fiscal_end_date: string, batch_id: string): Promise<SnapshotRow[]> {
   const { data, error } = await sb
     .from("master_kpi_archive_snapshot")
     .select(
@@ -327,44 +385,118 @@ async function loadSnapshotRows(
 async function scopeRowsForViewer(sb: any, pc_org_id: string, rows: any[]) {
   const ownerRes = await sb.rpc("is_owner");
   const isOwner = ownerRes?.error ? false : Boolean(ownerRes?.data);
-  if (isOwner) return { scopeLabel: "ORG (is_owner)", rows, reason: "is_owner" as const };
+  if (isOwner) return { scopeLabel: "ORG (is_owner)", rows };
 
-  const apiClient: any = (sb as any).schema ? (sb as any).schema("api") : sb;
-
-  const permRes = await apiClient.rpc("has_any_pc_org_permission", {
+  const permRes = await sb.rpc("has_any_pc_org_permission", {
     p_pc_org_id: pc_org_id,
     p_permission_keys: ["metrics_manage", "roster_manage", "leadership_manage"],
   });
 
   const allowed = permRes?.error ? false : Boolean(permRes?.data);
-  if (allowed) return { scopeLabel: "ORG (perm)", rows, reason: "permission" as const };
+  if (allowed) return { scopeLabel: "ORG (permission)", rows };
 
   const viewerPersonId = await getViewerPersonId(sb);
-  if (!viewerPersonId) return { scopeLabel: "TECH (no person_id)", rows: [] as any[], reason: "no_person" as const };
+  if (!viewerPersonId) return { scopeLabel: "TECH (no profile)", rows: [] as any[] };
 
   const itgHas = rows.some((r) => String(r.itg_rollup_person_id ?? "") === viewerPersonId);
   if (itgHas) {
     return {
       scopeLabel: "ITG_SUPERVISOR (itg_rollup_person_id match)",
       rows: rows.filter((r) => String(r.itg_rollup_person_id ?? "") === viewerPersonId),
-      reason: "itg_rollup" as const,
     };
   }
 
   const bpHas = rows.some((r) => String(r.reports_to_person_id ?? "") === viewerPersonId);
   if (bpHas) {
     return {
-      scopeLabel: "BP_SUPERVISOR (reports_to match)",
+      scopeLabel: "BP_SUPERVISOR (reports_to_person_id match)",
       rows: rows.filter((r) => String(r.reports_to_person_id ?? "") === viewerPersonId),
-      reason: "reports_to" as const,
     };
   }
 
   return {
-    scopeLabel: "TECH (self only)",
+    scopeLabel: "TECH (self)",
     rows: rows.filter((r) => String(r.person_id ?? "") === viewerPersonId),
-    reason: "self" as const,
   };
+}
+
+async function loadKpisFromAdmin(admin: any, classType: string): Promise<{ kpis: ReportKpi[]; source: "ADMIN" | "FALLBACK" }> {
+  const [defsRes, cfgRes] = await Promise.all([
+    admin.from("metrics_kpi_def").select("*").order("kpi_key", { ascending: true }),
+    admin.from("metrics_class_kpi_config").select("*").eq("class_type", classType).order("kpi_key", { ascending: true }),
+  ]);
+
+  if (defsRes.error || cfgRes.error) {
+    return { source: "FALLBACK", kpis: P4P_KPIS as any };
+  }
+
+  const defs = defsRes.data ?? [];
+  const cfg = cfgRes.data ?? [];
+
+  if (cfg.length === 0) {
+    return { source: "FALLBACK", kpis: P4P_KPIS as any };
+  }
+
+  const defByKey = new Map<string, any>();
+  defs.forEach((d: any) => defByKey.set(String(d.kpi_key), d));
+
+  const out: Array<{ k: ReportKpi; sort: number }> = [];
+
+  for (const c of cfg) {
+    const kpi_key = String(c.kpi_key ?? "");
+    if (!kpi_key) continue;
+
+    const enabled =
+      c.is_enabled != null ? Boolean(c.is_enabled) :
+      c.enabled != null ? Boolean(c.enabled) :
+      c.is_active != null ? Boolean(c.is_active) :
+      c.active != null ? Boolean(c.active) :
+      true;
+
+    if (!enabled) continue;
+
+    const d = defByKey.get(kpi_key) ?? {};
+
+    const show_in_table =
+      c.show_in_table != null ? Boolean(c.show_in_table) :
+      c.show_in_report != null ? Boolean(c.show_in_report) :
+      c.show != null ? Boolean(c.show) :
+      true;
+
+    const label = String(c.label ?? d.label ?? d.kpi_label ?? kpi_key);
+    const format = String(c.format ?? d.format ?? d.value_format ?? "NUM");
+    const decimalsRaw = c.decimals ?? d.decimals ?? d.display_decimals ?? null;
+    const decimals = decimalsRaw == null ? null : Number(decimalsRaw);
+
+    const sort =
+      c.sort_order != null ? Number(c.sort_order) :
+      c.display_order != null ? Number(c.display_order) :
+      d.sort_order != null ? Number(d.sort_order) :
+      999;
+
+    const kpiObj: any = {
+      kpi_key,
+      label,
+      format,
+      decimals,
+      show_in_table,
+    };
+
+    if (c.tooltip != null || d.tooltip != null) kpiObj.tooltip = c.tooltip ?? d.tooltip;
+    if (c.short_label != null || d.short_label != null) kpiObj.short_label = c.short_label ?? d.short_label;
+
+    out.push({ k: kpiObj as ReportKpi, sort });
+  }
+
+  const getK = (obj: any) => String(obj?.kpi_key ?? obj?.key ?? obj?.kpiKey ?? "");
+
+  const kpis = out
+    .sort((a, b) => a.sort - b.sort || getK(a.k).localeCompare(getK(b.k)))
+    .map((x) => x.k);
+
+  if (kpis.length === 0) return { source: "FALLBACK", kpis: P4P_KPIS as any };
+
+  return { source: "ADMIN", kpis };
 }
 
 export default async function MetricsReportsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -394,29 +526,39 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const activeKey = sel?.preset_key && presetKeys.includes(sel.preset_key) ? sel.preset_key : presetKeys[0] ?? "MODERN";
   const activePreset = GLOBAL_BAND_PRESETS[activeKey] ?? GLOBAL_BAND_PRESETS[presetKeys[0] ?? "MODERN"];
 
+  const { kpis, source: kpiSource } = await loadKpisFromAdmin(admin, classType);
+
   const { data: rubricRowsRaw } = await admin
     .from("metrics_class_kpi_rubric")
     .select("class_type,kpi_key,band_key,min_value,max_value,score_value")
-    .eq("class_type", "TECH");
+    .eq("class_type", classType);
 
   const rubricRowsAll = filterEmptyRubricGroups(rubricRowsRaw ?? []);
-  const distinctKeys = Array.from(new Set(rubricRowsAll.map((r: any) => String(r.kpi_key))));
+  const rubricMap = buildRubricMap(rubricRowsAll);
+
+  const configKeys = Array.from(
+    new Set(
+      ((kpis as any[]) ?? [])
+        .map((k) => String(k?.kpi_key ?? k?.key ?? k?.kpiKey ?? ""))
+        .filter(Boolean)
+    )
+  );
+  const rubricKeys = Array.from(new Set((rubricRowsAll ?? []).map((r: any) => String(r.kpi_key ?? "")).filter(Boolean)));
+  const distinctKeys = Array.from(new Set([...configKeys, ...rubricKeys]));
 
   const tnpsKey = resolveRubricKey(distinctKeys, ["tnps", "nps"]) ?? "tnps_score";
   const ftrKey = resolveRubricKey(distinctKeys, ["ftr"]) ?? "ftr_rate";
   const toolKey = resolveRubricKey(distinctKeys, ["tool"]) ?? "tool_usage_rate";
-
-  const rubricMap = buildRubricMap(rubricRowsAll);
 
   if (!fiscalOptions.length) {
     return (
       <PageShell>
         <ReportsClientShell
           title="Metrics"
-          subtitle="Reports • one-click landing (snapshot-driven)"
+          subtitle={`Reports • ${classType} • KPI: ${kpiSource}`}
           preset={activePreset}
           rubricRows={rubricRowsAll as any}
-          kpis={P4P_KPIS}
+          kpis={kpis as any}
           classType={classType as any}
         />
 
@@ -442,10 +584,10 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
       <PageShell>
         <ReportsClientShell
           title="Metrics"
-          subtitle="Reports • one-click landing (snapshot-driven)"
+          subtitle={`Reports • ${classType} • KPI: ${kpiSource}`}
           preset={activePreset}
           rubricRows={rubricRowsAll as any}
-          kpis={P4P_KPIS}
+          kpis={kpis as any}
           classType={classType as any}
         />
 
@@ -468,9 +610,13 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const latestMetricDate = batchMeta.metric_date;
 
   const snapshotRowsRaw = await loadSnapshotRows(sb, pc_org_id, classType, selectedFiscal, batchMeta.batch_id);
-  const snapshotUiRows = snapshotRowsRaw.map(toUiRow);
 
-  // viewer scoped rows (table + tailored tiles)
+  // ✅ UI rows MUST carry raw/computed JSON for KPI cell rendering
+  let snapshotUiRows: any[] = snapshotRowsRaw.map(toUiRow);
+
+  // ✅ Config-driven “NO_DATA => outlier” rule (applies to all enabled KPIs)
+  snapshotUiRows = applyNoDataOutlierRule(snapshotUiRows, kpis as any);
+
   const scoped = await scopeRowsForViewer(sb, pc_org_id, snapshotUiRows);
 
   const selectedReportsTo = sp.reports_to ?? "ALL";
@@ -496,9 +642,10 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const priorMetricDate = priorBatch?.metric_date ?? null;
 
   const priorSnapshotRaw = priorBatch ? await loadSnapshotRows(sb, pc_org_id, classType, selectedFiscal, priorBatch.batch_id) : [];
-  const priorUiAll = priorSnapshotRaw.map(toUiRow);
+  let priorUi = priorSnapshotRaw.map(toUiRow);
+  priorUi = applyNoDataOutlierRule(priorUi, kpis as any);
 
-  const priorScoped = await scopeRowsForViewer(sb, pc_org_id, priorUiAll);
+  const priorScoped = await scopeRowsForViewer(sb, pc_org_id, priorUi);
   const priorRowsScoped = applyReportsTo(priorScoped.rows);
 
   const priorByTechId = new Map<string, any>();
@@ -510,7 +657,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
     });
   });
 
-  // ---------- FIX: force arrays to string[] (prevents unknown[] -> string[]) ----------
   const ids = new Set<string>();
   (snapshotUiRows ?? []).forEach((r: any) => {
     if (r.person_id) ids.add(String(r.person_id));
@@ -570,11 +716,7 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
         if (c.company_code) companyByCode.set(String(c.company_code), c.company_name ?? "—");
       });
 
-      const { data: contractorsByCode } = await admin
-        .from("contractor")
-        .select("contractor_code, contractor_name")
-        .in("contractor_code", coCodes);
-
+      const { data: contractorsByCode } = await admin.from("contractor").select("contractor_code, contractor_name").in("contractor_code", coCodes);
       (contractorsByCode ?? []).forEach((c: any) => {
         if (c.contractor_code) contractorByCode.set(String(c.contractor_code), c.contractor_name ?? "—");
       });
@@ -605,7 +747,6 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
       personMetaById.set(pid, { affiliation_kind, affiliation_name });
     });
   }
-  // ---------- /FIX ----------
 
   const okRowsBanded = applyBandsToRows(okRows, rubricMap, { tnpsKey, ftrKey, toolKey });
   const nonOkRowsBanded = applyBandsToRows(nonOkRows, rubricMap, { tnpsKey, ftrKey, toolKey });
@@ -625,10 +766,10 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
       <PageShell>
         <ReportsClientShell
           title="Metrics"
-          subtitle="Reports • one-click landing (snapshot-driven)"
+          subtitle={`Reports • ${classType} • Scope: ${scoped.scopeLabel} • KPI: ${kpiSource}`}
           preset={activePreset}
           rubricRows={rubricRowsAll as any}
-          kpis={P4P_KPIS}
+          kpis={kpis as any}
           classType={classType as any}
         />
 
@@ -652,10 +793,10 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
     <PageShell>
       <ReportsClientShell
         title="Metrics"
-        subtitle={`Reports • ${classType} • Scope: ${scoped.scopeLabel}`}
+        subtitle={`Reports • ${classType} • Scope: ${scoped.scopeLabel} • KPI: ${kpiSource}`}
         preset={activePreset}
         rubricRows={rubricRowsAll as any}
-        kpis={P4P_KPIS}
+        kpis={kpis as any}
         classType={classType as any}
       />
 
@@ -666,25 +807,22 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
         </div>
       </Card>
 
-      {/* ✅ Two rows: Org snapshot + Tailored view (both compact) */}
       <ReportSummaryTiles
-        orgRows={snapshotUiRows}
-        priorOrgRows={priorUiAll}
-        rows={filteredRows}
-        priorRows={priorRowsScoped}
-        kpis={P4P_KPIS}
+        rows={filteredRows as any}
+        priorRows={priorRowsScoped as any}
+        kpis={kpis as any}
         preset={activePreset}
         rubricRows={rubricRowsAll as any}
         rubricKeys={{ tnpsKey, ftrKey, toolKey }}
       />
 
       <ReportsTabbedTable
-        okRows={okRowsBanded}
-        nonOkRows={nonOkRowsBanded}
+        okRows={okRowsBanded as any}
+        nonOkRows={nonOkRowsBanded as any}
         personNameById={personNameById}
         personMetaById={personMetaById as any}
         preset={activePreset}
-        kpis={P4P_KPIS}
+        kpis={kpis as any}
         latestMetricDate={latestMetricDate}
         priorMetricDate={priorMetricDate}
         priorSnapshotByTechId={priorByTechId as any}

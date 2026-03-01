@@ -34,18 +34,16 @@ type RubricRow = {
 type BandKey = "EXCEEDS" | "MEETS" | "NEEDS_IMPROVEMENT" | "MISSES" | "NO_DATA";
 
 type Props = {
-  // Tailored/filtered rows (viewer scope + reports_to filter)
+  // Viewer-scoped + reports_to filtered
   rows: UiRow[];
   priorRows: UiRow[];
 
-  // Org-level pool (unscoped / not reports_to filtered)
-  // If omitted, falls back to `rows`.
+  // ORG totals (not reports_to filtered). If omitted, falls back to rows.
   orgRows?: UiRow[];
   priorOrgRows?: UiRow[];
 
-  // kept for future / compatibility
   kpis: any[];
-  preset: any; // present, but we don't rely on internal shape
+  preset: any;
   rubricRows: RubricRow[];
   rubricKeys: RubricKeys;
 };
@@ -107,14 +105,11 @@ function DeltaBadge({ d, digits = 1 }: { d: number | null; digits?: number }) {
   );
 }
 
-// --- banding (rubric-driven) ---
 function bandFromRubric(rubricRows: RubricRow[], kpiKey: string, value: number | null): BandKey {
   if (value == null) return "NO_DATA";
-
   const rows = rubricRows.filter((r) => String(r.kpi_key ?? "") === String(kpiKey));
   if (!rows.length) return "NO_DATA";
 
-  // normalize: prefer rows where min/max bound matches
   for (const r of rows) {
     const minOk = r.min_value == null || value >= Number(r.min_value);
     const maxOk = r.max_value == null || value <= Number(r.max_value);
@@ -129,8 +124,6 @@ function bandFromRubric(rubricRows: RubricRow[], kpiKey: string, value: number |
 }
 
 function bandStyle(band: BandKey) {
-  // Uses your existing token palette (no dependency on preset shape).
-  // Subtle tint + stronger border. This matches the “rubric behavior” feel.
   switch (band) {
     case "EXCEEDS":
       return {
@@ -177,10 +170,7 @@ function Tile({
   const s = band ? bandStyle(band) : bandStyle("NO_DATA");
 
   return (
-    <div
-      className={["rounded-2xl border bg-[var(--to-surface)] px-4 py-2.5 shadow-sm"].join(" ")}
-      style={{ borderColor: s.border, backgroundColor: s.bg }}
-    >
+    <div className="rounded-2xl border px-4 py-2.5 shadow-sm" style={{ borderColor: s.border, backgroundColor: s.bg }}>
       <div className="flex items-center justify-between gap-3">
         <div className="text-xs font-medium text-[var(--to-ink-muted)]">{label}</div>
         <DeltaBadge d={d} digits={digits} />
@@ -280,10 +270,7 @@ export default function ReportSummaryTiles(props: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Row 1: ORG level (fixed row) */}
       <TileRow title="Org snapshot" rows={memo.orgRows} priorRows={memo.priorOrgRows} rubricRows={props.rubricRows} keys={props.rubricKeys} />
-
-      {/* Row 2: Tailored row */}
       <TileRow title="Your view" rows={memo.rows} priorRows={memo.priorRows} rubricRows={props.rubricRows} keys={props.rubricKeys} />
     </div>
   );

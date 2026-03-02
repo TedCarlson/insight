@@ -35,14 +35,19 @@ function kpiLabel(def: any, kpiKey: string) {
   return def?.customer_label ?? def?.label ?? def?.kpi_key ?? kpiKey;
 }
 
-function normalizeRubricRow(classType: ClassType, r: any): RubricRow | null {
+/**
+ * ✅ KPI-driven rubric normalization (GLOBAL by KPI)
+ * We intentionally do NOT use class_type here.
+ * class_type may exist in legacy rows; we ignore it.
+ */
+function normalizeRubricRow(r: any): RubricRow | null {
   const k = String(r?.kpi_key ?? "").trim();
   const b = String(r?.band_key ?? "").trim().toUpperCase() as BandKey;
   if (!k) return null;
   if (!BAND_ORDER.includes(b)) return null;
 
   return {
-    class_type: classType,
+    // class_type intentionally omitted (optional)
     kpi_key: k,
     band_key: b,
     min_value: r?.min_value ?? null,
@@ -80,10 +85,7 @@ export default function MetricsReportPreviewPage({ initial }: Props) {
   const rubricByKpi = React.useMemo(() => {
     const m: Record<string, RubricRow[]> = {};
     for (const r of initial.rubricRows ?? []) {
-      const ct = String(r?.class_type ?? "").toUpperCase();
-      if (ct !== classType) continue;
-
-      const rr = normalizeRubricRow(classType, r);
+      const rr = normalizeRubricRow(r);
       if (!rr) continue;
 
       m[rr.kpi_key] = m[rr.kpi_key] ?? [];
@@ -96,7 +98,7 @@ export default function MetricsReportPreviewPage({ initial }: Props) {
     }
 
     return m;
-  }, [initial.rubricRows, classType]);
+  }, [initial.rubricRows]);
 
   const enabledKpiKeys = React.useMemo(() => {
     return Object.keys(cfgByKpi)
@@ -164,7 +166,7 @@ export default function MetricsReportPreviewPage({ initial }: Props) {
         </div>
 
         <div className="text-xs text-muted-foreground">
-          Enter sample KPI values to validate band ranges + score outputs.
+          Enter sample KPI values to validate band ranges + score outputs. (Rubric is global by KPI.)
         </div>
 
         <div className="ml-auto text-sm">
@@ -220,7 +222,10 @@ export default function MetricsReportPreviewPage({ initial }: Props) {
                 {r.band_key}
               </div>
 
-              <div className="p-2 text-sm" title={`Weighted rollup uses weight_percent.\nCurrent weighted total: ${totalWeighted.toFixed(3)}`}>
+              <div
+                className="p-2 text-sm"
+                title={`Weighted rollup uses weight_percent.\nCurrent weighted total: ${totalWeighted.toFixed(3)}`}
+              >
                 {r.score_value}
               </div>
             </div>

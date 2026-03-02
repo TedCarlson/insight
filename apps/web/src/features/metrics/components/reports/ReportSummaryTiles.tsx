@@ -14,6 +14,9 @@ type UiRow = {
   tool_usage_rate?: number | null;
 
   status_badge?: string | null;
+
+  raw_metrics_json?: any | null;
+  computed_metrics_json?: any | null;
 };
 
 type RubricKeys = {
@@ -34,11 +37,11 @@ type RubricRow = {
 type BandKey = "EXCEEDS" | "MEETS" | "NEEDS_IMPROVEMENT" | "MISSES" | "NO_DATA";
 
 type Props = {
-  // Viewer-scoped + reports_to filtered
+  // "Your view" (table scope)
   rows: UiRow[];
   priorRows: UiRow[];
 
-  // ORG totals (not reports_to filtered). If omitted, falls back to rows.
+  // Org snapshot (unfiltered ALL scope) — MUST be passed by the page to keep row 1 static
   orgRows?: UiRow[];
   priorOrgRows?: UiRow[];
 
@@ -75,6 +78,20 @@ function distinctTechCount(rows: UiRow[]): number {
   return s.size;
 }
 
+function techIdSignature(rows: UiRow[]): string {
+  // Stable fingerprint to detect whether rows differ from orgRows
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const id = String(r.tech_id ?? "").trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  ids.sort();
+  return ids.join("|");
+}
+
 function fmtNum(n: number | null, digits = 1) {
   if (n == null) return "—";
   return n.toFixed(digits);
@@ -107,6 +124,7 @@ function DeltaBadge({ d, digits = 1 }: { d: number | null; digits?: number }) {
 
 function bandFromRubric(rubricRows: RubricRow[], kpiKey: string, value: number | null): BandKey {
   if (value == null) return "NO_DATA";
+
   const rows = rubricRows.filter((r) => String(r.kpi_key ?? "") === String(kpiKey));
   if (!rows.length) return "NO_DATA";
 
@@ -123,32 +141,58 @@ function bandFromRubric(rubricRows: RubricRow[], kpiKey: string, value: number |
   return "NO_DATA";
 }
 
-function bandStyle(band: BandKey) {
+function isWhiteLike(color: string): boolean {
+  const s = String(color ?? "").trim().toLowerCase();
+  if (!s) return false;
+  if (s === "#fff" || s === "#ffffff" || s === "white") return true;
+  const m = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (!m) return false;
+  const r = Number(m[1]);
+  const g = Number(m[2]);
+  const b = Number(m[3]);
+  return r >= 245 && g >= 245 && b >= 245;
+}
+
+function pickPresetBandStyle(preset: any, band: BandKey): { borderColor?: string; backgroundColor?: string; color?: string } {
+  const b = preset?.bands?.[band] ?? preset?.bandStyles?.[band] ?? preset?.band?.[band] ?? null;
+
+  const border = b?.border ?? b?.borderColor ?? b?.stroke ?? null;
+  const bg = b?.bg ?? b?.background ?? b?.backgroundColor ?? null;
+  const ink = b?.text ?? b?.color ?? b?.textColor ?? null;
+
+  const out: any = {};
+  if (typeof border === "string" && border) out.borderColor = border;
+  if (typeof bg === "string" && bg) out.backgroundColor = bg;
+  if (typeof ink === "string" && ink) out.color = isWhiteLike(ink) ? "var(--to-ink)" : ink;
+  return out;
+}
+
+function fallbackBandStyle(band: BandKey) {
   switch (band) {
     case "EXCEEDS":
       return {
-        border: "color-mix(in oklab, var(--to-success) 55%, var(--to-border))",
-        bg: "color-mix(in oklab, var(--to-success) 10%, var(--to-surface))",
+        borderColor: "color-mix(in oklab, var(--to-success) 55%, var(--to-border))",
+        backgroundColor: "color-mix(in oklab, var(--to-success) 10%, var(--to-surface))",
       };
     case "MEETS":
       return {
-        border: "color-mix(in oklab, var(--to-info) 55%, var(--to-border))",
-        bg: "color-mix(in oklab, var(--to-info) 10%, var(--to-surface))",
+        borderColor: "color-mix(in oklab, var(--to-info) 55%, var(--to-border))",
+        backgroundColor: "color-mix(in oklab, var(--to-info) 10%, var(--to-surface))",
       };
     case "NEEDS_IMPROVEMENT":
       return {
-        border: "color-mix(in oklab, var(--to-warning) 55%, var(--to-border))",
-        bg: "color-mix(in oklab, var(--to-warning) 10%, var(--to-surface))",
+        borderColor: "color-mix(in oklab, var(--to-warning) 55%, var(--to-border))",
+        backgroundColor: "color-mix(in oklab, var(--to-warning) 10%, var(--to-surface))",
       };
     case "MISSES":
       return {
-        border: "color-mix(in oklab, var(--to-danger) 55%, var(--to-border))",
-        bg: "color-mix(in oklab, var(--to-danger) 10%, var(--to-surface))",
+        borderColor: "color-mix(in oklab, var(--to-danger) 55%, var(--to-border))",
+        backgroundColor: "color-mix(in oklab, var(--to-danger) 10%, var(--to-surface))",
       };
     default:
       return {
-        border: "var(--to-border)",
-        bg: "var(--to-surface)",
+        borderColor: "var(--to-border)",
+        backgroundColor: "var(--to-surface)",
       };
   }
 }
@@ -159,18 +203,24 @@ function Tile({
   prior,
   digits = 1,
   band,
+  preset,
 }: {
   label: string;
   value: number | null;
   prior: number | null;
   digits?: number;
   band?: BandKey;
+  preset: any;
 }) {
   const d = delta(value, prior);
-  const s = band ? bandStyle(band) : bandStyle("NO_DATA");
+  const b = band ?? "NO_DATA";
+
+  const presetStyle = pickPresetBandStyle(preset, b);
+  const hasPreset = Object.keys(presetStyle).length > 0;
+  const s = hasPreset ? presetStyle : fallbackBandStyle(b);
 
   return (
-    <div className="rounded-2xl border px-4 py-2.5 shadow-sm" style={{ borderColor: s.border, backgroundColor: s.bg }}>
+    <div className="rounded-2xl border px-4 py-2.5 shadow-sm" style={s as any}>
       <div className="flex items-center justify-between gap-3">
         <div className="text-xs font-medium text-[var(--to-ink-muted)]">{label}</div>
         <DeltaBadge d={d} digits={digits} />
@@ -215,12 +265,14 @@ function TileRow({
   priorRows,
   rubricRows,
   keys,
+  preset,
 }: {
   title: string;
   rows: UiRow[];
   priorRows: UiRow[];
   rubricRows: RubricRow[];
   keys: RubricKeys;
+  preset: any;
 }) {
   const okRows = rows.filter((r) => String(r.status_badge ?? "") === "OK");
   const okPrior = priorRows.filter((r) => String(r.status_badge ?? "") === "OK");
@@ -247,22 +299,30 @@ function TileRow({
 
       <div className="grid gap-3 md:grid-cols-4">
         <HeadcountTile hc={hc} hcPrior={hcPrior} />
-        <Tile label="tNPS" value={tnps} prior={tnpsPrior} digits={2} band={tnpsBand} />
-        <Tile label="FTR%" value={ftr} prior={ftrPrior} digits={1} band={ftrBand} />
-        <Tile label="Tool Usage%" value={tool} prior={toolPrior} digits={1} band={toolBand} />
+        <Tile label="tNPS" value={tnps} prior={tnpsPrior} digits={2} band={tnpsBand} preset={preset} />
+        <Tile label="FTR%" value={ftr} prior={ftrPrior} digits={1} band={ftrBand} preset={preset} />
+        <Tile label="Tool Usage%" value={tool} prior={toolPrior} digits={1} band={toolBand} preset={preset} />
       </div>
     </div>
   );
 }
 
 export default function ReportSummaryTiles(props: Props) {
-  const orgRows = props.orgRows ?? props.rows;
-  const priorOrgRows = props.priorOrgRows ?? props.priorRows;
+  const orgRows = props.orgRows ?? null;
+  const priorOrgRows = props.priorOrgRows ?? null;
 
   const memo = useMemo(() => {
+    const orgSig = orgRows ? techIdSignature(orgRows) : null;
+    const viewSig = orgRows ? techIdSignature(props.rows) : null;
+
+    // Hide the second row when there's no Reports To filter.
+    // We can only detect filter state reliably when orgRows are provided.
+    const showSecondRow = orgSig != null && viewSig != null ? orgSig !== viewSig : true;
+
     return {
-      orgRows,
-      priorOrgRows,
+      showSecondRow,
+      orgRows: orgRows ?? props.rows,
+      priorOrgRows: priorOrgRows ?? props.priorRows,
       rows: props.rows,
       priorRows: props.priorRows,
     };
@@ -270,8 +330,27 @@ export default function ReportSummaryTiles(props: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <TileRow title="Org snapshot" rows={memo.orgRows} priorRows={memo.priorOrgRows} rubricRows={props.rubricRows} keys={props.rubricKeys} />
-      <TileRow title="Your view" rows={memo.rows} priorRows={memo.priorRows} rubricRows={props.rubricRows} keys={props.rubricKeys} />
+      {/* CONSTANT: always org totals */}
+      <TileRow
+        title="Org snapshot"
+        rows={memo.orgRows}
+        priorRows={memo.priorOrgRows}
+        rubricRows={props.rubricRows}
+        keys={props.rubricKeys}
+        preset={props.preset}
+      />
+
+      {/* MUTABLE: only visible when filter applied */}
+      {memo.showSecondRow ? (
+        <TileRow
+          title="Your view"
+          rows={memo.rows}
+          priorRows={memo.priorRows}
+          rubricRows={props.rubricRows}
+          keys={props.rubricKeys}
+          preset={props.preset}
+        />
+      ) : null}
     </div>
   );
 }

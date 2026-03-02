@@ -20,7 +20,8 @@ export default async function ReportPreviewPage() {
   const { data: isOwner, error: ownerError } = await supabase.rpc("is_owner");
   if (ownerError || !isOwner) redirect("/");
 
-  // Load the 3 “source of truth” tables you edit in Metrics Admin
+  // Load the “source of truth” tables you edit in Metrics Admin
+  // ✅ Rubric is GLOBAL by KPI (not class-driven)
   const [kpiRes, cfgRes, rubRes] = await Promise.all([
     supabase.from("metrics_kpi_def").select("*").order("kpi_key", { ascending: true }),
     supabase
@@ -29,9 +30,9 @@ export default async function ReportPreviewPage() {
       .order("class_type", { ascending: true })
       .order("kpi_key", { ascending: true }),
     supabase
-      .from("metrics_class_kpi_rubric")
+      .from("metrics_kpi_rubric")
       .select("*")
-      .order("class_type", { ascending: true })
+      .eq("is_active", true)
       .order("kpi_key", { ascending: true })
       .order("band_key", { ascending: true }),
   ]);
@@ -51,7 +52,7 @@ export default async function ReportPreviewPage() {
       <header>
         <h1 className="text-2xl font-semibold">Report Preview</h1>
         <p className="text-sm text-muted-foreground">
-          Enter sample KPI values to verify banding + scoring against your saved rubric.
+          Enter sample KPI values to verify banding + scoring against your saved rubric. (Rubric is global by KPI.)
         </p>
       </header>
 

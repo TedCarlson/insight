@@ -13,6 +13,10 @@ export type ChipTrend = "UP" | "DOWN" | "FLAT" | null;
  * - consistent width so columns read clean
  * - slightly softer surface, crisp border
  *
+ * IMPORTANT READABILITY RULE:
+ * - Never allow white-like text on light surfaces (the “white pill text” bug).
+ * - If preset provides a white-like text_color, we override to app ink color.
+ *
  * NOTE: We intentionally do NOT render any band tooltip text
  * (e.g., EXCEEDS/MEETS) via `title` or similar. Color is the signal.
  */
@@ -63,6 +67,10 @@ export function BandChip({
     if (softened) surface = softened;
   }
 
+  // ✅ Readability override:
+  // If preset text is empty or white-like, force app ink color.
+  const ink = !text || isWhiteLike(text) ? "var(--to-ink)" : text;
+
   return (
     <span className="inline-flex items-center gap-1">
       <span
@@ -77,8 +85,8 @@ export function BandChip({
         ].join(" ")}
         style={{
           backgroundColor: surface,
-          color: text,
-          borderColor: border,
+          color: ink,
+          borderColor: border || "var(--to-border)",
         }}
       >
         {valueText}

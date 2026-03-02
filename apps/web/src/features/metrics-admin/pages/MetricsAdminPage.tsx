@@ -1,4 +1,7 @@
+// RUN THIS
+// Replace the entire file:
 // apps/web/src/features/metrics-admin/pages/MetricsAdminPage.tsx
+
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/shared/data/supabase/server";
 
@@ -24,18 +27,13 @@ export default async function MetricsAdminPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    redirect("/login");
-  }
+  if (!user) redirect("/login");
 
   // -------------------------------------------------------------------
   // Owner Gate
   // -------------------------------------------------------------------
   const { data: isOwnerData, error: ownerError } = await supabase.rpc("is_owner");
-
-  if (ownerError || !isOwnerData) {
-    redirect("/");
-  }
+  if (ownerError || !isOwnerData) redirect("/");
 
   // -------------------------------------------------------------------
   // Fetch KPI Definitions (global)
@@ -73,12 +71,13 @@ export default async function MetricsAdminPage() {
   }
 
   // -------------------------------------------------------------------
-  // Fetch Rubric Rows (GLOBAL)
+  // Fetch Rubric Rows (GLOBAL by KPI)
+  // ✅ Source of truth is metrics_kpi_rubric (NOT class-driven)
   // -------------------------------------------------------------------
   const { data: rubData, error: rubricError } = await supabase
-    .from("metrics_class_kpi_rubric")
+    .from("metrics_kpi_rubric")
     .select("*")
-    .order("class_type")
+    .eq("is_active", true)
     .order("kpi_key")
     .order("band_key");
 
@@ -102,7 +101,7 @@ export default async function MetricsAdminPage() {
       <header>
         <h1 className="text-2xl font-semibold">Metrics Console</h1>
         <p className="text-sm text-muted-foreground">
-          Configure rubric ranges, weights, and KPI inclusion by class.
+          Configure KPI rubric ranges (global by KPI) and KPI inclusion/weights by class.
         </p>
       </header>
 

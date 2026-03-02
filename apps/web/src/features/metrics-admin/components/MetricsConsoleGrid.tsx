@@ -5,6 +5,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import MetricsColorsDrawer from "@/features/metrics-admin/components/MetricsColorsDrawer";
 
 type AnyRow = Record<string, any>;
 type ClassType = "P4P" | "SMART" | "TECH";
@@ -12,7 +13,7 @@ type ClassType = "P4P" | "SMART" | "TECH";
 type InitialPayload = {
   kpiDefs: AnyRow[];
   classConfig: AnyRow[];
-  rubricRows: AnyRow[];
+  rubricRows: AnyRow[]; // ✅ GLOBAL by KPI: (kpi_key, band_key, min/max/score, ...)
 };
 
 const CLASS_TABS: ClassType[] = ["P4P", "SMART", "TECH"];
@@ -88,74 +89,33 @@ function rubricIssueSummary(rows: AnyRow[]): { level: "ok" | "warn"; text: strin
 }
 
 /**
- * TECH IS CANONICAL, ALWAYS.
- * - We treat TECH rubric as the single source of truth per KPI.
- * - On Save we replicate TECH values into P4P + SMART (overwrite those).
- * - We NEVER overwrite TECH from any other class.
+ * ✅ GLOBAL (KPI-anchored) rubric normalization:
+ * Ensure each KPI has all band rows present (kpi_key + band_key).
+ * Preserves any extra columns present on existing rows (ids, timestamps, is_active, etc.).
  */
-function normalizeRubricsFromTech(allRubrics: AnyRow[], kpiKeys: string[]): AnyRow[] {
-  // Index existing rows by class+kpi+band (so we can preserve ids / extra columns if present)
+function ensureGlobalRubricBands(allRubrics: AnyRow[], kpiKeys: string[]): AnyRow[] {
   const idx = new Map<string, AnyRow>();
   for (const r of allRubrics ?? []) {
-    const ct = asText(r.class_type).toUpperCase();
     const kk = asText(r.kpi_key);
     const bk = asText(r.band_key).toUpperCase();
-    if (!ct || !kk || !bk) continue;
-    idx.set(`${ct}::${kk}::${bk}`, r);
+    if (!kk || !bk) continue;
+    idx.set(`${kk}::${bk}`, r);
   }
 
   const out: AnyRow[] = [];
 
   for (const kpiKey of kpiKeys) {
-    // Build TECH canonical rows (prefer existing TECH rows, else nulls)
-    const techByBand = new Map<BandKey, AnyRow>();
     for (const band of BAND_KEYS) {
-      const existingTech = idx.get(`TECH::${kpiKey}::${band}`) ?? null;
-      if (existingTech) {
-        techByBand.set(band, existingTech);
-      } else {
-        techByBand.set(band, {
-          class_type: "TECH",
+      const existing = idx.get(`${kpiKey}::${band}`) ?? null;
+      if (existing) out.push(existing);
+      else {
+        out.push({
           kpi_key: kpiKey,
           band_key: band,
           min_value: null,
           max_value: null,
           score_value: null,
         });
-      }
-    }
-
-    // 1) Always emit TECH rows (canonical) — these are never overwritten from other classes.
-    for (const band of BAND_KEYS) {
-      out.push(techByBand.get(band)!);
-    }
-
-    // 2) Replicate TECH into P4P + SMART (overwrite values there to stay uniform)
-    for (const classType of ["P4P", "SMART"] as const) {
-      for (const band of BAND_KEYS) {
-        const tech = techByBand.get(band)!;
-        const existing = idx.get(`${classType}::${kpiKey}::${band}`) ?? null;
-
-        if (existing) {
-          out.push({
-            ...existing,
-            class_type: classType,
-            kpi_key: kpiKey,
-            band_key: band,
-            min_value: tech.min_value ?? null,
-            max_value: tech.max_value ?? null,
-            score_value: tech.score_value ?? null,
-          });
-        } else {
-          out.push({
-            class_type: classType,
-            kpi_key: kpiKey,
-            band_key: band,
-            min_value: tech.min_value ?? null,
-            max_value: tech.max_value ?? null,
-            score_value: tech.score_value ?? null,
-          });
-        }
       }
     }
   }
@@ -182,6 +142,8 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+
+  const [colorsDrawerOpen, setColorsDrawerOpen] = useState(false);
 
   useEffect(() => {
     setKpiDefs(initial.kpiDefs ?? []);
@@ -214,7 +176,7 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
       firstExistingKey(sample, ["in_report", "show_in_report", "is_in_report"]) ??
       firstExistingKey(sample, ["is_enabled", "enabled", "is_active", "active"]);
 
-    const weightKey = firstExistingKey(sample, ["weight", "weight_value", "weight_points", "weight_pct"]);
+    const weightKey = firstExistingKey(sample, ["weight", "weight_value", "weight_points", "weight_pct", "weight_percent"]);
     const orderKey = firstExistingKey(sample, ["display_order", "sort_order", "order_index", "ui_order"]);
     const thresholdKey = firstExistingKey(sample, [
       "threshold",
@@ -223,8 +185,6 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
       "stretch_threshold",
     ]);
     const labelOverrideKey = firstExistingKey(sample, ["label_override", "kpi_label", "display_label", "label"]);
-
-    // Tie-breaker (single select)
     const tieKey = firstExistingKey(sample, ["is_tiebreaker", "tie_breaker", "is_tie_breaker"]);
 
     return { showKey, weightKey, orderKey, thresholdKey, labelOverrideKey, tieKey };
@@ -241,15 +201,16 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
     return map;
   }, [classConfig]);
 
-  const rubricByClassAndKpi = useMemo(() => {
+  /**
+   * ✅ GLOBAL rubric index: kpi_key -> band rows
+   */
+  const rubricByKpi = useMemo(() => {
     const map: Record<string, AnyRow[]> = {};
     for (const r of rubricRows ?? []) {
-      const ct = asText(r.class_type).toUpperCase();
       const kk = asText(r.kpi_key);
-      if (!ct || !kk) continue;
-      const k = `${ct}::${kk}`;
-      if (!map[k]) map[k] = [];
-      map[k].push(r);
+      if (!kk) continue;
+      if (!map[kk]) map[kk] = [];
+      map[kk].push(r);
     }
 
     for (const k of Object.keys(map)) {
@@ -334,7 +295,6 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
         return { ...r, [tieKey]: rk === kpiKey };
       });
 
-      // Ensure the selected KPI gets a row (and tieKey exists) even if config row didn’t exist yet
       const hasSelected = next.some(
         (r) => asText(r.class_type).toUpperCase() === activeClass && asText(r.kpi_key) === kpiKey
       );
@@ -342,8 +302,6 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
       if (!hasSelected) {
         next.push({ class_type: activeClass, kpi_key: kpiKey, [tieKey]: true });
       } else {
-        // If selected KPI row exists but lacks the key (because it was created earlier without it),
-        // force it on via upsert behavior.
         for (let i = 0; i < next.length; i++) {
           const r = next[i];
           if (asText(r.class_type).toUpperCase() !== activeClass) continue;
@@ -358,36 +316,35 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
     });
   }
 
-  function ensureRubricBandRowsForAllClasses(kpiKey: string) {
+  /**
+   * ✅ Ensure rubric band rows exist (global by KPI)
+   */
+  function ensureRubricBandRowsForKpi(kpiKey: string) {
     setRubricRows((prev) => {
       const existing = new Set(
-        (prev ?? []).map(
-          (r) =>
-            `${asText(r.class_type).toUpperCase()}::${asText(r.kpi_key)}::${asText(r.band_key).toUpperCase()}`
-        )
+        (prev ?? []).map((r) => `${asText(r.kpi_key)}::${asText(r.band_key).toUpperCase()}`)
       );
 
       const additions: AnyRow[] = [];
-      for (const ct of CLASS_TABS) {
-        for (const band of BAND_KEYS) {
-          const k = `${ct}::${kpiKey}::${band}`;
-          if (existing.has(k)) continue;
-          additions.push({
-            class_type: ct,
-            kpi_key: kpiKey,
-            band_key: band,
-            min_value: null,
-            max_value: null,
-            score_value: null,
-          });
-        }
+      for (const band of BAND_KEYS) {
+        const k = `${kpiKey}::${band}`;
+        if (existing.has(k)) continue;
+        additions.push({
+          kpi_key: kpiKey,
+          band_key: band,
+          min_value: null,
+          max_value: null,
+          score_value: null,
+        });
       }
 
       return additions.length ? [...prev, ...additions] : prev;
     });
   }
 
-  // IMPORTANT: rubric editor ALWAYS edits TECH (canonical), regardless of active tab.
+  /**
+   * ✅ Update a single global rubric cell (kpi_key + band_key)
+   */
   function updateRubricCell(
     kpiKey: string,
     bandKey: BandKey,
@@ -396,10 +353,9 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
   ) {
     setRubricRows((prev) =>
       prev.map((r) => {
-        if (asText(r.class_type).toUpperCase() !== "TECH") return r;
         if (asText(r.kpi_key) !== kpiKey) return r;
         if (asText(r.band_key).toUpperCase() !== bandKey) return r;
-        if (!(field in r)) return r;
+        if (!(field in r)) return { ...r, [field]: value }; // tolerate missing field in existing row shapes
         return { ...r, [field]: value };
       })
     );
@@ -411,8 +367,8 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
     setSavedAt(null);
 
     try {
-      // TECH is canonical; replicate TECH → P4P/SMART, never the other way around.
-      const normalizedRubrics = normalizeRubricsFromTech(rubricRows, allKpiKeys);
+      // ✅ Global rubric: ensure full band set per KPI before save
+      const normalizedRubrics = ensureGlobalRubricBands(rubricRows, allKpiKeys);
 
       const res = await fetch("/api/admin/metrics-config", {
         method: "POST",
@@ -466,14 +422,24 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
           </div>
         </div>
 
-        <button
-          className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted disabled:opacity-50"
-          onClick={save}
-          disabled={saving}
-          type="button"
-        >
-          {saving ? "Saving…" : "Commit / Save"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted"
+            onClick={() => setColorsDrawerOpen(true)}
+          >
+            Band Presets
+          </button>
+
+          <button
+            className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium hover:bg-muted disabled:opacity-50"
+            onClick={save}
+            disabled={saving}
+            type="button"
+          >
+            {saving ? "Saving…" : "Commit / Save"}
+          </button>
+        </div>
       </div>
 
       {saveError ? (
@@ -511,8 +477,7 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
 
                 const isTie = tieKey ? (cfg ? asBool(cfg[tieKey]) : false) : false;
 
-                // Display rubric health from TECH (canonical) so you’re not misled by P4P/SMART.
-                const rubricSet = rubricByClassAndKpi[`TECH::${kpiKey}`] ?? [];
+                const rubricSet = rubricByKpi[kpiKey] ?? [];
                 const issue = rubricIssueSummary(rubricSet);
 
                 const isOpen = openRubricKey === kpiKey;
@@ -620,11 +585,11 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
                           type="button"
                           className="inline-flex h-8 items-center rounded-md border px-2 text-xs hover:bg-muted"
                           onClick={() => {
-                            ensureRubricBandRowsForAllClasses(kpiKey);
+                            ensureRubricBandRowsForKpi(kpiKey);
                             setOpenRubricKey((cur) => (cur === kpiKey ? null : kpiKey));
                           }}
                         >
-                          {isOpen ? "Hide rubric" : "Edit rubric (TECH)"}
+                          {isOpen ? "Hide rubric" : "Edit rubric"}
                         </button>
                       </td>
                     </tr>
@@ -638,7 +603,7 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
                                 Rubric • <span className="font-mono text-xs">{kpiKey}</span>
                               </div>
                               <div className="text-xs text-muted-foreground">
-                                Canonical = TECH. Edits apply to TECH and replicate to P4P/SMART on Save. Decimals supported.
+                                Global rubric by KPI. Decimals supported.
                               </div>
                             </div>
 
@@ -655,7 +620,7 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
                                 <tbody>
                                   {BAND_KEYS.map((band) => {
                                     const rr =
-                                      (rubricByClassAndKpi[`TECH::${kpiKey}`] ?? []).find(
+                                      (rubricByKpi[kpiKey] ?? []).find(
                                         (r) => asText(r.band_key).toUpperCase() === band
                                       ) ?? null;
 
@@ -729,10 +694,11 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
         </div>
       </div>
 
+      <MetricsColorsDrawer open={colorsDrawerOpen} onOpenChange={setColorsDrawerOpen} />
+
       <div className="text-xs text-muted-foreground">
         Note: All KPIs appear in every class. “Show” controls report inclusion per class. Weights/thresholds accept decimals.
-        Rubrics are canonical in TECH and replicated to P4P/SMART on Save — TECH is never overwritten by other classes.
-        Tie-breaker is single-select per class (if the DB column exists).
+        Rubrics are global by KPI (not class-anchored). Tie-breaker is single-select per class (if the DB column exists).
       </div>
     </div>
   );

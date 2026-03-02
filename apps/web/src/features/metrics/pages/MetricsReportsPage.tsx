@@ -1,3 +1,7 @@
+// RUN THIS
+// Replace the entire file:
+// apps/web/src/features/metrics/pages/MetricsReportsPage.tsx
+
 import { redirect } from "next/navigation";
 
 import { supabaseServer } from "@/shared/data/supabase/server";
@@ -26,7 +30,7 @@ export const revalidate = 0;
 type SearchParams = {
   fiscal?: string;
   reports_to?: string;
-  class?: string; // P4P / SMART / TECH (future)
+  class?: string; // P4P / SMART / TECH
 };
 
 type SnapshotRow = {
@@ -93,11 +97,33 @@ function currentFiscalEndDateISO_NY(): string {
   return `${endYear}-${String(endMonth).padStart(2, "0")}-21`;
 }
 
+/**
+ * ✅ IMPORTANT FIX:
+ * Snapshot JSON can store KPI values as:
+ *  - number
+ *  - numeric string
+ *  - object: { value: number, band_key: ..., ... }
+ *
+ * We normalize to a finite number.
+ */
 function metricNum(obj: unknown, key: string): number | null {
   if (!obj || typeof obj !== "object") return null;
+
   const v = (obj as Record<string, unknown>)[key];
   if (v == null) return null;
+
+  // { value: ... } object (your computed_metrics_json shape)
+  if (typeof v === "object" && v !== null) {
+    const vv = (v as any).value;
+    if (typeof vv === "number") return Number.isFinite(vv) ? vv : null;
+    const ss = String(vv ?? "").trim();
+    if (!ss) return null;
+    const nn = Number(ss);
+    return Number.isFinite(nn) ? nn : null;
+  }
+
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
+
   const s = String(v).trim();
   if (!s) return null;
   const n = Number(s);
@@ -132,79 +158,11 @@ function filterEmptyRubricGroups(rows: any[]) {
   return out;
 }
 
-function getKpiKey(k: any): string {
-  return String(k?.kpi_key ?? k?.key ?? k?.kpiKey ?? "").trim();
-}
-
-function getKpiLabel(k: any): string {
-  return String(k?.label ?? k?.kpi_name ?? k?.name ?? getKpiKey(k) ?? "").trim();
-}
-
-function rowMetricFromPayload(row: any, kpiKey: string): number | null {
-  if (!row) return null;
-
-  // First try top-level field (some pipelines denormalize)
-  const direct = row[kpiKey];
-  if (direct != null) {
-    if (typeof direct === "number" && Number.isFinite(direct)) return direct;
-    const s = String(direct).trim();
-    if (s) {
-      const n = Number(s);
-      if (Number.isFinite(n)) return n;
-    }
-  }
-
-  // Then try computed/raw JSON (the main payload)
-  const comp = row.computed_metrics_json ?? null;
-  const raw = row.raw_metrics_json ?? null;
-
-  return (
-    metricNum(comp, kpiKey) ??
-    metricNum(raw, kpiKey) ??
-    null
-  );
-}
-
-/**
- * Config-driven validation:
- * If a KPI is enabled for the class and has no facts/value for a row,
- * that row is an OUTLIER (NO_DATA) and should not be ranked.
- */
-function applyNoDataOutlierRule(rows: any[], kpis: any[]) {
-  const enabledKeys = (kpis ?? [])
-    .map((k) => ({
-      key: getKpiKey(k),
-      label: getKpiLabel(k),
-      show:
-        k?.show_in_table != null ? Boolean(k.show_in_table) :
-        k?.show != null ? Boolean(k.show) :
-        true,
-    }))
-    .filter((x) => x.key && x.show)
-    .map((x) => x.key);
-
-  if (!enabledKeys.length) return rows;
-
-  return rows.map((r) => {
-    // Only evaluate “OK” rows (ACTIVE + has composite) for no-data displacement
-    if (String(r?.status_badge ?? "") !== "OK") return r;
-
-    const missingAny = enabledKeys.some((k) => rowMetricFromPayload(r, k) == null);
-
-    if (!missingAny) return r;
-
-    return {
-      ...r,
-      status_badge: "NO_DATA",
-      status_sort: 30,
-    };
-  });
-}
-
 function toUiRow(r: SnapshotRow) {
   const raw = r.raw_metrics_json ?? {};
   const comp = r.computed_metrics_json ?? {};
 
+  // ✅ these must be able to read comp as { value: ... }
   const tnps_score =
     metricNum(comp, "tnps_score") ??
     metricNum(comp, "tNPS Rate") ??
@@ -260,26 +218,34 @@ function toUiRow(r: SnapshotRow) {
     metric_date: r.metric_date,
     fiscal_end_date: r.fiscal_end_date,
 
-    weighted_score: r.composite_score,
-    rank_in_pc: r.rank_org,
-    population_size: r.population_size,
+    office_id: r.office_id ?? null,
+    position_title: r.position_title ?? null,
 
+    co_ref: r.co_ref ?? null,
+    co_code: r.co_code ?? null,
+
+    // Snapshot provides these
+    composite_score: r.composite_score ?? null,
+    rank_in_pc: r.rank_org ?? null,
+    population_size: r.population_size ?? null,
+
+    // KPI values
     tnps_score,
     ftr_rate,
     tool_usage_rate,
 
+    // Aux breakdowns
     total_jobs,
     installs,
     sros,
     tcs,
-
     total_ftr_contact_jobs,
     tnps_surveys,
     tnps_promoters,
     tnps_detractors,
     tu_eligible_jobs,
 
-    // ✅ CRITICAL: carry payload JSON through to the table (this is what your KPI cells read)
+    // Keep the JSON so table can render dynamic KPI values + band keys
     raw_metrics_json: r.raw_metrics_json ?? null,
     computed_metrics_json: r.computed_metrics_json ?? null,
 
@@ -324,13 +290,12 @@ async function loadLatestBatchMeta(sb: any, pc_org_id: string, classType: string
   return { batch_id: String(row.batch_id), metric_date: String(row.metric_date) };
 }
 
-async function loadPriorBatchMetaSameFiscal(sb: any, pc_org_id: string, classType: string, fiscal_end_date: string, before_metric_date: string) {
+async function loadPriorBatchMetaAnyFiscal(sb: any, pc_org_id: string, classType: string, before_metric_date: string) {
   const { data, error } = await sb
     .from("master_kpi_archive_snapshot")
-    .select("batch_id, metric_date, created_at")
+    .select("batch_id, metric_date, fiscal_end_date, created_at")
     .eq("pc_org_id", pc_org_id)
     .eq("class_type", classType)
-    .eq("fiscal_end_date", fiscal_end_date)
     .lt("metric_date", before_metric_date)
     .order("metric_date", { ascending: false })
     .order("created_at", { ascending: false })
@@ -340,8 +305,13 @@ async function loadPriorBatchMetaSameFiscal(sb: any, pc_org_id: string, classTyp
   const row = data?.[0];
   if (!row?.batch_id) return null;
 
-  return { batch_id: String(row.batch_id), metric_date: String(row.metric_date) };
+  return {
+    batch_id: String(row.batch_id),
+    metric_date: String(row.metric_date),
+    fiscal_end_date: row.fiscal_end_date ? String(row.fiscal_end_date) : null,
+  };
 }
+
 
 async function loadSnapshotRows(sb: any, pc_org_id: string, classType: string, fiscal_end_date: string, batch_id: string): Promise<SnapshotRow[]> {
   const { data, error } = await sb
@@ -433,9 +403,7 @@ async function loadKpisFromAdmin(admin: any, classType: string): Promise<{ kpis:
   const defs = defsRes.data ?? [];
   const cfg = cfgRes.data ?? [];
 
-  if (cfg.length === 0) {
-    return { source: "FALLBACK", kpis: P4P_KPIS as any };
-  }
+  if (cfg.length === 0) return { source: "FALLBACK", kpis: P4P_KPIS as any };
 
   const defByKey = new Map<string, any>();
   defs.forEach((d: any) => defByKey.set(String(d.kpi_key), d));
@@ -452,7 +420,6 @@ async function loadKpisFromAdmin(admin: any, classType: string): Promise<{ kpis:
       c.is_active != null ? Boolean(c.is_active) :
       c.active != null ? Boolean(c.active) :
       true;
-
     if (!enabled) continue;
 
     const d = defByKey.get(kpi_key) ?? {};
@@ -474,24 +441,15 @@ async function loadKpisFromAdmin(admin: any, classType: string): Promise<{ kpis:
       d.sort_order != null ? Number(d.sort_order) :
       999;
 
-    const kpiObj: any = {
-      kpi_key,
-      label,
-      format,
-      decimals,
-      show_in_table,
-    };
-
+    const kpiObj: any = { kpi_key, label, format, decimals, show_in_table };
     if (c.tooltip != null || d.tooltip != null) kpiObj.tooltip = c.tooltip ?? d.tooltip;
     if (c.short_label != null || d.short_label != null) kpiObj.short_label = c.short_label ?? d.short_label;
 
     out.push({ k: kpiObj as ReportKpi, sort });
   }
 
-  const getK = (obj: any) => String(obj?.kpi_key ?? obj?.key ?? obj?.kpiKey ?? "");
-
   const kpis = out
-    .sort((a, b) => a.sort - b.sort || getK(a.k).localeCompare(getK(b.k)))
+    .sort((a, b) => a.sort - b.sort || String((a.k as any).kpi_key ?? "").localeCompare(String((b.k as any).kpi_key ?? "")))
     .map((x) => x.k);
 
   if (kpis.length === 0) return { source: "FALLBACK", kpis: P4P_KPIS as any };
@@ -528,10 +486,12 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
 
   const { kpis, source: kpiSource } = await loadKpisFromAdmin(admin, classType);
 
+  // Rubric is GLOBAL by KPI (not class-driven).
+  // Source of truth: public.metrics_kpi_rubric (pc_org_id is always null; enforced by DB constraint).
   const { data: rubricRowsRaw } = await admin
-    .from("metrics_class_kpi_rubric")
-    .select("class_type,kpi_key,band_key,min_value,max_value,score_value")
-    .eq("class_type", classType);
+    .from("metrics_kpi_rubric")
+    .select("kpi_key,band_key,min_value,max_value,score_value")
+    .eq("is_active", true);
 
   const rubricRowsAll = filterEmptyRubricGroups(rubricRowsRaw ?? []);
   const rubricMap = buildRubricMap(rubricRowsAll);
@@ -610,12 +570,7 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const latestMetricDate = batchMeta.metric_date;
 
   const snapshotRowsRaw = await loadSnapshotRows(sb, pc_org_id, classType, selectedFiscal, batchMeta.batch_id);
-
-  // ✅ UI rows MUST carry raw/computed JSON for KPI cell rendering
-  let snapshotUiRows: any[] = snapshotRowsRaw.map(toUiRow);
-
-  // ✅ Config-driven “NO_DATA => outlier” rule (applies to all enabled KPIs)
-  snapshotUiRows = applyNoDataOutlierRule(snapshotUiRows, kpis as any);
+  const snapshotUiRows = snapshotRowsRaw.map(toUiRow);
 
   const scoped = await scopeRowsForViewer(sb, pc_org_id, snapshotUiRows);
 
@@ -638,23 +593,20 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
   const okRows = filteredRows.filter((r: any) => r.status_badge === "OK");
   const nonOkRows = filteredRows.filter((r: any) => r.status_badge !== "OK");
 
-  const priorBatch = await loadPriorBatchMetaSameFiscal(sb, pc_org_id, classType, selectedFiscal, latestMetricDate);
+  const priorBatch = await loadPriorBatchMetaAnyFiscal(sb, pc_org_id, classType, latestMetricDate);
   const priorMetricDate = priorBatch?.metric_date ?? null;
 
-  const priorSnapshotRaw = priorBatch ? await loadSnapshotRows(sb, pc_org_id, classType, selectedFiscal, priorBatch.batch_id) : [];
-  let priorUi = priorSnapshotRaw.map(toUiRow);
-  priorUi = applyNoDataOutlierRule(priorUi, kpis as any);
+  const priorSnapshotRaw = priorBatch ? await loadSnapshotRows(sb, pc_org_id, classType, priorBatch.fiscal_end_date ?? selectedFiscal, priorBatch.batch_id) : [];
+  const priorUi = priorSnapshotRaw.map(toUiRow);
 
   const priorScoped = await scopeRowsForViewer(sb, pc_org_id, priorUi);
   const priorRowsScoped = applyReportsTo(priorScoped.rows);
 
   const priorByTechId = new Map<string, any>();
+  // Store the FULL prior UI row (includes raw_metrics_json / computed_metrics_json)
+  // so the drawer can show fact inputs + compute deltas correctly.
   priorRowsScoped.forEach((r: any) => {
-    priorByTechId.set(String(r.tech_id), {
-      tnps_score: r.tnps_score ?? null,
-      ftr_rate: r.ftr_rate ?? null,
-      tool_usage_rate: r.tool_usage_rate ?? null,
-    });
+    priorByTechId.set(String(r.tech_id), r);
   });
 
   const ids = new Set<string>();
@@ -675,21 +627,8 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
       personNameById.set(String(p.person_id), p.full_name ?? "—");
     });
 
-    const coRefIds: string[] = Array.from(
-      new Set(
-        (people ?? [])
-          .map((p: any) => (p.co_ref_id ? String(p.co_ref_id) : ""))
-          .filter((x: string) => x)
-      )
-    );
-
-    const coCodes: string[] = Array.from(
-      new Set(
-        (people ?? [])
-          .map((p: any) => (p.co_code ? String(p.co_code) : ""))
-          .filter((x: string) => x)
-      )
-    );
+    const coRefIds: string[] = Array.from(new Set((people ?? []).map((p: any) => (p.co_ref_id ? String(p.co_ref_id) : "")).filter(Boolean)));
+    const coCodes: string[] = Array.from(new Set((people ?? []).map((p: any) => (p.co_code ? String(p.co_code) : "")).filter(Boolean)));
 
     const companyById = new Map<string, { name: string; code: string | null }>();
     const contractorById = new Map<string, { name: string; code: string | null }>();
@@ -808,8 +747,14 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
       </Card>
 
       <ReportSummaryTiles
+        // MUTABLE (table shape)
         rows={filteredRows as any}
         priorRows={priorRowsScoped as any}
+
+        // CONSTANT (org totals, ALL)
+        orgRows={scoped.rows as any}
+        priorOrgRows={priorScoped.rows as any}
+
         kpis={kpis as any}
         preset={activePreset}
         rubricRows={rubricRowsAll as any}
@@ -819,9 +764,9 @@ export default async function MetricsReportsPage({ searchParams }: { searchParam
       <ReportsTabbedTable
         okRows={okRowsBanded as any}
         nonOkRows={nonOkRowsBanded as any}
-        personNameById={personNameById}
+        personNameById={personNameById as any}
         personMetaById={personMetaById as any}
-        preset={activePreset}
+        preset={activePreset as any}
         kpis={kpis as any}
         latestMetricDate={latestMetricDate}
         priorMetricDate={priorMetricDate}

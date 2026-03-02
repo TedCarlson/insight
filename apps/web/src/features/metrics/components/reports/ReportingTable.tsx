@@ -8,6 +8,7 @@ import React from "react";
 import { DataTable, DataTableHeader, DataTableBody, DataTableRow } from "@/components/ui/DataTable";
 
 import { delta, trendFromDelta, fmtDelta as fmtDeltaNum } from "@/features/metrics/lib/reports/rollup";
+import { formatValue, toNumberOrNull } from "@/features/metrics/lib/reports/format";
 
 import { BandChip } from "./BandChip";
 import { StatusMini } from "./StatusMini";
@@ -24,26 +25,27 @@ export type PersonMeta = {
 
 type PriorSnapshot = Record<string, number | null | undefined>;
 
-function toNum(v: any): number | null {
-  if (v === null || v === undefined) return null;
-  const n = typeof v === "number" ? v : Number(String(v));
-  return Number.isFinite(n) ? n : null;
-}
-
 function fmtPct(n: number, denom: number): string {
   if (!Number.isFinite(n) || !Number.isFinite(denom) || denom <= 0) return "—";
   const pct = (n / denom) * 100;
-  return `${pct.toFixed(1)}%`;
+  // job-mix tooltip: keep 1 decimal + percent sign
+  return formatValue({ value: pct, format: "PCT", decimals: 1 });
 }
 
-function fmtCount(n: any): string {
-  const v = toNum(n);
-  return v == null ? "—" : String(Math.round(v));
+function fmtCount(n: unknown): string {
+  return formatValue({ value: n, format: "INT" });
 }
 
-function fmtCustomerKpi(k: KpiDef, value: any): string {
-  const n = toNum(value);
-  if (n === null) return "—";
+/**
+ * KPI value formatting for the chip (NOT the header).
+ * We keep the existing conventions:
+ * - tNPS shows 2 decimals (no %)
+ * - FTR / Tool usage show 1 decimal (no %; header carries %)
+ * - default 1 decimal
+ */
+function fmtCustomerKpi(k: KpiDef, value: unknown): string {
+  const n = toNumberOrNull(value);
+  if (n == null) return "—";
 
   const key = String(k.key ?? "").toUpperCase();
   const label = String(k.label ?? "").toUpperCase();
@@ -52,9 +54,10 @@ function fmtCustomerKpi(k: KpiDef, value: any): string {
   const isFTR = key.includes("FTR") || label.includes("FTR");
   const isTOOL = key.includes("TOOL") || label.includes("TOOL");
 
-  if (isTNPS) return n.toFixed(2);
-  if (isFTR || isTOOL) return n.toFixed(1);
-  return n.toFixed(1);
+  if (isTNPS) return formatValue({ value: n, format: "NUM", decimals: 2 });
+  if (isFTR || isTOOL) return formatValue({ value: n, format: "NUM", decimals: 1 });
+
+  return formatValue({ value: n, format: "NUM", decimals: 1 });
 }
 
 function deltaDigits(k: KpiDef): number {
@@ -79,10 +82,14 @@ function headerLabel(k: KpiDef): string {
   return raw;
 }
 
-function fmtWs100(v: any): string {
-  const n = toNum(v);
+/**
+ * Weighted score display:
+ * UI expects WS * 100 and 3 decimals.
+ */
+function fmtWs100(v: unknown): string {
+  const n = toNumberOrNull(v);
   if (n == null) return "—";
-  return (n * 100).toFixed(3);
+  return formatValue({ value: n * 100, format: "SCORE", decimals: 3 });
 }
 
 function DeltaMini({ current, prior, digits }: { current: number | null; prior: number | null; digits: number }) {
@@ -233,7 +240,7 @@ function completionPctForRow(row: any, kpis: KpiDef[]): number {
   let complete = 0;
 
   for (const k of kpis) {
-    const v = toNum(row?.[k.valueField]);
+    const v = toNumberOrNull(row?.[k.valueField]);
     const band = String(row?.[k.bandField] ?? "NO_DATA") as BandKey;
     if (v != null || band !== "NO_DATA") complete += 1;
   }
@@ -282,8 +289,8 @@ export function ReportingTable({
 
   const stackSorter = React.useCallback(
     (a: any, b: any) => {
-      const aw = toNum(a?.weighted_score);
-      const bw = toNum(b?.weighted_score);
+      const aw = toNumberOrNull(a?.weighted_score);
+      const bw = toNumberOrNull(b?.weighted_score);
 
       const aNull = aw == null;
       const bNull = bw == null;
@@ -359,10 +366,10 @@ export function ReportingTable({
 
             const rowKey = `${r.tech_id}-${idx}`;
 
-            const totalJobs = toNum(r.total_jobs);
-            const installs = toNum(r.installs);
-            const sros = toNum(r.sros);
-            const tcs = toNum(r.tcs);
+            const totalJobs = toNumberOrNull(r.total_jobs);
+            const installs = toNumberOrNull(r.installs);
+            const sros = toNumberOrNull(r.sros);
+            const tcs = toNumberOrNull(r.tcs);
 
             const priorSnap = priorSnapshotByTechId?.get(techId);
 
@@ -385,8 +392,8 @@ export function ReportingTable({
                 <div className="text-right font-mono tabular-nums">{fmtWs100(r.weighted_score)}</div>
 
                 {kpis.map((k) => {
-                  const cur = toNum(r?.[k.valueField]);
-                  const prev = toNum(priorSnap?.[String(k.valueField)]);
+                  const cur = toNumberOrNull(r?.[k.valueField]);
+                  const prev = toNumberOrNull(priorSnap?.[String(k.valueField)]);
 
                   const isTNPS = String(k.key ?? "").toLowerCase().includes("tnps");
 
@@ -404,9 +411,9 @@ export function ReportingTable({
                                 />
                               </div>
                               <TnpsTooltip
-                                surveys={toNum((r as any).tnps_surveys)}
-                                promoters={toNum((r as any).tnps_promoters)}
-                                detractors={toNum((r as any).tnps_detractors)}
+                                surveys={toNumberOrNull((r as any).tnps_surveys)}
+                                promoters={toNumberOrNull((r as any).tnps_promoters)}
+                                detractors={toNumberOrNull((r as any).tnps_detractors)}
                               />
                             </div>
                           ) : (
@@ -425,7 +432,7 @@ export function ReportingTable({
                 })}
 
                 <div className="text-right font-mono relative group">
-                  {totalJobs == null ? "—" : String(Math.round(totalJobs))}
+                  {formatValue({ value: totalJobs, format: "INT" })}
                   <JobMixTooltip total={totalJobs} installs={installs} sros={sros} tcs={tcs} />
                 </div>
               </DataTableRow>

@@ -4,8 +4,12 @@ export type Direction = "HIGHER_BETTER" | "LOWER_BETTER";
 
 export type BandKey = "EXCEEDS" | "MEETS" | "NEEDS_IMPROVEMENT" | "MISSES" | "NO_DATA";
 
+/**
+ * Rubric rows are KPI-driven (global by KPI), not class-driven.
+ * class_type is optional for backward compatibility with older storage/reads.
+ */
 export type RubricRow = {
-  class_type: "P4P" | "SMART" | "TECH";
+  class_type?: "P4P" | "SMART" | "TECH";
   kpi_key: string;
   band_key: BandKey;
   min_value: number | null;
@@ -78,8 +82,8 @@ export function bandToScore(args: {
 }
 
 /**
- * Score a single KPI for a given class.
- * You pass the rubric rows already filtered to (class_type + kpi_key).
+ * Score a single KPI.
+ * You pass the rubric rows already filtered to (kpi_key) (and optionally class_type if legacy).
  */
 export function scoreKpi(args: {
   metricValue: number | null | undefined;
@@ -120,10 +124,7 @@ export function rollupWeighted(args: {
     const w = Number(row.weight_percent ?? 0);
     if (!Number.isFinite(w) || w <= 0) continue;
 
-    const s = Number(row.score_value ?? 0);
-    if (!Number.isFinite(s)) continue;
-
-    total += s * (w / 100);
+    total += row.score_value * (w / 100);
   }
 
   return total;

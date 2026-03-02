@@ -1,3 +1,5 @@
+// RUN THIS
+// Replace the entire file:
 // apps/web/src/app/api/admin/metrics-report-preview/route.ts
 
 import { NextResponse } from "next/server";
@@ -38,10 +40,10 @@ function toClassType(v: string | null): ClassType | null {
  * Returns:
  * - kpiDefs: metrics_kpi_def rows
  * - classConfig: metrics_class_kpi_config rows (optionally filtered to class_type)
- * - rubricRows: metrics_class_kpi_rubric rows (optionally filtered to class_type)
+ * - rubricRows: metrics_kpi_rubric rows (GLOBAL by KPI; NOT class-driven)
  *
  * NOTE:
- * Raw metric fact rows are NOT pulled here yet (we’ll wire to your ingestion tables once we confirm names).
+ * Raw metric fact rows are NOT pulled here yet (we’ll wire to your ingestion/fact tables once confirmed).
  */
 export async function GET(req: Request) {
   const gate = await ownerGate();
@@ -62,10 +64,11 @@ export async function GET(req: Request) {
     .order("class_type", { ascending: true })
     .order("kpi_key", { ascending: true });
 
+  // ✅ Rubric is GLOBAL by KPI (pc_org_id is enforced NULL in DB for global-only rubric).
   const rubQ = sb
-    .from("metrics_class_kpi_rubric")
+    .from("metrics_kpi_rubric")
     .select("*")
-    .order("class_type", { ascending: true })
+    .eq("is_active", true)
     .order("kpi_key", { ascending: true })
     .order("band_key", { ascending: true });
 
@@ -88,9 +91,8 @@ export async function GET(req: Request) {
     ? (cfgRes.data ?? []).filter((r: any) => String(r?.class_type ?? "").toUpperCase() === classType)
     : cfgRes.data ?? [];
 
-  const rubricRows = classType
-    ? (rubRes.data ?? []).filter((r: any) => String(r?.class_type ?? "").toUpperCase() === classType)
-    : rubRes.data ?? [];
+  // ✅ No class filtering for rubric rows (KPI-anchored truth)
+  const rubricRows = rubRes.data ?? [];
 
   return NextResponse.json({
     classType: classType ?? null,

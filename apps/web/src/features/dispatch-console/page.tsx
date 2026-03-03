@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 
 import { useOrg } from "@/state/org";
+import { useSession } from "@/state/session";
 import { todayInNY } from "@/features/route-lock/calendar/lib/fiscalMonth";
 
 type EventType = "ALL" | "CALL_OUT" | "ADD_IN" | "BP_LOW" | "INCIDENT" | "NOTE" | "TECH_MOVE";
@@ -77,11 +78,14 @@ type LogRow = {
   dispatch_console_log_id: string;
   pc_org_id: string;
   shift_date: string;
-  assignment_id: string;
-  person_id: string;
-  tech_id: string;
+
+  // NOTE entries may be org-level (no assignment)
+  assignment_id: string | null;
+  person_id: string | null;
+  tech_id: string | null;
   affiliation_id: string | null;
-  event_type: "CALL_OUT" | "ADD_IN" | "BP_LOW" | "INCIDENT" | "NOTE" | "TECH_MOVE";
+
+  event_type: EntryType;
   capacity_delta_routes: number;
   message: string;
   created_at: string;
@@ -96,12 +100,6 @@ function cls(...parts: Array<string | false | undefined>) {
 
 function fmtDelta(n: number) {
   return n > 0 ? `+${n}` : `${n}`;
-}
-
-function deltaForEntry(t: EntryType) {
-  if (t === "CALL_OUT") return -1;
-  if (t === "ADD_IN") return 1;
-  return 0; // BP_LOW / INCIDENT / NOTE / TECH_MOVE
 }
 
 function labelForEvent(t: LogRow["event_type"]) {
@@ -143,6 +141,7 @@ const EVENT_ORDER: EntryType[] = ["CALL_OUT", "ADD_IN", "BP_LOW", "INCIDENT", "T
 
 export default function DispatchConsolePage() {
   const { selectedOrgId } = useOrg();
+  const { userId } = useSession();
   const toast = useToast();
 
   const [shiftDate] = useState<string>(() => todayInNY());
@@ -172,12 +171,16 @@ export default function DispatchConsolePage() {
   const [entryType, setEntryType] = useState<EntryType>("NOTE");
   const [message, setMessage] = useState("");
 
+  // ✅ Edit mode (row -> top card, Add -> Save)
+  const [editingLogId, setEditingLogId] = useState<string | null>(null);
+
   const lastAutoDraftRef = useRef<string>("");
 
   const clearDraft = useCallback(() => {
     setMessage("");
     lastAutoDraftRef.current = "";
     setSelectedAssignmentId(null);
+    setEditingLogId(null);
   }, []);
 
   // Restrict entry types when tab = NOT_SCHEDULED
@@ -196,8 +199,10 @@ export default function DispatchConsolePage() {
     return displayedWorkforce.find((r) => r.assignment_id === selectedAssignmentId) ?? null;
   }, [selectedAssignmentId, displayedWorkforce]);
 
+  // Only auto-draft when NOT editing
   useEffect(() => {
     if (!selectedTech) return;
+    if (editingLogId) return;
 
     const nextAuto = buildAutoDraft(entryType, selectedTech);
     const cur = message.trim();
@@ -211,7 +216,7 @@ export default function DispatchConsolePage() {
 
     lastAutoDraftRef.current = nextAuto;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTech?.assignment_id, selectedTech?.planned_route_id, selectedTech?.planned_route_name, entryType]);
+  }, [selectedTech?.assignment_id, selectedTech?.planned_route_id, selectedTech?.planned_route_name, entryType, editingLogId]);
 
   const filteredWorkforce = useMemo(() => {
     const qName = nameQuery.trim().toLowerCase();
@@ -245,9 +250,11 @@ export default function DispatchConsolePage() {
   const chipsByAssignment = useMemo(() => {
     const m = new Map<string, Set<EntryType>>();
     for (const r of logRollupRows) {
-      const set = m.get(r.assignment_id) ?? new Set<EntryType>();
+      const aid = String(r.assignment_id ?? "").trim();
+      if (!aid) continue;
+      const set = m.get(aid) ?? new Set<EntryType>();
       set.add(r.event_type as EntryType);
-      m.set(r.assignment_id, set);
+      m.set(aid, set);
     }
     const out = new Map<string, EntryType[]>();
     for (const [aid, set] of m.entries()) {
@@ -372,13 +379,25 @@ export default function DispatchConsolePage() {
     void loadLog();
   }, [pc_org_id, shiftDate, selectedAssignmentId, logFilter, loadLog]);
 
+  const beginEdit = useCallback(
+    (row: LogRow) => {
+      setEditingLogId(row.dispatch_console_log_id);
+
+      // Editing should keep filters sane:
+      // - If the entry is tied to an assignment, select it (so Save reflects the right "context")
+      // - If it's an org-level NOTE with no assignment, clear selection
+      const aid = String(row.assignment_id ?? "").trim();
+      setSelectedAssignmentId(aid ? aid : null);
+
+      setEntryType(row.event_type);
+      setMessage(row.message ?? "");
+      lastAutoDraftRef.current = ""; // prevent auto-draft overwrite
+    },
+    []
+  );
+
   const submit = useCallback(async () => {
     if (!pc_org_id) return;
-
-    if (entryType !== "NOTE" && !selectedAssignmentId) {
-      toast.push({ title: "Dispatch Console", message: "Select a technician first.", variant: "warning" });
-      return;
-    }
 
     const msg = message.trim();
     if (!msg) {
@@ -386,7 +405,47 @@ export default function DispatchConsolePage() {
       return;
     }
 
+    // For non-NOTE, we require an assignment selection (same rule as before)
+    if (!editingLogId) {
+      if (entryType !== "NOTE" && !selectedAssignmentId) {
+        toast.push({ title: "Dispatch Console", message: "Select a technician first.", variant: "warning" });
+        return;
+      }
+    } else {
+      // When editing, if the (new) event type is non-NOTE, require assignment too.
+      if (entryType !== "NOTE" && !selectedAssignmentId) {
+        toast.push({ title: "Dispatch Console", message: "Select a technician first.", variant: "warning" });
+        return;
+      }
+    }
+
     try {
+      if (editingLogId) {
+        const res = await fetch("/api/dispatch-console/log", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            dispatch_console_log_id: editingLogId,
+            pc_org_id,
+            event_type: entryType,
+            message: msg,
+          }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json?.ok) throw new Error(json?.error ?? "Failed to save log entry");
+
+        // Clear edit mode
+        setEditingLogId(null);
+        setMessage("");
+        lastAutoDraftRef.current = "";
+
+        await loadLog();
+        await loadLogRollup();
+        return;
+      }
+
+      // Create (POST)
       const res = await fetch("/api/dispatch-console/log", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -412,7 +471,11 @@ export default function DispatchConsolePage() {
       await loadLog();
       await loadLogRollup();
     } catch (e: any) {
-      toast.push({ title: "Dispatch Console", message: e?.message ?? "Failed to add log entry", variant: "danger" });
+      toast.push({
+        title: "Dispatch Console",
+        message: e?.message ?? (editingLogId ? "Failed to save entry" : "Failed to add log entry"),
+        variant: "danger",
+      });
     }
   }, [
     pc_org_id,
@@ -420,6 +483,7 @@ export default function DispatchConsolePage() {
     selectedAssignmentId,
     entryType,
     message,
+    editingLogId,
     toast,
     loadWorkforce,
     loadNotScheduled,
@@ -464,9 +528,10 @@ export default function DispatchConsolePage() {
     <PageShell>
       <PageHeader title="Dispatch Console" subtitle="Daily workforce + immutable dispatch chronicle." />
 
+      {/* ✅ Even split: 6 / 6 */}
       <div className="grid gap-4 lg:grid-cols-12">
         {/* LEFT */}
-        <Card className={cls("lg:col-span-5 flex flex-col", panelH)}>
+        <Card className={cls("lg:col-span-6 flex flex-col", panelH)}>
           <div
             className="sticky top-0 z-10 border-b bg-[var(--to-surface)] p-4"
             style={{ borderColor: "var(--to-border)" }}
@@ -477,7 +542,6 @@ export default function DispatchConsolePage() {
                 <div className="text-xs text-[var(--to-ink-muted)]">{shiftDate}</div>
               </div>
 
-              {/* Tabs + Refresh pill wrapper */}
               <div
                 className="flex items-center gap-2 rounded-full border bg-[var(--to-surface)] p-1"
                 style={{ borderColor: "var(--to-border)" }}
@@ -488,6 +552,7 @@ export default function DispatchConsolePage() {
                     setWorkforceTab(v);
                     setSelectedAssignmentId(null);
                     lastAutoDraftRef.current = "";
+                    setEditingLogId(null);
                   }}
                   size="sm"
                   options={[
@@ -558,7 +623,11 @@ export default function DispatchConsolePage() {
                     <button
                       key={r.assignment_id}
                       type="button"
-                      onClick={() => setSelectedAssignmentId(r.assignment_id)}
+                      onClick={() => {
+                        setSelectedAssignmentId(r.assignment_id);
+                        // Selecting a tech should not silently keep edit mode
+                        setEditingLogId(null);
+                      }}
                       className={cls(
                         "w-full rounded-xl border px-3 py-2 text-left transition",
                         active
@@ -603,8 +672,8 @@ export default function DispatchConsolePage() {
         </Card>
 
         {/* RIGHT */}
-        <div className={cls("lg:col-span-7 grid gap-4", panelH)}>
-          {/* ✅ TOP: minimal entry bar */}
+        <div className={cls("lg:col-span-6 grid gap-4", panelH)}>
+          {/* TOP: entry bar (Add / Save) */}
           <Card className="border" style={{ borderColor: "var(--to-border)" }}>
             <div className="p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -617,7 +686,7 @@ export default function DispatchConsolePage() {
 
                 <div className="flex items-center gap-2">
                   <Button variant="secondary" className="h-9 px-3" onClick={clearDraft}>
-                    Clear
+                    {editingLogId ? "Cancel" : "Clear"}
                   </Button>
                 </div>
               </div>
@@ -627,17 +696,24 @@ export default function DispatchConsolePage() {
                   <TextInput
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
-                    placeholder="Type the dispatch note…"
+                    placeholder={editingLogId ? "Edit the dispatch note…" : "Type the dispatch note…"}
                   />
                 </div>
 
                 <Button onClick={submit} disabled={!canSubmit} className="h-9 px-4">
-                  Add
+                  {editingLogId ? "Save" : "Add"}
                 </Button>
               </div>
+
+              {editingLogId ? (
+                <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
+                  Editing entry • only the creator can save changes
+                </div>
+              ) : null}
             </div>
           </Card>
 
+          {/* Day log */}
           <Card className="flex flex-col min-h-0">
             <div
               className="sticky top-0 z-10 border-b bg-[var(--to-surface)] p-4"
@@ -680,6 +756,7 @@ export default function DispatchConsolePage() {
                   {logRows.map((r) => {
                     const who = (r.created_by_name ?? "").trim();
                     const whoDisplay = who.length ? who : "Unknown";
+                    const canEdit = !!userId && String(r.created_by_user_id) === String(userId);
 
                     return (
                       <div
@@ -687,15 +764,28 @@ export default function DispatchConsolePage() {
                         className="rounded-xl border px-3 py-2"
                         style={{ borderColor: "var(--to-border)" }}
                       >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge>{labelForEvent(r.event_type)}</Badge>
-                          {r.capacity_delta_routes !== 0 ? <Badge>Δ {fmtDelta(r.capacity_delta_routes)}</Badge> : null}
-                          <span className="text-xs text-[var(--to-ink-muted)]">
-                            {new Date(r.created_at).toLocaleTimeString()} • {whoDisplay}
-                          </span>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge>{labelForEvent(r.event_type)}</Badge>
+                            {r.capacity_delta_routes !== 0 ? <Badge>Δ {fmtDelta(r.capacity_delta_routes)}</Badge> : null}
+                            <span className="text-xs text-[var(--to-ink-muted)]">
+                              {new Date(r.created_at).toLocaleTimeString()} • {whoDisplay}
+                            </span>
+                          </div>
+
+                          {canEdit ? (
+                            <Button
+                              variant="secondary"
+                              className="h-7 px-3 text-xs"
+                              onClick={() => beginEdit(r)}
+                            >
+                              Edit
+                            </Button>
+                          ) : null}
                         </div>
+
                         <div className="mt-1 text-sm leading-snug">{r.message}</div>
-                        <div className="mt-1 text-xs text-[var(--to-ink-muted)]">{r.tech_id}</div>
+                        <div className="mt-1 text-xs text-[var(--to-ink-muted)]">{r.tech_id ?? ""}</div>
                       </div>
                     );
                   })}

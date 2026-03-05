@@ -161,7 +161,7 @@ async function resolveIdentityForOrg(person_id: string, pc_org_id: string) {
   const today = isoToday();
 
   const [pRes, asgRes] = await Promise.all([
-    admin.from("person").select("person_id,full_name,emails").eq("person_id", person_id).maybeSingle(),
+    admin.from("person").select("person_id,full_name,emails,role").eq("person_id", person_id).maybeSingle(),
     admin
       .from("assignment")
       .select("tech_id,start_date,end_date,active")
@@ -171,10 +171,11 @@ async function resolveIdentityForOrg(person_id: string, pc_org_id: string) {
 
   const full_name = pRes?.data?.full_name ?? null;
   const emails = pRes?.data?.emails ?? null;
+  const affiliation = pRes?.data?.role ?? null;
 
   const tech_id = pickBestTechId((asgRes.data ?? []) as any[], today);
 
-  return { full_name, emails, tech_id };
+  return { full_name, emails, affiliation, tech_id };
 }
 
 export async function getTechScorecardPayload(args: Args): Promise<ScorecardResponse> {
@@ -234,26 +235,66 @@ export async function getTechScorecardPayload(args: Args): Promise<ScorecardResp
     };
   });
 
+  // header enrichment
+  const { data: orgRow } = await admin
+    .from("pc_org")
+    .select("pc_org_name")
+    .eq("pc_org_id", pc_org_id)
+    .maybeSingle();
+
+  const pc_org_name = orgRow?.pc_org_name ?? null;
+
+  let fiscal_month_key = "—";
+  let fiscal_start_date = "—";
+
+  if (fact?.fiscal_end_date) {
+    const { data: fiscal } = await admin
+      .from("fiscal_month_dim")
+      .select("fiscal_month_key,fiscal_start_date")
+      .eq("fiscal_end_date", fact.fiscal_end_date)
+      .maybeSingle();
+
+    if (fiscal) {
+      fiscal_month_key = fiscal.fiscal_month_key ?? "—";
+      fiscal_start_date = fiscal.fiscal_start_date ?? "—";
+    }
+  }
+
+  const { data: orgAssignments } = await admin
+    .from("assignment")
+    .select("pc_org_id,tech_id,start_date,end_date,active")
+    .eq("person_id", args.person_id);
+
+  const today = isoToday();
+
+  const orgMap = new Map<string, any[]>();
+
+  for (const a of orgAssignments ?? []) {
+    const arr = orgMap.get(a.pc_org_id) ?? [];
+    arr.push(a);
+    orgMap.set(a.pc_org_id, arr);
+  }
+
+  const org_selector = Array.from(orgMap.keys()).map((orgId) => ({
+    pc_org_id: orgId,
+    label: orgId,
+    tech_id: pickBestTechId(orgMap.get(orgId) ?? [], today),
+    is_selected: orgId === pc_org_id,
+  }));
+
   return {
     header: {
       person_id: args.person_id,
       full_name: ident.full_name,
-      affiliation: null,
+      affiliation: ident.affiliation,
       supervisor_name: null,
       tech_id: ident.tech_id,
-      pc_org_name: null,
-      fiscal_month_key: "—",
-      fiscal_start_date: "—",
+      pc_org_name,
+      fiscal_month_key,
+      fiscal_start_date,
       fiscal_end_date: fact?.fiscal_end_date ?? "—",
     },
-    org_selector: [
-      {
-        pc_org_id,
-        label: "Selected Org",
-        tech_id: ident.tech_id,
-        is_selected: true,
-      },
-    ],
+    org_selector,
     tiles,
     rank: null,
   };

@@ -1,71 +1,61 @@
 "use client";
 
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 
 import type { EventType, LogRow } from "../lib/types";
-import { chipClassForEvent, labelForEvent } from "../lib/labels";
 
-function EventChip(props: { t: LogRow["event_type"] }) {
-  return (
-    <span
-      className="rounded-full border px-2 py-0.5 text-[11px]"
-      style={{ borderColor: "var(--to-border)", ...chipClassForEvent(props.t) }}
-    >
-      {labelForEvent(props.t)}
-    </span>
-  );
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
+function labelForEvent(t: LogRow["event_type"]) {
+  if (t === "CALL_OUT") return "Call Out";
+  if (t === "ADD_IN") return "Add In";
+  if (t === "BP_LOW") return "BP-Low";
+  if (t === "INCIDENT") return "Incident";
+  if (t === "TECH_MOVE") return "Tech Move";
+  return "Note";
 }
 
 export function DayLogPanel(props: {
   panelH: string;
   shiftDate: string;
-
   logFilter: EventType;
   setLogFilter: (v: EventType) => void;
-
   loadingLog: boolean;
   onRefresh: () => void;
 
   logRows: LogRow[];
-
-  userId: string | null | undefined;
+  userId: string | null;
 
   onBeginEdit: (row: LogRow) => void;
   onDeleteNote: (row: LogRow) => void;
 }) {
-  const canEditRow = (row: LogRow) =>
-    !!props.userId && String(row.created_by_user_id) === String(props.userId);
-
-  const canEditNote = (row: LogRow) => canEditRow(row) && row.event_type === "NOTE";
+  const { panelH, shiftDate, logFilter, setLogFilter, loadingLog, onRefresh, logRows, userId, onBeginEdit, onDeleteNote } =
+    props;
 
   return (
-    <Card className={props.panelH} style={{ borderColor: "var(--to-border)" }}>
-      <div
-        className="sticky top-0 z-10 border-b bg-[var(--to-surface)] p-4"
-        style={{ borderColor: "var(--to-border)" }}
-      >
-        <div className="flex items-start justify-between gap-3">
+    <Card className={cls("flex flex-col min-h-0", panelH)}>
+      {/* Header */}
+      <div className="sticky top-0 z-10 border-b bg-[var(--to-surface)] p-4" style={{ borderColor: "var(--to-border)" }}>
+        <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-sm font-semibold">History</div>
-            <div className="text-xs text-[var(--to-ink-muted)]">{props.shiftDate}</div>
+            <div className="text-xs text-[var(--to-ink-muted)]">{shiftDate}</div>
           </div>
 
-          <Button
-            variant="secondary"
-            className="h-8 px-3 text-sm"
-            onClick={props.onRefresh}
-            disabled={props.loadingLog}
-          >
-            {props.loadingLog ? "Refreshing…" : "Refresh"}
+          <Button variant="secondary" className="h-8 px-3 text-sm" onClick={onRefresh} disabled={loadingLog}>
+            {loadingLog ? "Refreshing…" : "Refresh"}
           </Button>
         </div>
 
         <div className="mt-3">
           <SegmentedControl<EventType>
-            value={props.logFilter}
-            onChange={props.setLogFilter}
+            value={logFilter}
+            onChange={setLogFilter}
             size="sm"
             options={[
               { value: "ALL", label: "All" },
@@ -80,62 +70,70 @@ export function DayLogPanel(props: {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto p-4">
-        {props.logRows.length === 0 ? (
-          <div className="text-sm text-[var(--to-ink-muted)]">No history entries.</div>
+      {/* Body */}
+      <div className="flex-1 overflow-auto px-4 py-4 min-h-0">
+        {logRows.length === 0 ? (
+          <div className="text-sm text-[var(--to-ink-muted)]">No entries yet.</div>
         ) : (
           <div className="grid gap-2">
-            {props.logRows.map((row) => {
-              const editableNote = canEditNote(row);
+            {logRows.map((r) => {
+              const mine = !!userId && String(r.created_by_user_id) === String(userId);
+
+              const whoRaw = String((r as any).created_by_name ?? "").trim();
+              const who = mine ? "You" : whoRaw || "Unknown";
+
+              const time = (() => {
+                try {
+                  return new Date(r.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+                } catch {
+                  return "";
+                }
+              })();
+
+              const tech = (r.tech_id ?? "").toString().trim();
+              const showActions = mine && r.event_type === "NOTE"; // guardrail: creator-only + NOTE-only edits
 
               return (
                 <div
-                  key={row.dispatch_console_log_id}
+                  key={r.dispatch_console_log_id}
                   className="rounded-xl border px-3 py-2"
                   style={{ borderColor: "var(--to-border)" }}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <EventChip t={row.event_type} />
-                        <div className="text-xs text-[var(--to-ink-muted)]">
-                          {row.created_at ? new Date(row.created_at).toLocaleTimeString() : ""}
-                        </div>
+                        <Badge>{labelForEvent(r.event_type)}</Badge>
+                        {time ? <span className="text-xs text-[var(--to-ink-muted)]">{time}</span> : null}
                       </div>
 
-                      <div className="mt-1 text-sm">{row.message ?? ""}</div>
-
-                      {row.assignment_id ? (
-                        <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-                          Assignment {String(row.assignment_id)}
-                        </div>
-                      ) : null}
+                      <div className="mt-0.5 text-xs text-[var(--to-ink-muted)]">Created by {who}</div>
                     </div>
 
-                    {editableNote ? (
+                    {showActions ? (
                       <div className="flex items-center gap-2">
-                        <Button
-                          variant="secondary"
-                          className="h-8 px-3 text-sm"
-                          onClick={() => props.onBeginEdit(row)}
-                        >
+                        <Button variant="secondary" className="h-7 px-2 text-xs" onClick={() => onBeginEdit(r)}>
                           Edit
                         </Button>
-                        <Button
-                          variant="secondary"
-                          className="h-8 px-3 text-sm text-red-600 hover:text-red-700"
-                          onClick={() => props.onDeleteNote(row)}
-                        >
+                        <Button variant="secondary" className="h-7 px-2 text-xs" onClick={() => onDeleteNote(r)}>
                           Delete
                         </Button>
                       </div>
                     ) : null}
                   </div>
+
+                  <div className="mt-2 text-sm leading-snug">{r.message}</div>
+
+                  {/* ✅ Durable human fallback (never show assignment UUID on cards) */}
+                  {tech ? <div className="mt-1 text-xs text-[var(--to-ink-muted)]">Tech {tech}</div> : null}
                 </div>
               );
             })}
           </div>
         )}
+      </div>
+
+      <div className="sticky bottom-0 border-t bg-[var(--to-surface)] px-4 py-2" style={{ borderColor: "var(--to-border)" }}>
+        <div className="text-[11px] text-[var(--to-ink-muted)]"> </div>
       </div>
     </Card>
   );

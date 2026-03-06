@@ -7,7 +7,7 @@
   --to-surface: #0f1624;
   --to-surface-2: rgba(255, 255, 255, 0.04);
 
-    /* Segmented control + Pills */
+  /* Segmented control + Pills */
   --to-seg-active-bg: var(--to-row-hover);
   --to-pill-active-bg: transparent;
 
@@ -39,5 +39,53 @@
 
   /* Overlay (modal/backdrop) */
   --to-overlay: rgba(0, 0, 0, 0.55);
-}
 
+  /* -------------------------------------------------- */
+  /* Chart / graph tokens                               */
+  /* Theme owns these. Components should consume only   */
+  /* these tokens, not hardcoded colors.                */
+  /* -------------------------------------------------- */
+
+  /* Panel */
+  --to-chart-panel-bg: var(--to-surface);
+  --to-chart-panel-bg-2: color-mix(in srgb, var(--to-surface) 88%, var(--to-surface-2) 12%);
+  --to-chart-panel-border: var(--to-border);
+  --to-chart-panel-shadow: var(--to-shadow-sm);
+
+  /* Plot bed */
+  --to-chart-plot-bg: color-mix(in srgb, var(--to-surface) 82%, var(--to-surface-2) 18%);
+  --to-chart-plot-border: color-mix(in srgb, var(--to-border) 88%, transparent 12%);
+
+  /* Grid + labels */
+  --to-chart-grid: color-mix(in srgb, var(--to-ink) 12%, transparent);
+  --to-chart-axis-label: color-mix(in srgb, var(--to-ink) 62%, transparent);
+  --to-chart-title: var(--to-ink);
+  --to-chart-subtitle: var(--to-ink-muted);
+
+  /* Accent-driven line system (default = primary/accent) */
+  --to-chart-accent: var(--to-accent);
+  --to-chart-line: var(--to-chart-accent);
+  --to-chart-line-soft: color-mix(in srgb, var(--to-chart-accent) 62%, white 38%);
+  --to-chart-fill-top: color-mix(in srgb, var(--to-chart-accent) 22%, transparent);
+  --to-chart-fill-bottom: color-mix(in srgb, var(--to-chart-accent) 2%, transparent);
+  --to-chart-beam: color-mix(in srgb, var(--to-chart-accent) 16%, transparent);
+  --to-chart-dot: var(--to-chart-accent);
+  --to-chart-dot-muted: color-mix(in srgb, var(--to-ink) 26%, transparent);
+
+  /* Value chip */
+  --to-chart-chip-bg: color-mix(in srgb, var(--to-chart-accent) 10%, var(--to-surface) 90%);
+  --to-chart-chip-border: color-mix(in srgb, var(--to-chart-accent) 26%, var(--to-border) 74%);
+  --to-chart-chip-ink: color-mix(in srgb, var(--to-chart-accent) 72%, var(--to-ink) 28%);
+
+  /* Tooltip */
+  --to-chart-tooltip-bg: var(--to-surface);
+  --to-chart-tooltip-border: var(--to-border);
+  --to-chart-tooltip-ink: var(--to-ink);
+  --to-chart-tooltip-sub: var(--to-ink-muted);
+
+  /* Band-lane defaults for future use */
+  --to-chart-band-exceeds: color-mix(in srgb, var(--to-success) 14%, transparent);
+  --to-chart-band-meets: color-mix(in srgb, var(--to-accent) 12%, transparent);
+  --to-chart-band-needs-improvement: color-mix(in srgb, var(--to-warning) 14%, transparent);
+  --to-chart-band-misses: color-mix(in srgb, var(--to-danger) 14%, transparent);
+}

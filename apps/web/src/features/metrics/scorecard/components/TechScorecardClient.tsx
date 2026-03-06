@@ -1,37 +1,40 @@
 "use client";
 
-import { useMemo, useState } from "react";
-
+import { useState } from "react";
 import type { ScorecardResponse, ScorecardTile } from "../lib/scorecard.types";
-
 import ScorecardIdentityCard from "./ScorecardIdentityCard";
+import PersonJumpSelect from "./PersonJumpSelect";
 import ScorecardOrgPills from "./ScorecardOrgPills";
 import KpiTileGrid from "./KpiTileGrid";
 import KpiDrawer from "./KpiDrawer";
-import PersonJumpSelect from "./PersonJumpSelect";
 
-export default function TechScorecardClient(props: { payload: ScorecardResponse }) {
+export default function TechScorecardClient(props: {
+  payload: ScorecardResponse;
+}) {
   const { payload } = props;
+  const [openTile, setOpenTile] = useState<ScorecardTile | null>(null);
 
-  const [openKpiKey, setOpenKpiKey] = useState<string | null>(null);
-  const openTile = useMemo(
-    () => payload.tiles.find((t) => t.kpi_key === openKpiKey) ?? null,
-    [payload.tiles, openKpiKey]
-  );
+  function onOpen(tile: ScorecardTile) {
+    setOpenTile(tile);
+  }
 
-  const onOpen = (tile: ScorecardTile) => setOpenKpiKey(tile.kpi_key);
-  const onClose = () => setOpenKpiKey(null);
+  function onClose() {
+    setOpenTile(null);
+  }
 
   return (
     <div className="space-y-4">
       <ScorecardIdentityCard header={payload.header} />
 
-      <div className="rounded-2xl border p-3">
-        <div className="text-xs font-medium text-muted-foreground mb-2">Mirror view: jump to any person</div>
+      <div className="rounded-2xl border bg-card p-4">
         <PersonJumpSelect />
       </div>
 
-      <ScorecardOrgPills options={payload.org_selector} />
+      <ScorecardOrgPills
+        personId={payload.header.person_id}
+        options={payload.org_selector}
+      />
+
       <KpiTileGrid tiles={payload.tiles} onOpen={onOpen} />
       <KpiDrawer tile={openTile} onClose={onClose} />
     </div>

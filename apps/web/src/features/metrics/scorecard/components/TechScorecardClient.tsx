@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import type { ScorecardResponse, ScorecardTile } from "../lib/scorecard.types";
 import ScorecardIdentityCard from "./ScorecardIdentityCard";
@@ -24,8 +25,19 @@ export default function TechScorecardClient(props: {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border bg-card p-4">
-        <PersonJumpSelect />
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4">
+        <div className="min-w-0 flex-1">
+          <div className="mb-3">
+            <Link
+              href="/metrics/reports"
+              className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted"
+            >
+              Back to Metrics
+            </Link>
+          </div>
+
+          <PersonJumpSelect />
+        </div>
       </div>
 
       <ScorecardIdentityCard header={payload.header} />

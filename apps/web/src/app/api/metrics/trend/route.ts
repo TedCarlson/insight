@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import { supabaseServer } from "@/shared/data/supabase/server";
+import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
+
+import { requireAccessPass } from "@/shared/access/requireAccessPass";
+import { hasCapability } from "@/shared/access/access";
+import { CAP } from "@/shared/access/capabilities";
 
 type FiscalWindow = "FM" | "3FM" | "12FM";
 
@@ -108,7 +114,31 @@ function average(nums: number[]) {
   return nums.reduce((sum, n) => sum + n, 0) / nums.length;
 }
 
+function json(status: number, payload: any) {
+  return NextResponse.json(payload, { status });
+}
+
+function emptyPayload(kpi_key: string, fiscal_window: FiscalWindow) {
+  return {
+    kpi_key,
+    fiscal_window,
+    direction: directionForKpi(kpi_key),
+    series: [],
+    overlays: {
+      short_window_label: "recent",
+      long_window_label: "baseline",
+      short_avg: null,
+      long_avg: null,
+      delta: null,
+      state: "NO_DATA",
+    },
+  };
+}
+
 export async function GET(req: NextRequest) {
+  const scope = await requireSelectedPcOrgServer();
+  if (!scope.ok) return json(401, { ok: false, error: "unauthorized" });
+
   const { searchParams } = new URL(req.url);
 
   const pc_org_id = searchParams.get("pc_org_id");
@@ -117,14 +147,34 @@ export async function GET(req: NextRequest) {
   const fiscal_window = (searchParams.get("fiscal_window") || "FM") as FiscalWindow;
 
   if (!pc_org_id || !person_id || !kpi_key) {
-    return NextResponse.json(
-      { error: "pc_org_id, person_id, and kpi_key are required" },
-      { status: 400 }
-    );
+    return json(400, { error: "pc_org_id, person_id, and kpi_key are required" });
   }
 
   if (!["FM", "3FM", "12FM"].includes(fiscal_window)) {
-    return NextResponse.json({ error: "Invalid fiscal_window" }, { status: 400 });
+    return json(400, { error: "Invalid fiscal_window" });
+  }
+
+  if (pc_org_id !== scope.selected_pc_org_id) {
+    return json(403, { ok: false, error: "forbidden" });
+  }
+
+  let pass: any;
+  try {
+    pass = await requireAccessPass(req, pc_org_id);
+  } catch (err: any) {
+    if (err?.status === 401) return json(401, { ok: false, error: "unauthorized" });
+    if (err?.status === 403) return json(403, { ok: false, error: "forbidden" });
+    if (err?.status === 400) return json(400, { ok: false, error: err?.message ?? "invalid_pc_org_id" });
+    return json(500, { ok: false, error: "access_pass_failed" });
+  }
+
+  const isOwner = Boolean(pass?.is_app_owner) || Boolean(pass?.is_owner);
+  if (!isOwner) {
+    const allowed =
+      hasCapability(pass, CAP.METRICS_MANAGE) ||
+      hasCapability(pass, CAP.ROSTER_MANAGE);
+
+    if (!allowed) return json(403, { ok: false, error: "forbidden" });
   }
 
   const sb = await supabaseServer();
@@ -139,26 +189,13 @@ export async function GET(req: NextRequest) {
     .limit(200);
 
   if (asgErr) {
-    return NextResponse.json({ error: asgErr.message }, { status: 500 });
+    return json(500, { error: asgErr.message });
   }
 
   const tech_id = pickBestTechId((assignments ?? []) as AssignmentRow[], today);
 
   if (!tech_id) {
-    return NextResponse.json({
-      kpi_key,
-      fiscal_window,
-      direction: directionForKpi(kpi_key),
-      series: [],
-      overlays: {
-        short_window_label: "recent",
-        long_window_label: "baseline",
-        short_avg: null,
-        long_avg: null,
-        delta: null,
-        state: "NO_DATA",
-      },
-    });
+    return json(200, emptyPayload(kpi_key, fiscal_window));
   }
 
   const { data: currentFiscal, error: curErr } = await sb
@@ -169,24 +206,11 @@ export async function GET(req: NextRequest) {
     .maybeSingle();
 
   if (curErr) {
-    return NextResponse.json({ error: curErr.message }, { status: 500 });
+    return json(500, { error: curErr.message });
   }
 
   if (!currentFiscal) {
-    return NextResponse.json({
-      kpi_key,
-      fiscal_window,
-      direction: directionForKpi(kpi_key),
-      series: [],
-      overlays: {
-        short_window_label: "recent",
-        long_window_label: "baseline",
-        short_avg: null,
-        long_avg: null,
-        delta: null,
-        state: "NO_DATA",
-      },
-    });
+    return json(200, emptyPayload(kpi_key, fiscal_window));
   }
 
   const monthLimit = fiscal_window === "FM" ? 1 : fiscal_window === "3FM" ? 3 : 12;
@@ -199,7 +223,7 @@ export async function GET(req: NextRequest) {
     .limit(monthLimit);
 
   if (monthErr) {
-    return NextResponse.json({ error: monthErr.message }, { status: 500 });
+    return json(500, { error: monthErr.message });
   }
 
   const fiscalRows = (months ?? []) as Array<Pick<FiscalMonthRow, "month_key" | "end_date">>;
@@ -209,20 +233,7 @@ export async function GET(req: NextRequest) {
   );
 
   if (!fiscalEndDates.length) {
-    return NextResponse.json({
-      kpi_key,
-      fiscal_window,
-      direction: directionForKpi(kpi_key),
-      series: [],
-      overlays: {
-        short_window_label: "recent",
-        long_window_label: "baseline",
-        short_avg: null,
-        long_avg: null,
-        delta: null,
-        state: "NO_DATA",
-      },
-    });
+    return json(200, emptyPayload(kpi_key, fiscal_window));
   }
 
   const { data: facts, error: factErr } = await sb
@@ -251,7 +262,7 @@ export async function GET(req: NextRequest) {
     .order("metric_date", { ascending: true });
 
   if (factErr) {
-    return NextResponse.json({ error: factErr.message }, { status: 500 });
+    return json(500, { error: factErr.message });
   }
 
   const sampleField = sampleFieldForKpi(kpi_key);
@@ -288,7 +299,7 @@ export async function GET(req: NextRequest) {
     else state = delta < 0 ? "UP" : "DOWN";
   }
 
-  return NextResponse.json({
+  return json(200, {
     kpi_key,
     fiscal_window,
     direction: directionForKpi(kpi_key),

@@ -20,7 +20,6 @@ export function useOrgConsoleAccess(): Result {
     if (!selectedOrgId) return false;
     if (accessPass?.is_app_owner || accessPass?.is_admin) return true;
     const perms = accessPass?.permissions ?? [];
-    // If you later add a dedicated permission key, wire it here.
     return perms.includes("org_console_manage") || perms.includes("admin_console_manage");
   }, [selectedOrgId, accessPass]);
 

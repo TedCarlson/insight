@@ -1,7 +1,3 @@
-// RUN THIS
-// Replace the entire file:
-// apps/web/src/app/api/org/rpc/_rpc.authz.ts
-
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import type { RpcSchema } from "./_rpc.types";
 
@@ -51,6 +47,13 @@ export async function canAccessPcOrgUserClient(supabaseUser: any, pc_org_id: str
   return Boolean(data);
 }
 
+async function getAccessPassUserClient(supabaseUser: any, pc_org_id: string): Promise<any | null> {
+  const apiClient: any = (supabaseUser as any).schema ? (supabaseUser as any).schema("api") : supabaseUser;
+  const { data, error } = await apiClient.rpc("get_access_pass", { p_pc_org_id: pc_org_id });
+  if (error) return null;
+  return data ?? null;
+}
+
 export async function requirePermission(
   supabaseUser: any,
   pc_org_id: string,
@@ -61,6 +64,12 @@ export async function requirePermission(
   // Note: route.ts is still responsible for enforcing baseline org access for elevated users.
   if (opts?.elevated) return true;
 
+  // First try canonical AccessPass permissions.
+  const pass = await getAccessPassUserClient(supabaseUser, pc_org_id);
+  const perms = Array.isArray(pass?.permissions) ? pass.permissions.map((p: any) => String(p)) : [];
+  if (perms.includes(permission_key)) return true;
+
+  // Fallback to legacy permission RPC while org/rpc is still in transition.
   const apiClient: any = (supabaseUser as any).schema ? (supabaseUser as any).schema("api") : supabaseUser;
   const { data, error } = await apiClient.rpc("has_pc_org_permission", {
     p_pc_org_id: pc_org_id,

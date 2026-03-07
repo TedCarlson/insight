@@ -16,7 +16,7 @@ import { useOrgConsoleAccess } from "@/hooks/useOrgConsoleAccess";
 type Lob = "FULFILLMENT" | "LOCATE";
 
 type DraftBlock = {
-  _key: string; // client-only key
+  _key: string;
   pc_org_home_block_id?: string;
   area: string;
   block_type: "kpi_row" | "narrative" | "link_list";
@@ -139,7 +139,6 @@ async function fetchBlocks(pc_org_id: string, lob: Lob) {
 }
 
 async function saveBlocks(pc_org_id: string, lob: Lob, blocks: DraftBlock[]) {
-  // Recompute sort per area from current order
   const rows: Array<any> = [];
   for (const area of AREAS) {
     const group = blocks.filter((b) => b.area === area);
@@ -483,7 +482,7 @@ export default function AdminHomeEditorPage() {
       setDraft([]);
       return;
     }
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, signedIn, selectedOrgId, lob]);
 
@@ -544,7 +543,6 @@ export default function AdminHomeEditorPage() {
         const arr = a === area ? nextArea : prev.filter((b) => b.area === a);
         rebuilt.push(...arr);
       }
-      // plus unknown areas (shouldn't happen)
       const unknown = prev.filter((b) => !AREAS.includes(b.area as any));
       rebuilt.push(...unknown);
 

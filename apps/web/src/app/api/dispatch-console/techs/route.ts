@@ -1,66 +1,136 @@
 // apps/web/src/app/api/dispatch-console/techs/route.ts
-
-import { NextResponse } from "next/server";
-import { requireSelectedPcOrgServer } from "@/shared/lib/auth/requireSelectedPcOrg.server";
+import { NextResponse, type NextRequest } from "next/server";
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import { requireDispatchConsoleAccess } from "../_auth";
 
-function pickPcOrgId(sel: any, fallback: string | null): string | null {
-  const raw =
-    sel?.pc_org_id ??
-    sel?.pcOrgId ??
-    sel?.pc_orgId ??
-    sel?.selected_org_id ??
-    sel?.selectedOrgId ??
-    sel?.org_id ??
-    sel?.orgId ??
-    fallback ??
-    null;
+export const runtime = "nodejs";
 
-  if (raw === null || raw === undefined) return null;
-  const s = String(raw).trim();
-  return s.length ? s : null;
+function isISODate(v: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(v);
 }
 
-export async function GET(req: Request) {
-  try {
-    const authz = await requireDispatchConsoleAccess();
-    if (!authz.ok) return NextResponse.json({ ok: false, error: authz.error }, { status: authz.status });
+export async function GET(req: NextRequest) {
+  const pc_org_id = req.nextUrl.searchParams.get("pc_org_id") ?? "";
+  const shift_date = req.nextUrl.searchParams.get("shift_date") ?? "";
 
-    const url = new URL(req.url);
-    const qPcOrgId = url.searchParams.get("pc_org_id");
-
-    const sel = await requireSelectedPcOrgServer();
-    const selectedPcOrgId = sel.ok ? sel.selected_pc_org_id : null;
-    const pc_org_id = pickPcOrgId({ pc_org_id: qPcOrgId }, selectedPcOrgId);
-
-    if (!pc_org_id) {
-      return NextResponse.json({ ok: false, error: "Missing pc_org_id (select a PC scope)" }, { status: 400 });
-    }
-    if (selectedPcOrgId && pc_org_id !== selectedPcOrgId) {
-      return NextResponse.json({ ok: false, error: "Forbidden (org mismatch)" }, { status: 403 });
-    }
-
-    // RLS applies via the user's server client.
-    const { data, error } = await authz.supabase
-      .from("route_lock_roster_tech_v")
-      .select("*")
-      .eq("pc_org_id", pc_org_id)
-      .order("full_name", { ascending: true });
-
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
-    }
-
-    const techs = (data ?? []).map((r: any) => ({
-      assignment_id: String(r.assignment_id ?? ""),
-      person_id: r.person_id ?? null,
-      tech_id: r.tech_id ?? null,
-      full_name: r.full_name ?? null,
-      co_name: r.co_name ?? null,
-    }));
-
-    return NextResponse.json({ ok: true, techs }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+  if (!pc_org_id) {
+    return NextResponse.json(
+      { ok: false, error: "missing_pc_org_id" },
+      { status: 400 }
+    );
   }
+
+  if (!shift_date || !isISODate(shift_date)) {
+    return NextResponse.json(
+      { ok: false, error: "invalid_shift_date" },
+      { status: 400 }
+    );
+  }
+
+  const authz = await requireDispatchConsoleAccess(req, pc_org_id);
+  if (!authz.ok) {
+    return NextResponse.json(
+      { ok: false, error: authz.error },
+      { status: authz.status }
+    );
+  }
+
+  const admin = supabaseAdmin();
+
+  /**
+   * Ensure dispatch snapshot exists.
+   * Repo pattern: seed from schedule before reads.
+   */
+  const seed = await admin.rpc("dispatch_day_seed_from_schedule", {
+    p_pc_org_id: pc_org_id,
+    p_shift_date: shift_date,
+  });
+
+  if (seed.error) {
+    return NextResponse.json(
+      { ok: false, error: "seed_failed", details: seed.error },
+      { status: 400 }
+    );
+  }
+
+  /**
+   * Primary workforce surface
+   * (matches UI WorkforceRow shape used in Dispatch Console)
+   */
+  const { data, error } = await admin
+    .from("dispatch_day_tech")
+    .select(
+      `
+      pc_org_id,
+      shift_date,
+      assignment_id,
+      person_id,
+      tech_id,
+      affiliation_id,
+      full_name,
+      co_name,
+      planned_route_id,
+      planned_route_name,
+      planned_start_time,
+      planned_end_time,
+      planned_hours,
+      planned_units,
+      sv_built,
+      sv_route_id,
+      sv_route_name,
+      checked_in_at,
+      schedule_as_of,
+      sv_as_of,
+      check_in_as_of
+    `
+    )
+    .eq("pc_org_id", pc_org_id)
+    .eq("shift_date", shift_date)
+    .order("full_name", { ascending: true });
+
+  if (error) {
+    return NextResponse.json(
+      { ok: false, error: "dispatch_lookup_failed", details: error },
+      { status: 400 }
+    );
+  }
+
+  const rows = (data ?? []).map((r: any) => ({
+    pc_org_id: r.pc_org_id,
+    shift_date: r.shift_date,
+    assignment_id: r.assignment_id ? String(r.assignment_id) : "",
+    person_id: r.person_id ? String(r.person_id) : "",
+    tech_id: r.tech_id ? String(r.tech_id) : "",
+    affiliation_id: r.affiliation_id ?? null,
+
+    full_name: r.full_name ?? "",
+    co_name: r.co_name ?? null,
+
+    planned_route_id: r.planned_route_id ?? null,
+    planned_route_name: r.planned_route_name ?? null,
+    planned_start_time: r.planned_start_time ?? null,
+    planned_end_time: r.planned_end_time ?? null,
+    planned_hours: r.planned_hours ?? null,
+    planned_units: r.planned_units ?? null,
+
+    sv_built: r.sv_built ?? null,
+    sv_route_id: r.sv_route_id ?? null,
+    sv_route_name: r.sv_route_name ?? null,
+
+    checked_in_at: r.checked_in_at ?? null,
+
+    schedule_as_of: r.schedule_as_of ?? null,
+    sv_as_of: r.sv_as_of ?? null,
+    check_in_as_of: r.check_in_as_of ?? null,
+  }));
+
+  return NextResponse.json(
+    {
+      ok: true,
+      pc_org_id,
+      shift_date,
+      rows,
+    },
+    { status: 200 }
+  );
 }

@@ -11,50 +11,46 @@ export async function GET(req: NextRequest) {
   try {
     const supabase = await supabaseServer();
 
-    // Signed-in gate (critical: ensures the cookie session exists)
     const {
       data: { user },
       error: userErr,
     } = await supabase.auth.getUser();
 
     if (userErr || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
-    const url = new URL(req.url);
-    const pcOrgId = String(url.searchParams.get("pc_org_id") ?? "").trim();
+    const pcOrgId = String(req.nextUrl.searchParams.get("pc_org_id") ?? "").trim();
 
     if (!pcOrgId || !isUuid(pcOrgId)) {
-      return NextResponse.json({ error: "Invalid pc_org_id" }, { status: 400 });
+      return NextResponse.json({ error: "invalid_pc_org_id" }, { status: 400 });
     }
 
-    // IMPORTANT:
-    // Call PUBLIC wrapper so we don't care about schema search_path on the RPC name.
-    // (Your public.get_access_pass delegates to api.get_access_pass.)
     const { data, error } = await supabase.rpc("get_access_pass", {
       p_pc_org_id: pcOrgId,
     });
 
-    if (error) {
-      // Return the real Postgres/Supabase error to the client.
-      // This prevents “mystery 400” and tells us exactly what failed.
+    if (error || !data) {
       return NextResponse.json(
         {
-          error: {
-            code: error.code ?? null,
-            message: error.message ?? "RPC error",
-            details: (error as any).details ?? null,
-            hint: (error as any).hint ?? null,
-          },
+          error: "access_pass_failed",
+          supabase: error
+            ? {
+                code: error.code ?? null,
+                message: error.message ?? null,
+                details: (error as any).details ?? null,
+                hint: (error as any).hint ?? null,
+              }
+            : null,
         },
-        { status: 400 }
+        { status: 403 }
       );
     }
 
-    return NextResponse.json(data ?? null, { status: 200 });
+    return NextResponse.json(data, { status: 200 });
   } catch (e: any) {
     return NextResponse.json(
-      { error: { message: e?.message ?? "Server error" } },
+      { error: "server_error", details: e?.message ?? null },
       { status: 500 }
     );
   }

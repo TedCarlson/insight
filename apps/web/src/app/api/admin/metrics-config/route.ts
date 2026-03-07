@@ -1,7 +1,3 @@
-// RUN THIS
-// Replace the entire file:
-// apps/web/src/app/api/admin/metrics-config/route.ts
-
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/shared/data/supabase/server";
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
@@ -43,7 +39,7 @@ type UpsertClassCfg = {
 };
 
 /**
- * ✅ KPI-driven rubric (GLOBAL by KPI)
+ * KPI-driven rubric (GLOBAL by KPI)
  * No class_type here.
  * DB is enforced global-only (pc_org_id is always NULL) and PK is (kpi_key, band_key).
  */
@@ -213,7 +209,7 @@ export async function POST(req: Request) {
         row.class_type = c.class_type.trim();
         row.kpi_key = c.kpi_key.trim();
 
-        // ✅ hard defaults (avoid NOT NULL fails)
+        // hard defaults (avoid NOT NULL fails)
         row.enabled = c.enabled ?? false;
 
         // allow either weight or weight_percent depending on schema; we normalize both if present
@@ -232,7 +228,7 @@ export async function POST(req: Request) {
 
         row.is_tiebreaker = !!c.is_tiebreaker;
 
-        // 🔒 enforce: label is GLOBAL only
+        // enforce: label is GLOBAL only
         stripClassScopedLabelFields(row);
 
         return row;

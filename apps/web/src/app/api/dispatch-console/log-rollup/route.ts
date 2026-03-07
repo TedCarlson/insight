@@ -7,6 +7,8 @@ import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
 export const runtime = "nodejs";
 
+type EventType = "CALL_OUT" | "ADD_IN" | "BP_LOW" | "INCIDENT" | "NOTE" | "TECH_MOVE";
+
 function isISODate(d: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(d);
 }
@@ -31,7 +33,10 @@ export async function GET(req: NextRequest) {
     const pc_org_id = req.nextUrl.searchParams.get("pc_org_id") ?? "";
     const shift_date = req.nextUrl.searchParams.get("shift_date") ?? "";
 
-    if (!pc_org_id) return jsonError(400, { ok: false, error: "missing_pc_org_id" });
+    if (!pc_org_id) {
+      return jsonError(400, { ok: false, error: "missing_pc_org_id" });
+    }
+
     if (!shift_date || !isISODate(shift_date)) {
       return jsonError(400, { ok: false, error: "invalid_shift_date" });
     }
@@ -41,48 +46,51 @@ export async function GET(req: NextRequest) {
 
     const admin = supabaseAdmin();
 
-    // Seed today's dispatch snapshot (idempotent)
-    const seed = await admin.rpc("dispatch_day_seed_from_schedule", {
-      p_pc_org_id: pc_org_id,
-      p_shift_date: shift_date,
-    });
+    const res = await admin
+      .from("dispatch_console_log")
+      .select("event_type, capacity_delta_routes")
+      .eq("pc_org_id", pc_org_id)
+      .eq("shift_date", shift_date);
 
-    if (seed.error) {
-      return jsonError(400, { ok: false, error: "seed_failed", details: seed.error });
+    if (res.error) {
+      return jsonError(400, { ok: false, error: "rollup_fetch_failed", supabase: res.error });
     }
 
-    // Workforce rows
-    const rowsRes = await admin
-      .from("dispatch_day_tech")
-      .select(
-        "pc_org_id,shift_date,assignment_id,person_id,tech_id,affiliation_id,full_name,co_name,planned_route_id,planned_route_name,planned_start_time,planned_end_time,planned_hours,planned_units,sv_built,sv_route_id,sv_route_name,checked_in_at,schedule_as_of,sv_as_of,check_in_as_of"
-      )
-      .eq("pc_org_id", pc_org_id)
-      .eq("shift_date", shift_date)
-      .order("full_name", { ascending: true });
+    const rows = res.data ?? [];
 
-    if (rowsRes.error) {
-      return jsonError(400, { ok: false, error: "workforce_fetch_failed", details: rowsRes.error });
-    }
+    let call_out = 0;
+    let add_in = 0;
+    let bp_low = 0;
+    let incident = 0;
+    let tech_move = 0;
+    let notes = 0;
+    let capacity_delta_total = 0;
 
-    // Day summary
-    const sumRes = await admin
-      .from("dispatch_day_summary_v")
-      .select("*")
-      .eq("pc_org_id", pc_org_id)
-      .eq("shift_date", shift_date)
-      .maybeSingle();
+    for (const r of rows) {
+      const t = r.event_type as EventType;
 
-    if (sumRes.error) {
-      return jsonError(400, { ok: false, error: "summary_fetch_failed", details: sumRes.error });
+      if (t === "CALL_OUT") call_out++;
+      if (t === "ADD_IN") add_in++;
+      if (t === "BP_LOW") bp_low++;
+      if (t === "INCIDENT") incident++;
+      if (t === "TECH_MOVE") tech_move++;
+      if (t === "NOTE") notes++;
+
+      capacity_delta_total += Number(r.capacity_delta_routes ?? 0);
     }
 
     return NextResponse.json(
       {
         ok: true,
-        seeded: seed.data ?? 0,
-        summary: sumRes.data ?? null,
-        rows: rowsRes.data ?? [],
+        rollup: {
+          call_out,
+          add_in,
+          bp_low,
+          incident,
+          tech_move,
+          notes,
+          capacity_delta_total,
+        },
       },
       { status: 200 }
     );

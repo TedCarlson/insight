@@ -44,36 +44,24 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     const text = await res.text();
 
     if (!res.ok) {
-      // Keep existing pass (don’t thrash UI) but log the body for debugging.
-     
       console.log("access-pass error:", res.status, text);
       return;
     }
 
-    // Parse once (stream already consumed by res.text()).
     let payload: any = null;
     try {
       payload = text ? JSON.parse(text) : null;
     } catch {
-     
       console.log("access-pass parse error:", text);
       setAccessPass(null);
       return;
     }
 
-    // Support both shapes:
-    // 1) { data: AccessPass }
-    // 2) AccessPass
-    const nextPass: AccessPass | null = (payload?.data ?? payload) ?? null;
-
-    setAccessPass(nextPass);
+    setAccessPass(payload ?? null);
   }, [selectedOrgId]);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      void refresh();
-    }, 0);
-    return () => clearTimeout(t);
+    void refresh();
   }, [refresh]);
 
   return <AccessContext.Provider value={{ accessPass, refresh }}>{children}</AccessContext.Provider>;
@@ -81,8 +69,6 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
 
 export function useAccessPass() {
   const ctx = useContext(AccessContext);
-  if (!ctx) {
-    throw new Error("useAccessPass must be used within AccessProvider");
-  }
+  if (!ctx) throw new Error("useAccessPass must be used inside <AccessProvider>");
   return ctx;
 }

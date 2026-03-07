@@ -1,5 +1,5 @@
 // RUN THIS
-// Create this new file:
+// Replace the entire file:
 // apps/web/src/app/api/route-lock/schedule/delete-tech/route.ts
 
 import { NextResponse } from "next/server";

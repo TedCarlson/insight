@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { supabaseServer } from "@/shared/data/supabase/server";
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
+import { requireDispatchConsoleAccess } from "../_auth";
 
 export const runtime = "nodejs";
 
@@ -19,31 +19,6 @@ function dayKeyFromISODate(shift_date: string): DayKey {
   return keys[idx] ?? "mon";
 }
 
-/**
- * Dispatch access must be checked in USER context (auth.uid()).
- * Service role (supabaseAdmin) will not have auth.uid(), so it cannot be used for gating.
- */
-async function requireDispatchAccess(pc_org_id: string) {
-  const sb = await supabaseServer();
-  const { data, error } = await sb.auth.getUser();
-  const user = data?.user ?? null;
-
-  if (error || !user) {
-    return { ok: false as const, status: 401 as const, error: "unauthorized" as const, user: null };
-  }
-
-  const access = await sb.rpc("has_dispatch_console_access", { p_pc_org_id: pc_org_id });
-  if (access.error) {
-    return { ok: false as const, status: 500 as const, error: "access_check_failed" as const, user: null };
-  }
-
-  if (access.data !== true) {
-    return { ok: false as const, status: 403 as const, error: "forbidden" as const, user: null };
-  }
-
-  return { ok: true as const, status: 200 as const, error: null, user };
-}
-
 export async function GET(req: NextRequest) {
   const pc_org_id = req.nextUrl.searchParams.get("pc_org_id") ?? "";
   const shift_date = req.nextUrl.searchParams.get("shift_date") ?? "";
@@ -53,8 +28,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_shift_date" }, { status: 400 });
   }
 
-  const gate = await requireDispatchAccess(pc_org_id);
-  if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: gate.status });
+  const authz = await requireDispatchConsoleAccess(req, pc_org_id);
+  if (!authz.ok) {
+    return NextResponse.json({ ok: false, error: authz.error }, { status: authz.status });
+  }
 
   const admin = supabaseAdmin();
 

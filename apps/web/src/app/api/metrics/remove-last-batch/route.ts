@@ -1,7 +1,11 @@
-// apps/web/src/api/metrics/remove-last-batch/route.ts
+// apps/web/src/app/api/metrics/remove-last-batch/route.ts
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+
+import { requireAccessPass } from "@/shared/access/requireAccessPass";
+import { hasCapability } from "@/shared/access/access";
+import { CAP } from "@/shared/access/capabilities";
 
 export const runtime = "nodejs";
 
@@ -44,24 +48,20 @@ export async function POST() {
     const pc_org_id = (prof?.selected_pc_org_id as string | null) ?? null;
     if (!pc_org_id) return json(400, { ok: false, error: "no org selected" });
 
-    const { data: isOwner } = await supabase.rpc("is_owner");
+    const req = new Request(`http://local/api/metrics/remove-last-batch?pc_org_id=${encodeURIComponent(pc_org_id)}`) as any;
+    req.nextUrl = new URL(`http://local/api/metrics/remove-last-batch?pc_org_id=${encodeURIComponent(pc_org_id)}`);
 
-    if (!isOwner) {
-      // Canonical gate for Metrics writes: metrics_manage (preferred) OR roster_manage (legacy)
-      const apiClient: any = (supabase as any).schema ? (supabase as any).schema("api") : supabase;
-      const { data: allowed, error: permErr } = await apiClient.rpc("has_any_pc_org_permission", {
-        p_pc_org_id: pc_org_id,
-        p_permission_keys: ["metrics_manage", "roster_manage"],
+    const pass = await requireAccessPass(req, pc_org_id);
+    const allowed =
+      hasCapability(pass, CAP.METRICS_MANAGE) ||
+      hasCapability(pass, CAP.ROSTER_MANAGE);
+
+    if (!allowed) {
+      return json(403, {
+        ok: false,
+        error: "forbidden",
+        required_any_of: ["metrics_manage", "roster_manage"],
       });
-
-      if (permErr) return json(403, { ok: false, error: "forbidden", detail: permErr.message });
-      if (!allowed) {
-        return json(403, {
-          ok: false,
-          error: "forbidden",
-          required_any_of: ["metrics_manage", "roster_manage"],
-        });
-      }
     }
 
     const { data: latest, error: latestErr } = await supabase

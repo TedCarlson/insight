@@ -106,24 +106,13 @@ async function guardSelectedOrgQuotaWrite(): Promise<GuardOk | GuardFail> {
   const roleAllowed = await hasAnyRole(admin, userId, ["admin", "dev", "director", "manager", "vp"]);
   if (roleAllowed) return { ok: true, pc_org_id, auth_user_id: userId };
 
-  // ✅ Grants check (SERVICE ROLE read; correct schema + correct column names)
-  const { data: grants, error: grantErr } = await admin
-    .from("pc_org_permission_grant")
-    .select("permission_key, expires_at, revoked_at")
-    .eq("pc_org_id", pc_org_id)
-    .eq("auth_user_id", userId)
-    .is("revoked_at", null)
-    .in("permission_key", ["route_lock_manage", "roster_manage"]);
-
-  if (grantErr) return { ok: false, status: 500, error: grantErr.message };
-
-  const nowIso = new Date().toISOString();
-  const allowed = (grants ?? []).some((g: { expires_at?: unknown }) => {
-    const exp = g?.expires_at ? String(g.expires_at) : "";
-    return !exp || exp > nowIso;
+  // ✅ Canonical grants check via boolean RPC (no direct table read)
+  const { data: allowedByGrant, error: grantRpcErr } = await apiClient.rpc("has_any_pc_org_permission", {
+    p_pc_org_id: pc_org_id,
+    p_permission_keys: ["route_lock_manage", "roster_manage"],
   });
 
-  if (!allowed) return { ok: false, status: 403, error: "forbidden" };
+  if (grantRpcErr || !allowedByGrant) return { ok: false, status: 403, error: "forbidden" };
 
   return { ok: true, pc_org_id, auth_user_id: userId };
 }

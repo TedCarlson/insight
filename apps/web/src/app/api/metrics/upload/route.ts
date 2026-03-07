@@ -1,9 +1,13 @@
 // apps/web/src/app/api/metrics/upload/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import * as XLSX from "xlsx";
 import crypto from "crypto";
+
+import { requireAccessPass } from "@/shared/access/requireAccessPass";
+import { hasCapability } from "@/shared/access/access";
+import { CAP } from "@/shared/access/capabilities";
 
 export const runtime = "nodejs";
 
@@ -109,7 +113,7 @@ function toWarning(code: string, message: string, detail?: any) {
   return { code, message, ...(detail ? { detail } : {}) };
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const cookieStore = await cookies();
 
@@ -145,23 +149,17 @@ export async function POST(req: Request) {
     const pc_org_id = (prof?.selected_pc_org_id as string | null) ?? null;
     if (!pc_org_id) return json(400, { ok: false, error: "no org selected" });
 
-    const { data: isOwner } = await supabase.rpc("is_owner");
-    if (!isOwner) {
-      // Canonical gate for Metrics writes: metrics_manage (preferred) OR roster_manage (legacy)
-      const apiClient: any = (supabase as any).schema ? (supabase as any).schema("api") : supabase;
-      const { data: allowed, error: permErr } = await apiClient.rpc("has_any_pc_org_permission", {
-        p_pc_org_id: pc_org_id,
-        p_permission_keys: ["metrics_manage", "roster_manage"],
-      });
+    const pass = await requireAccessPass(req, pc_org_id);
+    const allowed =
+      hasCapability(pass, CAP.METRICS_MANAGE) ||
+      hasCapability(pass, CAP.ROSTER_MANAGE);
 
-      if (permErr) return json(403, { ok: false, error: "forbidden", detail: permErr.message });
-      if (!allowed) {
-        return json(403, {
-          ok: false,
-          error: "forbidden",
-          required_any_of: ["metrics_manage", "roster_manage"],
-        });
-      }
+    if (!allowed) {
+      return json(403, {
+        ok: false,
+        error: "forbidden",
+        required_any_of: ["metrics_manage", "roster_manage"],
+      });
     }
 
     const form = await req.formData();

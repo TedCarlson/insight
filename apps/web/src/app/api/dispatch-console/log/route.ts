@@ -1,4 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
+
+import { requireAccessPass } from "@/shared/access/requireAccessPass";
+import { requireModule } from "@/shared/access/access";
+
 import { supabaseServer } from "@/shared/data/supabase/server";
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 
@@ -15,30 +19,6 @@ function deltaForEventType(t: EventType): number {
   if (t === "CALL_OUT") return -1;
   if (t === "ADD_IN") return 1;
   return 0;
-}
-
-/**
- * Match current repo access model:
- * api.can_access_dispatch(p_auth_user_id)
- */
-async function requireDispatchAccess(_pc_org_id: string) {
-  const sb = await supabaseServer();
-  const { data, error } = await sb.auth.getUser();
-  const user = data?.user ?? null;
-
-  if (error || !user) {
-    return { ok: false as const, status: 401 as const, error: "unauthorized" as const, user: null };
-  }
-
-  const gate = await sb.schema("api").rpc("can_access_dispatch", { p_auth_user_id: user.id });
-  if (gate.error) {
-    return { ok: false as const, status: 500 as const, error: "access_check_failed" as const, user: null };
-  }
-  if (gate.data !== true) {
-    return { ok: false as const, status: 403 as const, error: "forbidden" as const, user: null };
-  }
-
-  return { ok: true as const, status: 200 as const, error: null, user };
 }
 
 const SELECT_COLS =
@@ -66,9 +46,7 @@ async function resolveUserLabels(admin: ReturnType<typeof supabaseAdmin>, userId
           continue;
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     try {
       const { data, error } = await admin.auth.admin.getUserById(uid);
@@ -79,9 +57,7 @@ async function resolveUserLabels(admin: ReturnType<typeof supabaseAdmin>, userId
           continue;
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     out.set(uid, uid);
   }
@@ -93,265 +69,287 @@ function jsonError(status: number, payload: any) {
   return NextResponse.json(payload, { status });
 }
 
+function asAccessError(err: unknown) {
+  const status = (err as any)?.status ?? 500;
+  const message = String((err as any)?.message ?? "server_error");
+
+  if (status === 401) return jsonError(401, { ok: false, error: "unauthorized" });
+  if (status === 403) return jsonError(403, { ok: false, error: "forbidden" });
+  if (status === 400) return jsonError(400, { ok: false, error: message });
+
+  return jsonError(500, { ok: false, error: "server_error" });
+}
+
 export async function GET(req: NextRequest) {
-  const pc_org_id = req.nextUrl.searchParams.get("pc_org_id") ?? "";
-  const shift_date = req.nextUrl.searchParams.get("shift_date") ?? "";
-  const event_type = req.nextUrl.searchParams.get("event_type") ?? "";
-  const assignment_id = req.nextUrl.searchParams.get("assignment_id") ?? "";
+  try {
+    const pc_org_id = req.nextUrl.searchParams.get("pc_org_id") ?? "";
+    const shift_date = req.nextUrl.searchParams.get("shift_date") ?? "";
+    const event_type = req.nextUrl.searchParams.get("event_type") ?? "";
+    const assignment_id = req.nextUrl.searchParams.get("assignment_id") ?? "";
 
-  if (!pc_org_id) return jsonError(400, { ok: false, error: "missing_pc_org_id" });
-  if (!shift_date || !isISODate(shift_date)) return jsonError(400, { ok: false, error: "invalid_shift_date" });
+    if (!pc_org_id) return jsonError(400, { ok: false, error: "missing_pc_org_id" });
+    if (!shift_date || !isISODate(shift_date)) return jsonError(400, { ok: false, error: "invalid_shift_date" });
 
-  const gate = await requireDispatchAccess(pc_org_id);
-  if (!gate.ok) return jsonError(gate.status, { ok: false, error: gate.error });
+    const pass = await requireAccessPass(req);
+    requireModule(pass, "dispatch_console");
 
-  const admin = supabaseAdmin();
+    const admin = supabaseAdmin();
 
-  let q = admin
-    .from("dispatch_console_log")
-    .select(SELECT_COLS)
-    .eq("pc_org_id", pc_org_id)
-    .eq("shift_date", shift_date)
-    .order("created_at", { ascending: false });
+    let q = admin
+      .from("dispatch_console_log")
+      .select(SELECT_COLS)
+      .eq("pc_org_id", pc_org_id)
+      .eq("shift_date", shift_date)
+      .order("created_at", { ascending: false });
 
-  if (event_type) {
-    if (!EVENT_TYPES.includes(event_type as EventType)) {
-      return jsonError(400, { ok: false, error: "invalid_event_type" });
+    if (event_type) {
+      if (!EVENT_TYPES.includes(event_type as EventType)) {
+        return jsonError(400, { ok: false, error: "invalid_event_type" });
+      }
+      q = q.eq("event_type", event_type);
     }
-    q = q.eq("event_type", event_type);
+
+    if (assignment_id) q = q.eq("assignment_id", assignment_id);
+
+    const res = await q;
+    if (res.error) return jsonError(400, { ok: false, error: "log_fetch_failed", supabase: res.error });
+
+    const rows = (res.data ?? []) as any[];
+    const nameMap = await resolveUserLabels(admin, rows.map((r) => String(r.created_by_user_id ?? "")));
+
+    return NextResponse.json(
+      {
+        ok: true,
+        rows: rows.map((r) => ({
+          ...r,
+          created_by_name: nameMap.get(String(r.created_by_user_id ?? "")) ?? null,
+        })),
+      },
+      { status: 200 }
+    );
+  } catch (err) {
+    return asAccessError(err);
   }
-
-  if (assignment_id) q = q.eq("assignment_id", assignment_id);
-
-  const res = await q;
-  if (res.error) return jsonError(400, { ok: false, error: "log_fetch_failed", supabase: res.error });
-
-  const rows = (res.data ?? []) as any[];
-  const nameMap = await resolveUserLabels(admin, rows.map((r) => String(r.created_by_user_id ?? "")));
-
-  return NextResponse.json(
-    {
-      ok: true,
-      rows: rows.map((r) => ({
-        ...r,
-        created_by_name: nameMap.get(String(r.created_by_user_id ?? "")) ?? null,
-      })),
-    },
-    { status: 200 }
-  );
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => null);
-  if (!body || typeof body !== "object") return jsonError(400, { ok: false, error: "invalid_json" });
+  try {
+    const pass = await requireAccessPass(req);
+    requireModule(pass, "dispatch_console");
 
-  const pc_org_id = String((body as any).pc_org_id ?? "");
-  const shift_date = String((body as any).shift_date ?? "");
-  const assignment_id_raw = (body as any).assignment_id;
-  const assignment_id = assignment_id_raw === null || assignment_id_raw === undefined ? "" : String(assignment_id_raw);
-  const event_type = String((body as any).event_type ?? "");
-  const message = String((body as any).message ?? "").trim();
-  const tags = (body as any).tags ?? null;
-  const meta = (body as any).meta ?? null;
-  const dedupe_key = (body as any).dedupe_key ?? null;
-  const event_group_id = (body as any).event_group_id ?? null;
+    const userId = pass.auth_user_id;
 
-  if (!pc_org_id) return jsonError(400, { ok: false, error: "missing_pc_org_id" });
-  if (!shift_date || !isISODate(shift_date)) return jsonError(400, { ok: false, error: "invalid_shift_date" });
-  if (!EVENT_TYPES.includes(event_type as EventType)) return jsonError(400, { ok: false, error: "invalid_event_type" });
-  if (!message) return jsonError(400, { ok: false, error: "missing_message" });
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") return jsonError(400, { ok: false, error: "invalid_json" });
 
-  const gate = await requireDispatchAccess(pc_org_id);
-  if (!gate.ok) return jsonError(gate.status, { ok: false, error: gate.error });
+    const pc_org_id = String((body as any).pc_org_id ?? "");
+    const shift_date = String((body as any).shift_date ?? "");
+    const assignment_id_raw = (body as any).assignment_id;
+    const assignment_id = assignment_id_raw === null || assignment_id_raw === undefined ? "" : String(assignment_id_raw);
+    const event_type = String((body as any).event_type ?? "");
+    const message = String((body as any).message ?? "").trim();
+    const tags = (body as any).tags ?? null;
+    const meta = (body as any).meta ?? null;
+    const dedupe_key = (body as any).dedupe_key ?? null;
+    const event_group_id = (body as any).event_group_id ?? null;
 
-  const user = gate.user!;
-  const admin = supabaseAdmin();
+    if (!pc_org_id) return jsonError(400, { ok: false, error: "missing_pc_org_id" });
+    if (!shift_date || !isISODate(shift_date)) return jsonError(400, { ok: false, error: "invalid_shift_date" });
+    if (!EVENT_TYPES.includes(event_type as EventType)) return jsonError(400, { ok: false, error: "invalid_event_type" });
+    if (!message) return jsonError(400, { ok: false, error: "missing_message" });
 
-  if (event_type === "NOTE") {
+    const admin = supabaseAdmin();
+
+    if (event_type === "NOTE") {
+      const ins = await admin
+        .from("dispatch_console_log")
+        .insert({
+          pc_org_id,
+          shift_date,
+          assignment_id: null,
+          person_id: null,
+          tech_id: null,
+          affiliation_id: null,
+          event_type,
+          capacity_delta_routes: 0,
+          message,
+          tags,
+          meta,
+          dedupe_key,
+          event_group_id,
+          created_by_user_id: userId,
+        })
+        .select(SELECT_COLS)
+        .single();
+
+      if (ins.error) return jsonError(400, { ok: false, error: "log_insert_failed", supabase: ins.error });
+
+      const nameMap = await resolveUserLabels(admin, [String(ins.data?.created_by_user_id ?? "")]);
+
+      return NextResponse.json(
+        { ok: true, row: { ...ins.data, created_by_name: nameMap.get(String(ins.data?.created_by_user_id ?? "")) ?? null } },
+        { status: 200 }
+      );
+    }
+
+    if (!assignment_id) return jsonError(400, { ok: false, error: "missing_assignment_id" });
+
+    const day = await admin
+      .from("dispatch_day_tech")
+      .select("person_id,tech_id,affiliation_id")
+      .eq("pc_org_id", pc_org_id)
+      .eq("shift_date", shift_date)
+      .eq("assignment_id", assignment_id)
+      .maybeSingle();
+
+    let person_id: string | null = day.data?.person_id ?? null;
+    let tech_id: string | null = day.data?.tech_id ?? null;
+    let affiliation_id: string | null = day.data?.affiliation_id ?? null;
+
+    if (!person_id || !tech_id) {
+      const roster = await admin
+        .from("route_lock_roster_tech_v")
+        .select("person_id,tech_id")
+        .eq("pc_org_id", pc_org_id)
+        .eq("assignment_id", assignment_id)
+        .maybeSingle();
+
+      if (roster.error) return jsonError(400, { ok: false, error: "roster_lookup_failed", supabase: roster.error });
+
+      person_id = person_id ?? roster.data?.person_id ?? null;
+      tech_id = tech_id ?? (roster.data?.tech_id ? String(roster.data.tech_id) : null);
+    }
+
+    if (!person_id || !tech_id) return jsonError(400, { ok: false, error: "identity_unresolved" });
+
     const ins = await admin
       .from("dispatch_console_log")
       .insert({
         pc_org_id,
         shift_date,
-        assignment_id: null,
-        person_id: null,
-        tech_id: null,
-        affiliation_id: null,
+        assignment_id,
+        person_id,
+        tech_id,
+        affiliation_id,
         event_type,
-        capacity_delta_routes: 0,
+        capacity_delta_routes: deltaForEventType(event_type as EventType),
         message,
         tags,
         meta,
         dedupe_key,
         event_group_id,
-        created_by_user_id: user.id,
+        created_by_user_id: userId,
       })
       .select(SELECT_COLS)
       .single();
 
-    if (ins.error) {
-      console.error("DISPATCH INSERT ERROR:", ins.error);
-      return jsonError(400, { ok: false, error: "log_insert_failed", supabase: ins.error });
-    }
+    if (ins.error) return jsonError(400, { ok: false, error: "log_insert_failed", supabase: ins.error });
 
     const nameMap = await resolveUserLabels(admin, [String(ins.data?.created_by_user_id ?? "")]);
+
     return NextResponse.json(
       { ok: true, row: { ...ins.data, created_by_name: nameMap.get(String(ins.data?.created_by_user_id ?? "")) ?? null } },
       { status: 200 }
     );
+  } catch (err) {
+    return asAccessError(err);
   }
-
-  if (!assignment_id) return jsonError(400, { ok: false, error: "missing_assignment_id" });
-
-  const day = await admin
-    .from("dispatch_day_tech")
-    .select("person_id,tech_id,affiliation_id")
-    .eq("pc_org_id", pc_org_id)
-    .eq("shift_date", shift_date)
-    .eq("assignment_id", assignment_id)
-    .maybeSingle();
-
-  let person_id: string | null = day.data?.person_id ?? null;
-  let tech_id: string | null = day.data?.tech_id ?? null;
-  let affiliation_id: string | null = day.data?.affiliation_id ?? null;
-
-  if (!person_id || !tech_id) {
-    const roster = await admin
-      .from("route_lock_roster_tech_v")
-      .select("person_id,tech_id")
-      .eq("pc_org_id", pc_org_id)
-      .eq("assignment_id", assignment_id)
-      .maybeSingle();
-
-    if (roster.error) return jsonError(400, { ok: false, error: "roster_lookup_failed", supabase: roster.error });
-
-    person_id = person_id ?? roster.data?.person_id ?? null;
-    tech_id = tech_id ?? (roster.data?.tech_id ? String(roster.data.tech_id) : null);
-  }
-
-  if (!person_id || !tech_id) {
-    return jsonError(400, { ok: false, error: "identity_unresolved" });
-  }
-
-  const ins = await admin
-    .from("dispatch_console_log")
-    .insert({
-      pc_org_id,
-      shift_date,
-      assignment_id,
-      person_id,
-      tech_id,
-      affiliation_id,
-      event_type,
-      capacity_delta_routes: deltaForEventType(event_type as EventType),
-      message,
-      tags,
-      meta,
-      dedupe_key,
-      event_group_id,
-      created_by_user_id: user.id,
-    })
-    .select(SELECT_COLS)
-    .single();
-
-  if (ins.error) return jsonError(400, { ok: false, error: "log_insert_failed", supabase: ins.error });
-
-  const nameMap = await resolveUserLabels(admin, [String(ins.data?.created_by_user_id ?? "")]);
-  return NextResponse.json(
-    { ok: true, row: { ...ins.data, created_by_name: nameMap.get(String(ins.data?.created_by_user_id ?? "")) ?? null } },
-    { status: 200 }
-  );
 }
 
 export async function PATCH(req: NextRequest) {
-  const body = await req.json().catch(() => null);
-  if (!body || typeof body !== "object") return jsonError(400, { ok: false, error: "invalid_json" });
+  try {
+    const pass = await requireAccessPass(req);
+    requireModule(pass, "dispatch_console");
 
-  const dispatch_console_log_id = String((body as any).dispatch_console_log_id ?? "").trim();
-  const pc_org_id = String((body as any).pc_org_id ?? "").trim();
-  const event_type = String((body as any).event_type ?? "").trim();
-  const message = String((body as any).message ?? "").trim();
+    const userId = pass.auth_user_id;
 
-  if (!dispatch_console_log_id) return jsonError(400, { ok: false, error: "missing_dispatch_console_log_id" });
-  if (!pc_org_id) return jsonError(400, { ok: false, error: "missing_pc_org_id" });
-  if (!EVENT_TYPES.includes(event_type as EventType)) return jsonError(400, { ok: false, error: "invalid_event_type" });
-  if (!message) return jsonError(400, { ok: false, error: "missing_message" });
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") return jsonError(400, { ok: false, error: "invalid_json" });
 
-  const gate = await requireDispatchAccess(pc_org_id);
-  if (!gate.ok) return jsonError(gate.status, { ok: false, error: gate.error });
+    const dispatch_console_log_id = String((body as any).dispatch_console_log_id ?? "").trim();
+    const pc_org_id = String((body as any).pc_org_id ?? "").trim();
+    const event_type = String((body as any).event_type ?? "").trim();
+    const message = String((body as any).message ?? "").trim();
 
-  const user = gate.user!;
-  const admin = supabaseAdmin();
+    if (!dispatch_console_log_id) return jsonError(400, { ok: false, error: "missing_dispatch_console_log_id" });
+    if (!pc_org_id) return jsonError(400, { ok: false, error: "missing_pc_org_id" });
+    if (!EVENT_TYPES.includes(event_type as EventType)) return jsonError(400, { ok: false, error: "invalid_event_type" });
+    if (!message) return jsonError(400, { ok: false, error: "missing_message" });
 
-  const pre = await admin
-    .from("dispatch_console_log")
-    .select("dispatch_console_log_id,pc_org_id,created_by_user_id")
-    .eq("dispatch_console_log_id", dispatch_console_log_id)
-    .maybeSingle();
+    const admin = supabaseAdmin();
 
-  if (pre.error) return jsonError(400, { ok: false, error: "log_lookup_failed", supabase: pre.error });
-  if (!pre.data) return jsonError(404, { ok: false, error: "log_not_found" });
-  if (String(pre.data.pc_org_id) !== String(pc_org_id)) return jsonError(400, { ok: false, error: "pc_org_mismatch" });
-  if (String(pre.data.created_by_user_id) !== String(user.id)) return jsonError(403, { ok: false, error: "edit_forbidden" });
+    const pre = await admin
+      .from("dispatch_console_log")
+      .select("dispatch_console_log_id,pc_org_id,created_by_user_id")
+      .eq("dispatch_console_log_id", dispatch_console_log_id)
+      .maybeSingle();
 
-  const sb = await supabaseServer();
-  const upd = await sb
-    .from("dispatch_console_log")
-    .update({ event_type, message })
-    .eq("dispatch_console_log_id", dispatch_console_log_id)
-    .select(SELECT_COLS)
-    .single();
+    if (pre.error) return jsonError(400, { ok: false, error: "log_lookup_failed", supabase: pre.error });
+    if (!pre.data) return jsonError(404, { ok: false, error: "log_not_found" });
+    if (String(pre.data.pc_org_id) !== String(pc_org_id)) return jsonError(400, { ok: false, error: "pc_org_mismatch" });
+    if (String(pre.data.created_by_user_id) !== String(userId)) return jsonError(403, { ok: false, error: "edit_forbidden" });
 
-  if (upd.error) return jsonError(400, { ok: false, error: "log_update_failed", supabase: upd.error });
+    const sb = await supabaseServer();
 
-  const nameMap = await resolveUserLabels(admin, [String(upd.data?.created_by_user_id ?? "")]);
-  return NextResponse.json(
-    { ok: true, row: { ...upd.data, created_by_name: nameMap.get(String(upd.data?.created_by_user_id ?? "")) ?? null } },
-    { status: 200 }
-  );
+    const upd = await sb
+      .from("dispatch_console_log")
+      .update({ event_type, message })
+      .eq("dispatch_console_log_id", dispatch_console_log_id)
+      .select(SELECT_COLS)
+      .single();
+
+    if (upd.error) return jsonError(400, { ok: false, error: "log_update_failed", supabase: upd.error });
+
+    const nameMap = await resolveUserLabels(admin, [String(upd.data?.created_by_user_id ?? "")]);
+
+    return NextResponse.json(
+      { ok: true, row: { ...upd.data, created_by_name: nameMap.get(String(upd.data?.created_by_user_id ?? "")) ?? null } },
+      { status: 200 }
+    );
+  } catch (err) {
+    return asAccessError(err);
+  }
 }
 
 export async function DELETE(req: NextRequest) {
-  // ✅ Support both:
-  // - JSON body { pc_org_id, dispatch_console_log_id }
-  // - query params ?pc_org_id=...&dispatch_console_log_id=...
-  const pc_org_id_qs = req.nextUrl.searchParams.get("pc_org_id") ?? "";
-  const id_qs = req.nextUrl.searchParams.get("dispatch_console_log_id") ?? "";
+  try {
+    const pass = await requireAccessPass(req);
+    requireModule(pass, "dispatch_console");
 
-  const body = await req.json().catch(() => null);
+    const userId = pass.auth_user_id;
 
-  const pc_org_id = String((body as any)?.pc_org_id ?? pc_org_id_qs ?? "").trim();
-  const dispatch_console_log_id = String((body as any)?.dispatch_console_log_id ?? id_qs ?? "").trim();
+    const pc_org_id_qs = req.nextUrl.searchParams.get("pc_org_id") ?? "";
+    const id_qs = req.nextUrl.searchParams.get("dispatch_console_log_id") ?? "";
 
-  if (!dispatch_console_log_id) return jsonError(400, { ok: false, error: "missing_dispatch_console_log_id" });
-  if (!pc_org_id) return jsonError(400, { ok: false, error: "missing_pc_org_id" });
+    const body = await req.json().catch(() => null);
 
-  const gate = await requireDispatchAccess(pc_org_id);
-  if (!gate.ok) return jsonError(gate.status, { ok: false, error: gate.error });
+    const pc_org_id = String((body as any)?.pc_org_id ?? pc_org_id_qs ?? "").trim();
+    const dispatch_console_log_id = String((body as any)?.dispatch_console_log_id ?? id_qs ?? "").trim();
 
-  const user = gate.user!;
-  const admin = supabaseAdmin();
+    if (!dispatch_console_log_id) return jsonError(400, { ok: false, error: "missing_dispatch_console_log_id" });
+    if (!pc_org_id) return jsonError(400, { ok: false, error: "missing_pc_org_id" });
 
-  // Verify exists + org + creator (friendly, deterministic)
-  const pre = await admin
-    .from("dispatch_console_log")
-    .select("dispatch_console_log_id,pc_org_id,created_by_user_id")
-    .eq("dispatch_console_log_id", dispatch_console_log_id)
-    .maybeSingle();
+    const admin = supabaseAdmin();
 
-  if (pre.error) return jsonError(400, { ok: false, error: "log_lookup_failed", supabase: pre.error });
-  if (!pre.data) return jsonError(404, { ok: false, error: "log_not_found" });
-  if (String(pre.data.pc_org_id) !== String(pc_org_id)) return jsonError(400, { ok: false, error: "pc_org_mismatch" });
-  if (String(pre.data.created_by_user_id) !== String(user.id)) return jsonError(403, { ok: false, error: "delete_forbidden" });
+    const pre = await admin
+      .from("dispatch_console_log")
+      .select("dispatch_console_log_id,pc_org_id,created_by_user_id")
+      .eq("dispatch_console_log_id", dispatch_console_log_id)
+      .maybeSingle();
 
-  // Delete using USER context (requires RLS DELETE policy, see note below)
-  const sb = await supabaseServer();
-  const del = await sb.from("dispatch_console_log").delete().eq("dispatch_console_log_id", dispatch_console_log_id);
+    if (pre.error) return jsonError(400, { ok: false, error: "log_lookup_failed", supabase: pre.error });
+    if (!pre.data) return jsonError(404, { ok: false, error: "log_not_found" });
+    if (String(pre.data.pc_org_id) !== String(pc_org_id)) return jsonError(400, { ok: false, error: "pc_org_mismatch" });
+    if (String(pre.data.created_by_user_id) !== String(userId)) return jsonError(403, { ok: false, error: "delete_forbidden" });
 
-  if (del.error) {
-    // ✅ return the real supabase error so we can see if it’s RLS
-    return jsonError(400, { ok: false, error: "delete_failed", supabase: del.error });
+    const sb = await supabaseServer();
+
+    const del = await sb.from("dispatch_console_log").delete().eq("dispatch_console_log_id", dispatch_console_log_id);
+
+    if (del.error) return jsonError(400, { ok: false, error: "delete_failed", supabase: del.error });
+
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (err) {
+    return asAccessError(err);
   }
-
-  return NextResponse.json({ ok: true }, { status: 200 });
 }

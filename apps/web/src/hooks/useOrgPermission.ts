@@ -25,7 +25,6 @@ export function useOrgPermission(permissionKey: string): Result {
     return perms.includes(permissionKey);
   }, [selectedOrgId, accessPass, permissionKey]);
 
-  // "loading" means: org is selected but pass not hydrated yet
   const loading = !!selectedOrgId && !accessPass;
 
   return { loading, allowed, error: null };

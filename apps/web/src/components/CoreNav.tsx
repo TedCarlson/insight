@@ -64,14 +64,12 @@ export default function CoreNav({ lob }: CoreNavProps) {
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
 
-  // Close drawer when navigating
   useEffect(() => {
     if (!open) return;
     setOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  // Escape to close + prevent background scroll while open
   useEffect(() => {
     if (!open) return;
 
@@ -127,7 +125,6 @@ export default function CoreNav({ lob }: CoreNavProps) {
       try {
         rememberLob(next);
 
-        // best-effort clear scope before switching LOB
         await fetch("/api/profile/select-org", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -142,7 +139,6 @@ export default function CoreNav({ lob }: CoreNavProps) {
     [isOwner, pathname, switching]
   );
 
-  // Render guards
   if (shouldHideForRoute) return null;
   if (!ready || !signedIn) return null;
 
@@ -153,7 +149,6 @@ export default function CoreNav({ lob }: CoreNavProps) {
         variant === "rail" ? "px-4 py-4" : "px-5 py-5"
       )}
     >
-      {/* Top: Brand + close (drawer only) */}
       <div className="flex items-center justify-between">
         <Link href={homeHref} prefetch={false} className="inline-flex items-center gap-2">
           <MapPin className="h-4 w-4" />
@@ -172,7 +167,6 @@ export default function CoreNav({ lob }: CoreNavProps) {
         ) : null}
       </div>
 
-      {/* Owner LOB switch */}
       {isOwner ? (
         <div className="mt-4 rounded-lg border bg-background/60 p-2">
           <div className="text-[11px] text-muted-foreground px-1 pb-1">LOB</div>
@@ -205,7 +199,6 @@ export default function CoreNav({ lob }: CoreNavProps) {
         </div>
       ) : null}
 
-      {/* Org selector */}
       <div className="mt-4 rounded-lg border bg-background/60 p-3">
         <div className="text-[11px] text-muted-foreground mb-2">Scope</div>
         <OrgSelector label="PC" />
@@ -216,7 +209,6 @@ export default function CoreNav({ lob }: CoreNavProps) {
         ) : null}
       </div>
 
-      {/* Primary nav */}
       <div className="mt-5">
         <div className="text-[11px] text-muted-foreground mb-2 px-1">Navigate</div>
         <nav className="flex flex-col gap-1">
@@ -266,7 +258,6 @@ export default function CoreNav({ lob }: CoreNavProps) {
 
       <div className="flex-1" />
 
-      {/* Bottom: identity + signout */}
       <div className="mt-6 rounded-lg border bg-background/60 p-3">
         <div className="text-[11px] text-muted-foreground">Signed in</div>
         <div className="mt-1 text-sm truncate">{email ?? "—"}</div>
@@ -285,12 +276,10 @@ export default function CoreNav({ lob }: CoreNavProps) {
 
   return (
     <>
-      {/* Desktop left rail */}
       <aside className="hidden lg:block fixed left-0 top-0 z-50 h-screen w-72 border-r bg-background/80 backdrop-blur">
         <RailContent variant="rail" />
       </aside>
 
-      {/* Mobile top bar with hamburger */}
       <header className="lg:hidden fixed top-0 left-0 right-0 z-50 border-b bg-background/80 backdrop-blur">
         <div className="flex items-center justify-between px-4 py-3">
           <button
@@ -310,11 +299,9 @@ export default function CoreNav({ lob }: CoreNavProps) {
         </div>
       </header>
 
-      {/* Mobile drawer overlay */}
       {open
         ? createPortal(
             <div className="fixed inset-0 z-[70] lg:hidden">
-              {/* Backdrop: dark + blur */}
               <button
                 type="button"
                 aria-label="Close menu backdrop"
@@ -324,7 +311,6 @@ export default function CoreNav({ lob }: CoreNavProps) {
               />
               <div className="absolute inset-0 backdrop-blur-sm" />
 
-              {/* Drawer panel */}
               <div
                 className="absolute left-0 top-0 h-full w-[88vw] max-w-sm border-r bg-background shadow-2xl"
                 style={{

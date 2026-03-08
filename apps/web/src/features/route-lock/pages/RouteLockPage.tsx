@@ -51,11 +51,11 @@ export default async function RouteLockPage() {
       <PageHeader title="Route Lock" subtitle="Configure schedule, quotas, routes, shift-validation, and check-in." />
 
       <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-6">
-        <SectionCard title="View Lock Calendar" href="/route-lock/calendar" />
-        <SectionCard title="Set Baseline Schedule" href="/route-lock/schedule" />
-        <SectionCard title="Shift Validation Upload" href="/route-lock/shift-validation" />
-        <SectionCard title="Check-In Upload" href="/route-lock/check-in" />
-        <SectionCard title="Load/Review Quota" href="/route-lock/quota" />
+        <SectionCard title="Lock Calendar" href="/route-lock/calendar" />
+        <SectionCard title="Baseline Schedule" href="/route-lock/schedule" />
+        <SectionCard title="Shift Validations" href="/route-lock/shift-validation" />
+        <SectionCard title="Check-In Uploads" href="/route-lock/check-in" />
+        <SectionCard title="Manage Quota" href="/route-lock/quota" />
         <SectionCard title="Manage Routes" href="/route-lock/routes" />
       </div>
 

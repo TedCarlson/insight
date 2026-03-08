@@ -166,8 +166,8 @@ function sampleLabelForKpi(kpiKey: string) {
   }
 }
 
-function buildPoints(series: TrendPoint[]) {
-  const finite = series
+function buildPoints(series: TrendPoint[], chartWidth: number) {
+  const finiteRaw = series
     .map((p, i) => ({ i, ...p }))
     .filter((p) => isFiniteNum(p.value)) as Array<{
     i: number;
@@ -176,6 +176,11 @@ function buildPoints(series: TrendPoint[]) {
     value: number;
     sample: number | null;
   }>;
+
+  const finite = finiteRaw.map((p, denseIndex) => ({
+    ...p,
+    i: denseIndex,
+  }));
 
   if (finite.length < 2) {
     return {
@@ -199,7 +204,8 @@ function buildPoints(series: TrendPoint[]) {
   const max = maxRaw + pad;
   const span = max - min || 1;
 
-  const plotW = WIDTH - PAD_L - PAD_R;
+  const safeWidth = Math.max(chartWidth, PAD_L + PAD_R + 120);
+  const plotW = safeWidth - PAD_L - PAD_R;
   const plotH = HEIGHT - PAD_T - PAD_B;
 
   const points: PointXY[] = finite.map((p) => {
@@ -274,6 +280,7 @@ export default function KpiTrendChart(props: {
   const [data, setData] = useState<TrendResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [hover, setHover] = useState<PointXY | null>(null);
+  const [chartWidth, setChartWidth] = useState(WIDTH);
 
   const svgWrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -359,8 +366,26 @@ export default function KpiTrendChart(props: {
     };
   }, [props.kpiKey, props.fiscalWindow, personId, selectedOrgId]);
 
+  useEffect(() => {
+    const el = svgWrapRef.current;
+    if (!el) return;
+
+    const resize = () => {
+      const next = Math.floor(el.getBoundingClientRect().width);
+      if (!next) return;
+      setChartWidth(next);
+    };
+
+    resize();
+
+    const ro = new ResizeObserver(resize);
+    ro.observe(el);
+
+    return () => ro.disconnect();
+  }, []);
+
   const series = useMemo(() => data?.series ?? [], [data?.series]);
-  const built = useMemo(() => buildPoints(series), [series]);
+  const built = useMemo(() => buildPoints(series, chartWidth), [series, chartWidth]);
   const polyline = useMemo(() => polylineFromPoints(built.points), [built.points]);
   const areaPath = useMemo(() => areaPathFromPoints(built.points), [built.points]);
 
@@ -430,18 +455,22 @@ export default function KpiTrendChart(props: {
         {polyline && areaPath ? (
           <div
             ref={svgWrapRef}
-            className="relative"
+            className="relative w-full overflow-hidden"
             onMouseLeave={() => setHover(null)}
             onMouseMove={(e) => {
               const el = svgWrapRef.current;
               if (!el) return;
               const rect = el.getBoundingClientRect();
               const x = e.clientX - rect.left;
-              const vbX = (x / rect.width) * WIDTH;
+              const vbX = (x / rect.width) * chartWidth;
               setHover(nearestPoint(built.points, vbX));
             }}
           >
-            <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="h-56 w-full">
+            <svg
+                viewBox={`0 0 ${chartWidth} ${HEIGHT}`}
+                preserveAspectRatio="none"
+                className="block h-56 w-full"
+              >
               <defs>
                 <filter id={idGlow} x="-50%" y="-50%" width="200%" height="200%">
                   <feGaussianBlur stdDeviation="2.8" result="blur" />
@@ -461,7 +490,7 @@ export default function KpiTrendChart(props: {
               <rect
                 x={PAD_L}
                 y={PAD_T}
-                width={WIDTH - PAD_L - PAD_R}
+                width={Math.max(0, chartWidth - PAD_L - PAD_R)}
                 height={HEIGHT - PAD_T - PAD_B}
                 rx="20"
                 fill={plotFill}
@@ -474,7 +503,7 @@ export default function KpiTrendChart(props: {
                   <line
                     key={idx}
                     x1={PAD_L}
-                    x2={WIDTH - PAD_R}
+                    x2={chartWidth - PAD_R}
                     y1={y}
                     y2={y}
                     stroke={grid}
@@ -483,10 +512,24 @@ export default function KpiTrendChart(props: {
                 );
               })}
 
-              <text x={10} y={PAD_T + 10} fontSize="12" fill={labelInk}>
+              <text
+                x={PAD_L + 8}
+                y={PAD_T + 16}
+                fontSize="10"
+                fill={labelInk}
+                textAnchor="start"
+                dominantBaseline="middle"
+              >
                 max {maxLabel}
               </text>
-              <text x={10} y={HEIGHT - PAD_B + 2} fontSize="12" fill={labelInk}>
+              <text
+                x={PAD_L + 8}
+                y={HEIGHT - PAD_B - 10}
+                fontSize="10"
+                fill={labelInk}
+                textAnchor="start"
+                dominantBaseline="middle"
+              >
                 min {minLabel}
               </text>
 
@@ -555,7 +598,7 @@ export default function KpiTrendChart(props: {
               <div
                 className="pointer-events-none absolute z-20"
                 style={{
-                  left: `${Math.max(10, Math.min((hover.x / WIDTH) * 100, 88))}%`,
+                  left: `${Math.max(10, Math.min((hover.x / chartWidth) * 100, 88))}%`,
                   top: "26%",
                   transform: "translate(-50%, -50%)",
                 }}

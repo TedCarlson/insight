@@ -26,25 +26,22 @@ export function RosterQuickView(props: {
       if (!row) return;
 
       const name = pickName(row);
-      const personId = String((row as any)?.person_id ?? "—");
-
       const mobile = String((row as any)?.mobile ?? "—") || "—";
       const ntLogin = String((row as any)?.person_nt_login ?? "—") || "—";
       const csg = String((row as any)?.person_csg_id ?? "—") || "—";
       const affiliation = String((row as any)?.co_name ?? "—") || "—";
       const reportsTo = String((row as any)?.reports_to_full_name ?? "—") || "—";
 
-      const pad = (k: string, n = 12) => (k + ":").padEnd(n, " ");
+      const pad = (k: string, n = 13) => (k + ":").padEnd(n, " ");
 
-      const text =
-        `${name}
-Tech ID: ${techId} • Person: ${personId}
-
-${pad("Mobile")}${mobile}
-${pad("NT Login")}${ntLogin}
-${pad("CSG")}${csg}
-${pad("Affiliation")}${affiliation}
-${pad("Reports To")}${reportsTo}`.trim();
+      const text = [
+        `${name} • Tech ID: ${techId}`,
+        `${pad("Mobile")}${mobile}`,
+        `${pad("NT Login")}${ntLogin}`,
+        `${pad("CSG")}${csg}`,
+        `${pad("Affiliation")}${affiliation}`,
+        `${pad("Reports To")}${reportsTo}`,
+      ].join("\n");
 
       await navigator.clipboard.writeText(text);
 

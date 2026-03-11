@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useFieldLogRuntime } from "../hooks/useFieldLogRuntime";
+import { useSession } from "@/state/session";
+import { useOrg } from "@/state/org";
 
 type DraftResponse = {
   ok: boolean;
@@ -10,11 +12,11 @@ type DraftResponse = {
 };
 
 export default function FieldLogNewClient() {
-  const {
-    categories,
-    getSubcategoriesForCategory,
-    getRuleForSelection,
-  } = useFieldLogRuntime();
+  const { categories, getSubcategoriesForCategory, getRuleForSelection } =
+    useFieldLogRuntime();
+
+  const { userId } = useSession();
+  const { selectedOrgId } = useOrg();
 
   const [categoryKey, setCategoryKey] = useState<string | null>(null);
   const [subcategoryKey, setSubcategoryKey] = useState<string | null>(null);
@@ -29,19 +31,31 @@ export default function FieldLogNewClient() {
 
   async function createDraft() {
     if (!categoryKey) return;
-    if (!jobNumber) return;
+    if (!jobNumber.trim()) return;
+
+    if (!userId) {
+      alert("No signed-in user found.");
+      return;
+    }
+
+    if (!selectedOrgId) {
+      alert("Please select a PC scope before creating a Field Log.");
+      return;
+    }
 
     setCreating(true);
 
     try {
       const res = await fetch("/api/field-log/draft", {
         method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          createdByUserId: "CURRENT_USER_ID", // wire to session later
+          createdByUserId: userId,
+          pcOrgId: selectedOrgId,
           categoryKey,
           subcategoryKey,
-          jobNumber,
-          jobType,
+          jobNumber: jobNumber.trim(),
+          jobType: jobType || null,
         }),
       });
 
@@ -60,10 +74,8 @@ export default function FieldLogNewClient() {
 
   return (
     <div className="space-y-6">
-
-      {/* CATEGORY */}
       <section>
-        <h2 className="text-lg font-semibold mb-2">What are you reporting?</h2>
+        <h2 className="mb-2 text-lg font-semibold">What are you reporting?</h2>
 
         <div className="grid grid-cols-2 gap-3">
           {categories.map((cat) => (
@@ -80,20 +92,17 @@ export default function FieldLogNewClient() {
               }`}
             >
               <div className="font-semibold">{cat.label}</div>
-              {cat.description && (
-                <div className="text-xs text-muted-foreground">
-                  {cat.description}
-                </div>
-              )}
+              {cat.description ? (
+                <div className="text-xs text-muted-foreground">{cat.description}</div>
+              ) : null}
             </button>
           ))}
         </div>
       </section>
 
-      {/* SUBCATEGORY */}
-      {subcategoryKey !== undefined && subcategories.length > 0 && (
+      {subcategories.length > 0 ? (
         <section>
-          <h2 className="text-lg font-semibold mb-2">Reason</h2>
+          <h2 className="mb-2 text-lg font-semibold">Reason</h2>
 
           <div className="grid gap-2">
             {subcategories.map((s) => (
@@ -111,9 +120,8 @@ export default function FieldLogNewClient() {
             ))}
           </div>
         </section>
-      )}
+      ) : null}
 
-      {/* JOB INFO */}
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Job Info</h2>
 
@@ -125,12 +133,12 @@ export default function FieldLogNewClient() {
         />
 
         <div className="flex gap-2">
-          {["install", "tc", "sro"].map((type) => (
+          {(["install", "tc", "sro"] as const).map((type) => (
             <button
               key={type}
-              onClick={() => setJobType(type as any)}
+              onClick={() => setJobType(type)}
               className={`flex-1 rounded-lg border p-3 ${
-                jobType === type ? "border-blue-600 bg-blue-50" : ""
+                jobType === type ? "border-blue-600 bg-blue-50" : "border-gray-200"
               }`}
             >
               {type.toUpperCase()}
@@ -139,34 +147,29 @@ export default function FieldLogNewClient() {
         </div>
       </section>
 
-      {/* RULE PREVIEW */}
-      {rule && (
-        <section className="rounded-xl border p-4 text-sm bg-gray-50">
-          {rule.active_text_instruction && (
+      {rule ? (
+        <section className="rounded-xl border bg-gray-50 p-4 text-sm">
+          {rule.active_text_instruction ? (
             <div className="mb-2">{rule.active_text_instruction}</div>
-          )}
+          ) : null}
 
           <div>
             Photos required: <b>{rule.min_photo_count}</b>
           </div>
 
-          {rule.xm_allowed && (
-            <div className="text-xs text-muted-foreground">
-              XM evidence allowed
-            </div>
-          )}
+          {rule.xm_allowed ? (
+            <div className="text-xs text-muted-foreground">XM evidence allowed</div>
+          ) : null}
         </section>
-      )}
+      ) : null}
 
-      {/* CREATE DRAFT */}
       <button
-        disabled={!categoryKey || !jobNumber || creating}
-        onClick={createDraft}
-        className="w-full rounded-xl bg-blue-600 text-white p-4 font-semibold"
+        disabled={!categoryKey || !jobNumber.trim() || creating}
+        onClick={() => void createDraft()}
+        className="w-full rounded-xl bg-blue-600 p-4 font-semibold text-white"
       >
         {creating ? "Creating…" : "Continue"}
       </button>
-
     </div>
   );
 }

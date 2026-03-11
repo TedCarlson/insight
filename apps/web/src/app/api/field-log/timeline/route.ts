@@ -8,23 +8,23 @@ function badRequest(message: string) {
 }
 
 export async function GET(req: NextRequest) {
-  const createdByUserId = req.nextUrl.searchParams.get("createdByUserId")?.trim();
+  const reportId = req.nextUrl.searchParams.get("reportId")?.trim();
 
-  if (!createdByUserId) {
-    return badRequest("createdByUserId is required.");
+  if (!reportId) {
+    return badRequest("reportId is required.");
   }
 
   const supabase = await supabaseServer();
 
-  const { data, error } = await supabase.rpc("field_log_get_my_submissions", {
-    p_created_by_user_id: createdByUserId,
+  const { data, error } = await supabase.rpc("field_log_get_timeline", {
+    p_report_id: reportId,
   });
 
   if (error) {
     return NextResponse.json(
       {
         ok: false,
-        error: error.message || "Failed to load my Field Log submissions.",
+        error: error.message || "Failed to load Field Log timeline.",
       },
       { status: 500 },
     );

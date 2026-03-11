@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/shared/data/supabase/server";
+import { requireAccessPass } from "@/shared/access/requireAccessPass";
 
 export const runtime = "nodejs";
 
 type CreateDraftBody = {
   createdByUserId?: string;
+  pcOrgId?: string;
   categoryKey?: string;
   subcategoryKey?: string | null;
   jobNumber?: string;
@@ -25,6 +27,7 @@ export async function POST(req: NextRequest) {
   }
 
   const createdByUserId = body.createdByUserId?.trim();
+  const pcOrgId = body.pcOrgId?.trim();
   const categoryKey = body.categoryKey?.trim();
   const subcategoryKey = body.subcategoryKey?.trim() || null;
   const jobNumber = body.jobNumber?.trim();
@@ -32,6 +35,10 @@ export async function POST(req: NextRequest) {
 
   if (!createdByUserId) {
     return badRequest("createdByUserId is required.");
+  }
+
+  if (!pcOrgId) {
+    return badRequest("pcOrgId is required.");
   }
 
   if (!categoryKey) {
@@ -42,10 +49,20 @@ export async function POST(req: NextRequest) {
     return badRequest("jobNumber is required.");
   }
 
+  try {
+    await requireAccessPass(req, pcOrgId);
+  } catch (err: any) {
+    return NextResponse.json(
+      { ok: false, error: err?.message || "Forbidden" },
+      { status: err?.status || 403 },
+    );
+  }
+
   const supabase = await supabaseServer();
 
   const { data, error } = await supabase.rpc("field_log_create_draft", {
     p_created_by_user_id: createdByUserId,
+    p_pc_org_id: pcOrgId,
     p_category_key: categoryKey,
     p_subcategory_key: subcategoryKey,
     p_job_number: jobNumber,

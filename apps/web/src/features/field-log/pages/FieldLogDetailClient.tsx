@@ -339,6 +339,7 @@ export function FieldLogDetailClient(props: { initialData: FieldLogDetailPayload
         chipLabel={chip.label}
         chipClassName={chip.className}
         statusTitle={niceStatus(data.status)}
+        backHref={fromReview ? "/field-log/review" : "/field-log"}
         minPhotoCount={data.rule?.min_photo_count}
         xmAllowed={data.rule?.xm_allowed}
         commentRequired={data.rule?.comment_required}

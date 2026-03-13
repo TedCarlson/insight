@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 type RulePopoverProps = {
@@ -183,6 +185,7 @@ export function FieldLogDetailHeaderCard(props: {
   chipLabel: string;
   chipClassName: string;
   statusTitle: string;
+  backHref?: string | null;
   minPhotoCount?: number | null;
   xmAllowed?: boolean | null;
   commentRequired?: boolean | null;
@@ -203,6 +206,7 @@ export function FieldLogDetailHeaderCard(props: {
     jobType,
     chipLabel,
     chipClassName,
+    backHref,
     minPhotoCount,
     xmAllowed,
     commentRequired,
@@ -215,6 +219,18 @@ export function FieldLogDetailHeaderCard(props: {
     <section className="rounded-2xl border bg-card p-5 overflow-visible">
       <div className="flex items-start justify-between gap-3 overflow-visible">
         <div className="min-w-0 overflow-visible">
+          {backHref ? (
+            <div className="mb-3 hidden lg:block">
+              <Link
+                href={backHref}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back
+              </Link>
+            </div>
+          ) : null}
+
           <div className="flex items-center gap-2 text-sm text-muted-foreground overflow-visible">
             <span>Field Log</span>
             <RulePopover

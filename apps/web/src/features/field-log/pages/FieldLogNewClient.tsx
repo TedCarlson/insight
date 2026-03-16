@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/Button";
 import { useFieldLogRuntime } from "../hooks/useFieldLogRuntime";
 import { useSession } from "@/state/session";
 import { useOrg } from "@/state/org";
@@ -13,6 +14,10 @@ type DraftResponse = {
   reportId?: string;
   error?: string;
 };
+
+function cls(...parts: Array<string | false | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
 
 function canAssignSubjectTech(accessPass: any) {
   if (!accessPass) return false;
@@ -29,6 +34,51 @@ function canAssignSubjectTech(accessPass: any) {
   );
 }
 
+function StepHeader(props: {
+  step: number;
+  title: string;
+  subtitle?: string | null;
+}) {
+  const { step, title, subtitle } = props;
+
+  return (
+    <div className="mb-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Step {step}
+      </div>
+      <h2 className="mt-1 text-lg font-semibold">{title}</h2>
+      {subtitle ? <div className="mt-1 text-sm text-muted-foreground">{subtitle}</div> : null}
+    </div>
+  );
+}
+
+function ChoiceTile(props: {
+  selected: boolean;
+  title: string;
+  subtitle?: string | null;
+  onClick: () => void;
+}) {
+  const { selected, title, subtitle, onClick } = props;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cls(
+        "w-full rounded-2xl border p-4 text-left transition",
+        "hover:bg-muted/40",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
+        selected
+          ? "border-blue-500 bg-blue-50 shadow-sm"
+          : "border-border bg-card",
+      )}
+    >
+      <div className="font-semibold">{title}</div>
+      {subtitle ? <div className="mt-1 text-sm text-muted-foreground">{subtitle}</div> : null}
+    </button>
+  );
+}
+
 export default function FieldLogNewClient() {
   const { categories, getSubcategoriesForCategory, getRuleForSelection } =
     useFieldLogRuntime();
@@ -39,7 +89,6 @@ export default function FieldLogNewClient() {
 
   const [categoryKey, setCategoryKey] = useState<string | null>(null);
   const [subcategoryKey, setSubcategoryKey] = useState<string | null>(null);
-
   const [jobNumber, setJobNumber] = useState("");
   const [jobType, setJobType] = useState<"install" | "tc" | "sro" | "">("");
   const [creating, setCreating] = useState(false);
@@ -105,128 +154,167 @@ export default function FieldLogNewClient() {
     }
   }
 
+  const continueDisabled =
+    !categoryKey ||
+    !jobNumber.trim() ||
+    !jobType ||
+    creating ||
+    (showSubjectTechPicker && !selectedTech);
+
   return (
     <div className="space-y-6">
-      <section>
-        <h2 className="mb-2 text-lg font-semibold">What are you reporting?</h2>
+      <section className="rounded-2xl border bg-card p-4">
+        <div className="text-sm font-semibold">Start a Field Log</div>
+        <div className="mt-1 text-sm text-muted-foreground">
+          Follow the steps below to create a new submission.
+        </div>
+      </section>
 
-        <div className="grid grid-cols-2 gap-3">
+      <section className="rounded-2xl border bg-card p-4">
+        <StepHeader
+          step={1}
+          title="Choose submission type"
+          subtitle="Select the type of field activity you are reporting."
+        />
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {categories.map((cat) => (
-            <button
+            <ChoiceTile
               key={cat.category_key}
+              selected={categoryKey === cat.category_key}
+              title={cat.label}
+              subtitle={cat.description ?? null}
               onClick={() => {
                 setCategoryKey(cat.category_key);
                 setSubcategoryKey(null);
               }}
-              className={`rounded-xl border p-4 text-left ${
-                categoryKey === cat.category_key
-                  ? "border-blue-600 bg-blue-50"
-                  : "border-gray-200"
-              }`}
-            >
-              <div className="font-semibold">{cat.label}</div>
-              {cat.description ? (
-                <div className="text-xs text-muted-foreground">{cat.description}</div>
-              ) : null}
-            </button>
+            />
           ))}
         </div>
       </section>
 
       {subcategories.length > 0 ? (
-        <section>
-          <h2 className="mb-2 text-lg font-semibold">Reason</h2>
+        <section className="rounded-2xl border bg-card p-4">
+          <StepHeader
+            step={2}
+            title="Choose reason"
+            subtitle="Select the specific reason that applies to this submission."
+          />
 
-          <div className="grid gap-2">
+          <div className="grid gap-3">
             {subcategories.map((s) => (
-              <button
+              <ChoiceTile
                 key={s.subcategory_key}
+                selected={subcategoryKey === s.subcategory_key}
+                title={s.label}
                 onClick={() => setSubcategoryKey(s.subcategory_key)}
-                className={`rounded-xl border p-3 text-left ${
-                  subcategoryKey === s.subcategory_key
-                    ? "border-blue-600 bg-blue-50"
-                    : "border-gray-200"
-                }`}
-              >
-                {s.label}
-              </button>
+              />
             ))}
           </div>
         </section>
       ) : null}
 
-      <SubjectTechPicker
-        enabled={showSubjectTechPicker}
-        pcOrgId={selectedOrgId}
-        query={techQuery}
-        selectedTech={selectedTech}
-        onQueryChange={(value) => {
-          setTechQuery(value);
-          setSelectedTech(null);
-        }}
-        onSelect={(row) => {
-          setSelectedTech(row);
-          setTechQuery(`${row.full_name ?? "Unknown"} • Tech ID: ${row.tech_id ?? "—"}`);
-        }}
-        onClear={() => {
-          setSelectedTech(null);
-          setTechQuery("");
-        }}
-      />
+      {showSubjectTechPicker ? (
+        <section className="rounded-2xl border bg-card p-4">
+          <StepHeader
+            step={subcategories.length > 0 ? 3 : 2}
+            title="Choose technician"
+            subtitle="Select the technician this Field Log belongs to."
+          />
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Job Info</h2>
+          <SubjectTechPicker
+            enabled={showSubjectTechPicker}
+            pcOrgId={selectedOrgId}
+            query={techQuery}
+            selectedTech={selectedTech}
+            onQueryChange={(value) => {
+              setTechQuery(value);
+              setSelectedTech(null);
+            }}
+            onSelect={(row) => {
+              setSelectedTech(row);
+              setTechQuery(`${row.full_name ?? "Unknown"} • Tech ID: ${row.tech_id ?? "—"}`);
+            }}
+            onClear={() => {
+              setSelectedTech(null);
+              setTechQuery("");
+            }}
+          />
+        </section>
+      ) : null}
 
-        <input
-          value={jobNumber}
-          onChange={(e) => setJobNumber(e.target.value)}
-          placeholder="Job Number"
-          className="w-full rounded-lg border p-3"
+      <section className="rounded-2xl border bg-card p-4">
+        <StepHeader
+          step={showSubjectTechPicker ? (subcategories.length > 0 ? 4 : 3) : subcategories.length > 0 ? 3 : 2}
+          title="Choose job type and enter job number"
+          subtitle="Complete the job details before continuing."
         />
 
-        <div className="flex gap-2">
-          {(["install", "tc", "sro"] as const).map((type) => (
-            <button
-              key={type}
-              onClick={() => setJobType(type)}
-              className={`flex-1 rounded-lg border p-3 ${
-                jobType === type ? "border-blue-600 bg-blue-50" : "border-gray-200"
-              }`}
-            >
-              {type.toUpperCase()}
-            </button>
-          ))}
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {([
+              { key: "install", label: "INSTALL" },
+              { key: "tc", label: "TC" },
+              { key: "sro", label: "SRO" },
+            ] as const).map((type) => (
+              <ChoiceTile
+                key={type.key}
+                selected={jobType === type.key}
+                title={type.label}
+                onClick={() => setJobType(type.key)}
+              />
+            ))}
+          </div>
+
+          <div>
+            <div className="mb-2 text-sm font-medium">Job Number</div>
+            <input
+              value={jobNumber}
+              onChange={(e) => setJobNumber(e.target.value)}
+              placeholder="Enter job number"
+              className="w-full rounded-xl border px-3 py-3"
+            />
+          </div>
         </div>
       </section>
 
       {rule ? (
-        <section className="rounded-xl border bg-gray-50 p-4 text-sm">
-          {rule.active_text_instruction ? (
-            <div className="mb-2">{rule.active_text_instruction}</div>
-          ) : null}
+        <section className="rounded-2xl border bg-muted/30 p-4 text-sm">
+          <div className="font-semibold">Submission requirements</div>
 
-          <div>
-            Photos required: <b>{rule.min_photo_count}</b>
+          <div className="mt-3 space-y-1 text-muted-foreground">
+            <div>
+              Photos required: <span className="font-medium text-foreground">{rule.min_photo_count}</span>
+            </div>
+            {rule.xm_allowed ? (
+              <div>
+                XM evidence: <span className="font-medium text-foreground">Allowed</span>
+              </div>
+            ) : null}
+            {rule.comment_required ? (
+              <div>
+                Comment: <span className="font-medium text-foreground">Required</span>
+              </div>
+            ) : null}
+            {rule.location_required ? (
+              <div>
+                Location: <span className="font-medium text-foreground">Required</span>
+              </div>
+            ) : null}
           </div>
-
-          {rule.xm_allowed ? (
-            <div className="text-xs text-muted-foreground">XM evidence allowed</div>
-          ) : null}
         </section>
       ) : null}
 
-      <button
-        disabled={
-          !categoryKey ||
-          !jobNumber.trim() ||
-          creating ||
-          (showSubjectTechPicker && !selectedTech)
-        }
-        onClick={() => void createDraft()}
-        className="w-full rounded-xl bg-blue-600 p-4 font-semibold text-white disabled:opacity-60"
-      >
-        {creating ? "Creating…" : "Continue"}
-      </button>
+      <div className="sticky bottom-4">
+        <Button
+          variant="primary"
+          disabled={continueDisabled}
+          onClick={() => void createDraft()}
+          className="w-full px-4 py-4 text-base font-semibold disabled:opacity-60"
+        >
+          {creating ? "Creating…" : "Continue"}
+        </Button>
+      </div>
     </div>
   );
 }

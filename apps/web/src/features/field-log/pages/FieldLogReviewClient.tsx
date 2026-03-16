@@ -32,6 +32,11 @@ type QueueResponse = {
   ok: boolean;
   data?: QueueRow[];
   error?: string;
+  meta?: {
+    mode?: "today" | "day" | "search";
+    selected_day?: string | null;
+    job_number?: string | null;
+  };
 };
 
 function getSectionTextClass(status: string) {
@@ -53,6 +58,17 @@ function isReturnedForReview(lastActionType?: string | null) {
   return !!lastActionType && lastActionType.toLowerCase().includes("resubmit");
 }
 
+function todayYmd() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function prettyDay(day: string | null) {
+  if (!day) return "Today";
+  const d = new Date(`${day}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return day;
+  return d.toLocaleDateString();
+}
+
 export function FieldLogReviewClient() {
   const { selectedOrgId } = useOrg();
   const [rows, setRows] = useState<QueueRow[]>([]);
@@ -61,6 +77,10 @@ export function FieldLogReviewClient() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [, setTick] = useState(0);
+  const [jobSearchInput, setJobSearchInput] = useState("");
+  const [jobSearch, setJobSearch] = useState("");
+  const [selectedDay, setSelectedDay] = useState(todayYmd());
+  const [mode, setMode] = useState<"today" | "day" | "search">("today");
 
   const load = useCallback(
     async (showLoading = false) => {
@@ -73,13 +93,20 @@ export function FieldLogReviewClient() {
       if (showLoading) setLoading(true);
 
       try {
-        const res = await fetch(
-          `/api/field-log/queue?pc_org_id=${encodeURIComponent(selectedOrgId)}`,
-          {
-            method: "GET",
-            cache: "no-store",
-          },
-        );
+        const params = new URLSearchParams();
+        params.set("pc_org_id", selectedOrgId);
+
+        const trimmedJob = jobSearch.trim();
+        if (trimmedJob) {
+          params.set("jobNumber", trimmedJob);
+        } else if (selectedDay !== todayYmd()) {
+          params.set("day", selectedDay);
+        }
+
+        const res = await fetch(`/api/field-log/queue?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+        });
 
         const json = (await res.json()) as QueueResponse;
 
@@ -97,6 +124,7 @@ export function FieldLogReviewClient() {
         });
 
         setRows(nextRows);
+        setMode(json.meta?.mode ?? "today");
         setError(null);
         setLastUpdatedAt(Date.now());
       } catch (err) {
@@ -105,7 +133,7 @@ export function FieldLogReviewClient() {
         if (showLoading) setLoading(false);
       }
     },
-    [selectedOrgId],
+    [selectedOrgId, selectedDay, jobSearch],
   );
 
   const manualRefresh = useCallback(async () => {
@@ -148,20 +176,19 @@ export function FieldLogReviewClient() {
 
   const freshnessText = useMemo(() => formatFreshness(lastUpdatedAt), [lastUpdatedAt]);
 
-  if (loading) {
-    return (
-      <div className="rounded-2xl border bg-card p-4 text-sm text-muted-foreground">
-        Loading review queue…
-      </div>
-    );
+  const scopeText = useMemo(() => {
+    if (mode === "search") return "Searching last 35 days";
+    if (selectedDay === todayYmd()) return "Showing today";
+    return `Showing ${prettyDay(selectedDay)}`;
+  }, [mode, selectedDay]);
+
+  function runSearch() {
+    setJobSearch(jobSearchInput.trim());
   }
 
-  if (error) {
-    return (
-      <div className="rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-700">
-        {error}
-      </div>
-    );
+  function clearSearch() {
+    setJobSearchInput("");
+    setJobSearch("");
   }
 
   function Section(props: { title: string; rows: QueueRow[]; status: string }) {
@@ -238,6 +265,22 @@ export function FieldLogReviewClient() {
     );
   }
 
+  if (loading) {
+    return (
+      <div className="rounded-2xl border bg-card p-4 text-sm text-muted-foreground">
+        Loading review queue…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-700">
+        {error}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <FieldLogLiveHeader
@@ -247,13 +290,53 @@ export function FieldLogReviewClient() {
         onRefresh={manualRefresh}
       />
 
+      <section className="rounded-2xl border bg-card p-4 space-y-3">
+        <div className="grid gap-3 lg:grid-cols-[1fr_180px_auto_auto]">
+          <input
+            value={jobSearchInput}
+            onChange={(e) => setJobSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") runSearch();
+            }}
+            placeholder="Search job number"
+            className="w-full rounded-xl border px-3 py-3"
+          />
+
+          <input
+            type="date"
+            value={selectedDay}
+            onChange={(e) => setSelectedDay(e.target.value || todayYmd())}
+            disabled={jobSearch.trim().length > 0}
+            className="w-full rounded-xl border px-3 py-3 disabled:opacity-60"
+          />
+
+          <button
+            type="button"
+            onClick={runSearch}
+            className="rounded-xl border px-4 py-3 text-sm font-medium hover:bg-muted"
+          >
+            Search
+          </button>
+
+          <button
+            type="button"
+            onClick={clearSearch}
+            className="rounded-xl border px-4 py-3 text-sm font-medium hover:bg-muted"
+          >
+            Today
+          </button>
+        </div>
+
+        <div className="text-sm text-muted-foreground">{scopeText}</div>
+      </section>
+
       {!selectedOrgId ? (
         <div className="rounded-2xl border bg-card p-5 text-sm text-muted-foreground">
           Select a PC scope to load the review queue.
         </div>
       ) : rows.length === 0 ? (
         <div className="rounded-2xl border bg-card p-5 text-sm text-muted-foreground">
-          No items in the review queue for this PC.
+          No items found for the current queue slice.
         </div>
       ) : (
         <div className="space-y-5">

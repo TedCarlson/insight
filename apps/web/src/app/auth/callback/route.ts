@@ -8,7 +8,6 @@ type CallbackType = "recovery" | "invite" | "magiclink" | "email_change";
 function pickNext(u: URL) {
   const all = u.searchParams.getAll("next");
   const n = all.length ? all[all.length - 1] : null;
-  // only allow internal paths
   if (!n || !n.startsWith("/")) return "/";
   return n;
 }
@@ -17,11 +16,56 @@ function ensureSetPasswordNext(type: CallbackType | null, rawNext: string) {
   const force = type === "invite" || type === "recovery" || type === "magiclink";
   if (!force) return rawNext;
 
-  // Make wrapping idempotent to avoid loops like:
-  // /auth/set-password?next=/auth/set-password?next=/home
   if (rawNext.startsWith("/auth/set-password")) return rawNext;
-
   return `/auth/set-password?next=${encodeURIComponent(rawNext)}`;
+}
+
+function shouldForceSetPasswordFromUser(user: any): boolean {
+  const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  const appMeta = (user?.app_metadata ?? {}) as Record<string, unknown>;
+
+  const inviteSource =
+    typeof meta.invite_source === "string" ? meta.invite_source : null;
+
+  const passwordSet =
+    meta.password_set === true ||
+    appMeta.password_set === true ||
+    meta.passwordSet === true ||
+    appMeta.passwordSet === true;
+
+  if (passwordSet) return false;
+  if (inviteSource === "person_admin") return true;
+
+  return false;
+}
+
+async function resolvePostAuthNext(
+  supabase: ReturnType<typeof createServerClient>,
+  rawType: CallbackType | null,
+  rawNext: string
+) {
+  if (rawType) {
+    return ensureSetPasswordNext(rawType, rawNext);
+  }
+
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data?.user) {
+    return rawNext;
+  }
+
+  if (shouldForceSetPasswordFromUser(data.user)) {
+    return ensureSetPasswordNext("invite", rawNext);
+  }
+
+  return rawNext;
+}
+
+function buildFallback(url: URL, next: string, reason: string) {
+  const fallback = new URL("/login", url.origin);
+  fallback.searchParams.set("error", "auth_callback_failed");
+  fallback.searchParams.set("reason", reason);
+  fallback.searchParams.set("next", next);
+  return fallback;
 }
 
 export async function GET(req: Request) {
@@ -33,15 +77,14 @@ export async function GET(req: Request) {
   const type = (url.searchParams.get("type") as CallbackType | null) ?? null;
 
   const rawNext = pickNext(url);
-  const next = ensureSetPasswordNext(type, rawNext);
 
   const cookieStore = await cookies();
 
-  // Prepare redirect response now so we can attach cookies
-  let res = NextResponse.redirect(new URL(next, url.origin));
-
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+  let redirectTarget = rawNext;
+  let res = NextResponse.redirect(new URL(redirectTarget, url.origin));
 
   const supabase = createServerClient(supabaseUrl, supabaseAnon, {
     cookies: {
@@ -56,16 +99,17 @@ export async function GET(req: Request) {
     },
   });
 
-  // 1) PKCE exchange (OAuth / magic link using code)
+  // 1) PKCE exchange (OAuth / invite / magic link using code)
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) {
-      const fallback = new URL("/login", url.origin);
-      fallback.searchParams.set("error", "auth_callback_failed");
-      fallback.searchParams.set("reason", error.message);
-      fallback.searchParams.set("next", next);
-      return NextResponse.redirect(fallback);
+      return NextResponse.redirect(
+        buildFallback(url, ensureSetPasswordNext(type, rawNext), error.message)
+      );
     }
+
+    redirectTarget = await resolvePostAuthNext(supabase, type, rawNext);
+    res = NextResponse.redirect(new URL(redirectTarget, url.origin));
     return res;
   }
 
@@ -73,25 +117,27 @@ export async function GET(req: Request) {
   if (token_hash && type) {
     const { error } = await supabase.auth.verifyOtp({ type, token_hash });
     if (error) {
-      const fallback = new URL("/login", url.origin);
-      fallback.searchParams.set("error", "auth_callback_failed");
-      fallback.searchParams.set("reason", error.message);
-      fallback.searchParams.set("next", next);
-      return NextResponse.redirect(fallback);
+      return NextResponse.redirect(
+        buildFallback(url, ensureSetPasswordNext(type, rawNext), error.message)
+      );
     }
+
+    redirectTarget = await resolvePostAuthNext(supabase, type, rawNext);
+    res = NextResponse.redirect(new URL(redirectTarget, url.origin));
     return res;
   }
 
-  // 3) OTP verify using token (some verify links forward `token=...`)
+  // 3) OTP verify using token
   if (token && type) {
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: token });
     if (error) {
-      const fallback = new URL("/login", url.origin);
-      fallback.searchParams.set("error", "auth_callback_failed");
-      fallback.searchParams.set("reason", error.message);
-      fallback.searchParams.set("next", next);
-      return NextResponse.redirect(fallback);
+      return NextResponse.redirect(
+        buildFallback(url, ensureSetPasswordNext(type, rawNext), error.message)
+      );
     }
+
+    redirectTarget = await resolvePostAuthNext(supabase, type, rawNext);
+    res = NextResponse.redirect(new URL(redirectTarget, url.origin));
     return res;
   }
 
@@ -102,6 +148,9 @@ export async function GET(req: Request) {
    *
    * We must NOT redirect server-side (redirect drops the fragment). Instead, return a tiny HTML
    * page that does a client-side redirect to the computed destination while preserving window.location.hash.
+   *
+   * For fragment-based flows, we still use query-param type when present. If type is absent,
+   * SetPasswordClient will recover by inspecting session/tokens client-side.
    */
   const html = `<!doctype html>
 <html>
@@ -116,20 +165,18 @@ export async function GET(req: Request) {
     (function () {
       try {
         var params = new URLSearchParams(window.location.search);
-        var type = params.get("type"); // <-- was missing; caused nondeterministic redirects
+        var type = params.get("type");
 
         var nextAll = params.getAll("next");
         var rawNext = (nextAll.length ? nextAll[nextAll.length - 1] : "/") || "/";
         if (typeof rawNext !== "string" || rawNext[0] !== "/") rawNext = "/";
 
-        // Idempotent "force set-password" for invite/recovery/magiclink
         var force = (type === "invite" || type === "recovery" || type === "magiclink");
         var next = rawNext;
         if (force && !rawNext.startsWith("/auth/set-password")) {
           next = "/auth/set-password?next=" + encodeURIComponent(rawNext);
         }
 
-        // Preserve fragment tokens
         var hash = window.location.hash || "";
         window.location.replace(next + hash);
       } catch (e) {

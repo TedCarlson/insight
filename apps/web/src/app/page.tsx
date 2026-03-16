@@ -37,7 +37,7 @@ export default async function Page() {
     ]);
 
     if (isOwner || isItg || isBp) redirect("/dispatch-console");
-    redirect("/fulfillment");
+    redirect("/tech");
   }
 
   return (

@@ -1,3 +1,4 @@
+// apps/web/src/components/CoreNav.tsx
 "use client";
 
 import Link from "next/link";
@@ -70,6 +71,127 @@ function getFieldLogBackHref(pathname: string, fromReview: boolean) {
   return "/field-log";
 }
 
+const TECH_NAV_ITEMS: NavItem[] = [
+  { key: "home", label: "Home", href: "/tech", icon: Home },
+  { key: "schedule", label: "Schedule", href: "/tech/schedule", icon: CalendarDays },
+  { key: "metrics", label: "Metrics", href: "/tech/metrics", icon: BarChart3 },
+  { key: "fieldlog", label: "Field Log", href: "/tech/field-log", icon: ClipboardList },
+];
+
+function getTechTitle(pathname: string) {
+  if (pathname === "/tech") return "Home";
+  if (pathname.startsWith("/tech/schedule")) return "Schedule";
+  if (pathname.startsWith("/tech/metrics")) return "Metrics";
+  if (pathname.startsWith("/tech/field-log")) return "Field Log";
+  return "Insight";
+}
+
+function TechMobileNav(props: {
+  pathname: string;
+  email: string | null | undefined;
+  open: boolean;
+  setOpen: (next: boolean) => void;
+  onSignOut: () => void;
+}) {
+  const { pathname, email, open, setOpen, onSignOut } = props;
+  const title = getTechTitle(pathname);
+
+  return (
+    <>
+      <header className="fixed top-0 left-0 right-0 z-50 border-b bg-background/90 backdrop-blur">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="w-10" />
+          <div className="text-sm font-semibold">{title}</div>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-md border hover:bg-muted"
+            aria-label="Open account menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        </div>
+      </header>
+
+      <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/95 backdrop-blur">
+        <div className="grid grid-cols-4">
+          {TECH_NAV_ITEMS.map((item) => {
+            const active = isActivePath(pathname, item.href);
+            const Icon = item.icon;
+
+            return (
+              <Link
+                key={item.key}
+                href={item.href}
+                prefetch={false}
+                className={cls(
+                  "flex flex-col items-center justify-center gap-1 px-2 py-3 text-[11px]",
+                  active ? "text-foreground" : "text-muted-foreground"
+                )}
+              >
+                <Icon className="h-5 w-5" />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
+
+      {open
+        ? createPortal(
+            <div className="fixed inset-0 z-[70] lg:hidden">
+              <button
+                type="button"
+                aria-label="Close account menu backdrop"
+                className="absolute inset-0"
+                onClick={() => setOpen(false)}
+                style={{ background: "rgba(0,0,0,0.35)" }}
+              />
+              <div className="absolute inset-0 backdrop-blur-sm" />
+
+              <div
+                className="absolute right-0 top-0 h-full w-[82vw] max-w-xs border-l bg-background shadow-2xl"
+                role="dialog"
+                aria-modal="true"
+              >
+                <div className="flex h-full flex-col px-5 py-5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold">Account</div>
+                    <button
+                      type="button"
+                      onClick={() => setOpen(false)}
+                      className="rounded-md border px-2 py-2 hover:bg-muted"
+                      aria-label="Close account menu"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border bg-background/60 p-3">
+                    <div className="text-[11px] text-muted-foreground">Signed in</div>
+                    <div className="mt-1 text-sm break-all">{email ?? "—"}</div>
+                  </div>
+
+                  <div className="flex-1" />
+
+                  <button
+                    type="button"
+                    onClick={onSignOut}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border px-3 py-3 text-sm hover:bg-muted"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Sign out
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  );
+}
+
 export default function CoreNav({ lob }: CoreNavProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -80,6 +202,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
   const { canManageConsole } = useOrgConsoleAccess();
 
   const shouldHideForRoute = HIDE_ON_PREFIXES.some((p) => pathname.startsWith(p));
+  const isTechRoute = pathname === "/tech" || pathname.startsWith("/tech/");
 
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -166,6 +289,18 @@ export default function CoreNav({ lob }: CoreNavProps) {
   if (shouldHideForRoute) return null;
   if (!ready || !signedIn) return null;
 
+  if (isTechRoute) {
+    return (
+      <TechMobileNav
+        pathname={pathname}
+        email={email}
+        open={open}
+        setOpen={setOpen}
+        onSignOut={onSignOut}
+      />
+    );
+  }
+
   const RailContent = ({ variant }: { variant: "rail" | "drawer" }) => (
     <div
       className={cls(
@@ -214,7 +349,9 @@ export default function CoreNav({ lob }: CoreNavProps) {
               onClick={() => switchLob("LOCATE")}
               className={cls(
                 "rounded-md px-2 py-2 text-sm border",
-                lob === "LOCATE" ? "bg-muted font-medium" : "hover:bg-muted/60 text-muted-foreground"
+                lob === "LOCATE"
+                  ? "bg-muted font-medium"
+                  : "hover:bg-muted/60 text-muted-foreground"
               )}
             >
               Locate

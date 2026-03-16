@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { createServerClient } from "@supabase/ssr";
 
 import CoreNav from "@/components/CoreNav";
-import FooterHelp from "@/components/FooterHelp";
+import AppChrome from "@/components/AppChrome";
 import { OrgProvider } from "@/state/org";
 import { SessionProvider } from "@/state/session";
 import { AccessProvider } from "@/state/access";
@@ -33,11 +33,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
     }
   );
 
-  // 🔐 Hard signed-in gate (do not change)
   const { data: userData } = await supabase.auth.getUser();
   if (!userData?.user) redirect("/login");
 
-  // LOB resolution must NOT be fatal
   let lob: Lob = "FULFILLMENT";
 
   try {
@@ -57,13 +55,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           <AccessProvider>
             <div className="min-h-screen">
               <CoreNav lob={lob} />
-
-              <div className="min-h-screen flex flex-col lg:pl-72 pt-14 lg:pt-0">
-                <main className="flex-1 px-6 py-6">{children}</main>
-                <div className="px-6">
-                  <FooterHelp />
-                </div>
-              </div>
+              <AppChrome>{children}</AppChrome>
             </div>
           </AccessProvider>
         </OrgProvider>

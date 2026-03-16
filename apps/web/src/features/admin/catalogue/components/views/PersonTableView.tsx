@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { TextInput } from "@/components/ui/TextInput";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -18,6 +18,63 @@ function CopyUuidButton(props: { value: string }) {
       title="Copy UUID"
     >
       Copy
+    </button>
+  );
+}
+
+function InviteButton(props: {
+  row: PersonAdminRow;
+  onDone: () => Promise<void> | void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const email = (props.row.emails ?? "").trim();
+  const canInvite = !!email;
+
+  async function onInvite() {
+    if (!canInvite || busy) return;
+
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/person-invite", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          person_id: props.row.person_id,
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(json?.error ?? "Invite failed");
+      }
+
+      const status = json?.status;
+      if (status === "already_active") {
+        window.alert(`User is already active for ${email}.`);
+      } else {
+        window.alert(`Invite sent to ${json?.email ?? email}.`);
+      }
+
+      await props.onDone();
+    } catch (err: any) {
+      window.alert(err?.message ?? "Invite failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className="to-btn inline-flex items-center justify-center rounded-md border px-2 py-1 text-xs font-medium"
+      style={{ borderColor: "var(--to-border)" }}
+      onClick={onInvite}
+      disabled={!canInvite || busy}
+      title={!canInvite ? "Person record is missing email" : "Send invite"}
+    >
+      {busy ? "Sending…" : "Invite"}
     </button>
   );
 }
@@ -86,6 +143,7 @@ export function PersonTableView() {
                 <th className="px-3 py-2 whitespace-nowrap">Fuse</th>
                 <th className="px-3 py-2 whitespace-nowrap">Active</th>
                 <th className="px-3 py-2 whitespace-nowrap">Role</th>
+                <th className="px-3 py-2 whitespace-nowrap">Invite</th>
                 <th className="px-3 py-2 whitespace-nowrap">UUID</th>
               </tr>
             </thead>
@@ -102,6 +160,9 @@ export function PersonTableView() {
                   <td className="px-3 py-2">{r.fuse_emp_id ?? "—"}</td>
                   <td className="px-3 py-2">{r.active == null ? "—" : r.active ? "Yes" : "No"}</td>
                   <td className="px-3 py-2">{r.role ?? "—"}</td>
+                  <td className="px-3 py-2">
+                    <InviteButton row={r} onDone={refresh} />
+                  </td>
                   <td className="px-3 py-2 whitespace-nowrap">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs text-[var(--to-ink-muted)]">{r.person_id}</span>

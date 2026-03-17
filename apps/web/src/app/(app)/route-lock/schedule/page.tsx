@@ -13,6 +13,8 @@ import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import { todayInNY } from "@/features/route-lock/calendar/lib/fiscalMonth";
 import { ScheduleGridClient } from "@/features/route-lock/schedule/ScheduleGridClient";
 
+import { SeedNextMonthButton } from "@/features/route-lock/schedule/SeedNextMonthButton";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -117,12 +119,16 @@ function MonthToggle({
   nextHref,
   currentLabel,
   nextLabel,
+  currentFiscalMonthId,
+  nextFiscalMonthId,
 }: {
   active: "current" | "next";
   currentHref: string;
   nextHref: string;
   currentLabel: string;
   nextLabel: string;
+  currentFiscalMonthId: string;
+  nextFiscalMonthId: string;
 }) {
   return (
     <Card variant="subtle">
@@ -148,12 +154,20 @@ function MonthToggle({
             >
               Current • {currentLabel}
             </Link>
+
             <Link
               href={nextHref}
               className={cls("to-btn h-8 px-3 text-xs", active === "next" ? "to-btn--primary" : "to-btn--secondary")}
             >
               Next • {nextLabel}
             </Link>
+
+            {active === "next" && (
+              <SeedNextMonthButton
+                fromFiscalMonthId={currentFiscalMonthId}
+                toFiscalMonthId={nextFiscalMonthId}
+              />
+            )}
           </div>
         }
       />
@@ -230,6 +244,8 @@ export default async function RouteLockSchedulePage({ searchParams }: Props) {
           nextHref={nextHref}
           currentLabel={String(fmCurrent.label ?? `${fmCurrent.start_date} → ${fmCurrent.end_date}`)}
           nextLabel={String(fmNext.label ?? `${fmNext.start_date} → ${fmNext.end_date}`)}
+          currentFiscalMonthId={fmCurrent.fiscal_month_id}
+          nextFiscalMonthId={fmNext.fiscal_month_id}
         />
         <Card>
           <div className="text-sm text-[var(--to-warning)]">Could not load routes.</div>
@@ -256,6 +272,8 @@ export default async function RouteLockSchedulePage({ searchParams }: Props) {
           nextHref={nextHref}
           currentLabel={String(fmCurrent.label ?? `${fmCurrent.start_date} → ${fmCurrent.end_date}`)}
           nextLabel={String(fmNext.label ?? `${fmNext.start_date} → ${fmNext.end_date}`)}
+          currentFiscalMonthId={fmCurrent.fiscal_month_id}
+          nextFiscalMonthId={fmNext.fiscal_month_id}
         />
         <Card>
           <div className="text-sm text-[var(--to-warning)]">{rosterErr.message}</div>
@@ -304,6 +322,8 @@ export default async function RouteLockSchedulePage({ searchParams }: Props) {
           nextHref={nextHref}
           currentLabel={String(fmCurrent.label ?? `${fmCurrent.start_date} → ${fmCurrent.end_date}`)}
           nextLabel={String(fmNext.label ?? `${fmNext.start_date} → ${fmNext.end_date}`)}
+          currentFiscalMonthId={fmCurrent.fiscal_month_id}
+          nextFiscalMonthId={fmNext.fiscal_month_id}
         />
         <Card>
           <div className="text-sm text-[var(--to-warning)]">{baselineErr.message}</div>
@@ -361,6 +381,8 @@ export default async function RouteLockSchedulePage({ searchParams }: Props) {
         nextHref={nextHref}
         currentLabel={String(fmCurrent.label ?? `${fmCurrent.start_date} → ${fmCurrent.end_date}`)}
         nextLabel={String(fmNext.label ?? `${fmNext.start_date} → ${fmNext.end_date}`)}
+        currentFiscalMonthId={fmCurrent.fiscal_month_id}
+        nextFiscalMonthId={fmNext.fiscal_month_id}
       />
 
       <ScheduleGridClient

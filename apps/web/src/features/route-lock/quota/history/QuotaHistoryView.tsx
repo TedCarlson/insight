@@ -127,7 +127,7 @@ export function QuotaHistoryView(props: Props) {
             options={[
               { value: "hours", label: "Hours" },
               { value: "units", label: "Units" },
-              { value: "techs", label: "Techs" },
+              { value: "techs", label: "Tech-Days" },
             ]}
           />
 
@@ -199,7 +199,8 @@ export function QuotaHistoryView(props: Props) {
         </div>
 
         <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
-          Techs are derived as <b>ceil(hours / 8)</b> per day.
+          Tech-Days are derived as <b>ceil(hours / 8)</b> per day. Headcount is derived from <b>total hours / 40</b>{" "}
+          for the selected fiscal month.
         </div>
       </Card>
     </div>

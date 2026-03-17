@@ -19,6 +19,9 @@ function hoursToUnits(hours: number) {
 function hoursToTechs(hours: number) {
   return Math.ceil(hours / 8);
 }
+function hoursToHeadcount(hours: number) {
+  return hours / 40;
+}
 function displayValue(mode: DisplayMode, hours: number) {
   if (mode === "hours") return hours;
   if (mode === "units") return hoursToUnits(hours);
@@ -95,6 +98,7 @@ export function QuotaAdminView(props: Props) {
   const { status, lookups, read, write } = props;
   const { loading, saving, err, notice } = status;
   const { routes, months } = lookups;
+  const headcount = hoursToHeadcount(read.totals.totalHours);
 
   return (
     <div className="mx-auto max-w-[1200px] p-4">
@@ -110,7 +114,6 @@ export function QuotaAdminView(props: Props) {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            {/* ✅ history nav */}
             <Link href="/route-lock/quota/history">
               <Button variant="secondary" className="h-8 px-3 text-xs" disabled={loading || saving}>
                 History
@@ -143,7 +146,6 @@ export function QuotaAdminView(props: Props) {
         </Card>
       ) : null}
 
-      {/* Card 1: READ */}
       <Card className="mt-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="text-sm font-semibold mr-2">Quota</div>
@@ -169,7 +171,7 @@ export function QuotaAdminView(props: Props) {
             options={[
               { value: "hours", label: "Hours" },
               { value: "units", label: "Units" },
-              { value: "techs", label: "Techs" },
+              { value: "techs", label: "Tech-Days" },
             ]}
           />
 
@@ -187,7 +189,10 @@ export function QuotaAdminView(props: Props) {
               Units: <span className="text-[var(--to-ink)]">{read.totals.totalUnits}</span>
             </span>
             <span>
-              Techs: <span className="text-[var(--to-ink)]">{read.totals.techDays}</span>
+              Tech-Days: <span className="text-[var(--to-ink)]">{read.totals.techDays}</span>
+            </span>
+            <span>
+              Headcount: <span className="text-[var(--to-ink)]">{headcount}</span>
             </span>
           </div>
         </div>
@@ -245,12 +250,12 @@ export function QuotaAdminView(props: Props) {
 
         <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
           Showing {read.rowsByRoute.length} route(s) for{" "}
-          {read.selectedMonth ? fiscalShortFromLabel(read.selectedMonth.label) : "—"}. Techs are derived as{" "}
-          <b>ceil(hours / 8)</b> per day.
+          {read.selectedMonth ? fiscalShortFromLabel(read.selectedMonth.label) : "—"}. Tech-Days are derived as{" "}
+          <b>ceil(hours / 8)</b> per day. Headcount is derived from <b>total hours / 40</b> for the selected fiscal
+          month.
         </div>
       </Card>
 
-      {/* Card 2: WRITE */}
       <Card className="mt-3">
         <div className="flex items-center gap-2">
           <div className="text-sm font-semibold">Write</div>
@@ -328,7 +333,7 @@ export function QuotaAdminView(props: Props) {
                         ))}
                       </Select>
                       <div className="mt-1 text-xs text-[var(--to-ink-muted)]">
-                        Units: {t.units} • Techs: {t.techs}
+                        Units: {t.units} • Tech-Days: {t.techs}
                       </div>
                     </td>
 
@@ -367,7 +372,7 @@ export function QuotaAdminView(props: Props) {
 
         <div className="mt-2 text-xs text-[var(--to-ink-muted)]">
           Writes to <code>public.quota</code>. DB-generated fields (<code>qu_*</code>, <code>qt_hours</code>,{" "}
-          <code>qt_units</code>) are derived from <code>qh_*</code>. Techs are UI-only (whole tech-days via{" "}
+          <code>qt_units</code>) are derived from <code>qh_*</code>. Tech-Days are UI-only (whole tech-days via{" "}
           <b>ceil(hours / 8)</b>).
         </div>
       </Card>

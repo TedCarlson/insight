@@ -1,4 +1,6 @@
+// Replace the entire file:
 // apps/web/src/components/TechRouteGate.tsx
+
 "use client";
 
 import { useEffect, useMemo } from "react";
@@ -8,17 +10,8 @@ import { useOrg } from "@/state/org";
 import { useAccessPass } from "@/state/access";
 import { isTechExperienceUser } from "@/shared/access/access";
 
-function getTechRedirect(pathname: string) {
-  if (pathname === "/fulfillment" || pathname === "/home") return "/tech";
-  if (pathname.startsWith("/roster")) return "/tech";
-  if (pathname.startsWith("/dispatch-console")) return "/tech";
-  if (pathname === "/metrics" || pathname.startsWith("/metrics/")) return "/tech/metrics";
-  if (pathname === "/route-lock" || pathname.startsWith("/route-lock/")) return "/tech/schedule";
-  if (pathname === "/field-log") return "/tech/field-log";
-  if (pathname === "/field-log/new") return "/tech/field-log/new";
-  if (pathname === "/field-log/mine") return "/tech/field-log/mine";
-  if (pathname === "/field-log/review" || pathname.startsWith("/admin")) return "/tech";
-  return null;
+function isAllowedTechPath(pathname: string) {
+  return pathname === "/tech" || pathname.startsWith("/tech/");
 }
 
 export default function TechRouteGate({ children }: { children: React.ReactNode }) {
@@ -31,19 +24,21 @@ export default function TechRouteGate({ children }: { children: React.ReactNode 
 
   const waitingOnAccess = !!selectedOrgId && !accessPass;
   const isTechUser = useMemo(() => isTechExperienceUser(accessPass), [accessPass]);
-  const redirectTo = useMemo(() => getTechRedirect(pathname), [pathname]);
+
+  const shouldRedirect =
+    ready &&
+    signedIn &&
+    selectedOrgId &&
+    !waitingOnAccess &&
+    isTechUser &&
+    !isAllowedTechPath(pathname);
 
   useEffect(() => {
-    if (!ready || !signedIn) return;
-    if (!selectedOrgId) return;
-    if (waitingOnAccess) return;
-    if (!isTechUser) return;
-    if (!redirectTo) return;
+    if (!shouldRedirect) return;
+    router.replace("/tech");
+  }, [shouldRedirect, router]);
 
-    router.replace(redirectTo);
-  }, [ready, signedIn, selectedOrgId, waitingOnAccess, isTechUser, redirectTo, router]);
-
-  if (ready && signedIn && selectedOrgId && !waitingOnAccess && isTechUser && redirectTo) {
+  if (shouldRedirect) {
     return null;
   }
 

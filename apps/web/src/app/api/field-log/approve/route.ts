@@ -1,3 +1,6 @@
+// Replace the entire file:
+// apps/web/src/app/api/field-log/approve/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/shared/data/supabase/server";
 
@@ -12,6 +15,14 @@ type ApproveBody = {
 
 function badRequest(message: string) {
   return NextResponse.json({ ok: false, error: message }, { status: 400 });
+}
+
+function isMissingApproveSignature(message: string) {
+  const text = String(message || "").toLowerCase();
+  return (
+    text.includes("could not find the function public.field_log_approve_report") ||
+    text.includes("function public.field_log_approve_report")
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -38,10 +49,6 @@ export async function POST(req: NextRequest) {
 
   const supabase = await supabaseServer();
 
-  /**
-   * STEP 1 — Persist XM link (audit trail)
-   * This remains important for lifecycle + timeline
-   */
   if (xmLink) {
     const { error: xmError } = await supabase.rpc("field_log_append_xm_link", {
       p_report_id: reportId,
@@ -58,31 +65,46 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  /**
-   * STEP 2 — Approve WITH XM context
-   *
-   * 🔥 CRITICAL FIX:
-   * Pass xmLink into approval RPC so validation logic can treat it
-   * as an alternate evidence satisfier (instead of requiring photos)
-   */
-  const { data, error } = await supabase.rpc("field_log_approve_report", {
+  let data: unknown = null;
+
+  const approveWithXm = await supabase.rpc("field_log_approve_report", {
     p_report_id: reportId,
     p_action_by_user_id: actionByUserId,
     p_note: note,
-    p_xm_link: xmLink, // <-- NEW: enables override logic in DB
+    p_xm_link: xmLink,
   });
 
-  if (error) {
+  if (!approveWithXm.error) {
+    data = approveWithXm.data;
+    return NextResponse.json({ ok: true, data });
+  }
+
+  if (!isMissingApproveSignature(approveWithXm.error.message || "")) {
     return NextResponse.json(
       {
         ok: false,
-        error:
-          error.message ||
-          "Failed to approve Field Log report.",
+        error: approveWithXm.error.message || "Failed to approve Field Log report.",
       },
       { status: 500 },
     );
   }
 
+  const approveLegacy = await supabase.rpc("field_log_approve_report", {
+    p_report_id: reportId,
+    p_action_by_user_id: actionByUserId,
+    p_note: note,
+  });
+
+  if (approveLegacy.error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: approveLegacy.error.message || "Failed to approve Field Log report.",
+      },
+      { status: 500 },
+    );
+  }
+
+  data = approveLegacy.data;
   return NextResponse.json({ ok: true, data });
 }

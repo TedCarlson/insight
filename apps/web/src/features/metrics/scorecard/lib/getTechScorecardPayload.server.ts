@@ -35,6 +35,12 @@ type HeaderHydrate = {
   supervisor_name: string | null;
 };
 
+type KpiDefRow = {
+  kpi_key: string | null;
+  customer_label?: string | null;
+  label?: string | null;
+};
+
 function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -117,9 +123,39 @@ function formatValueDisplay(kpiKey: string, value: number | null): string | null
   return value.toFixed(1);
 }
 
+function preferredLabel(classCfgRow: any, defRow: KpiDefRow | null | undefined, kpi_key: string): string {
+  const classOverride =
+    classCfgRow?.label != null && String(classCfgRow.label).trim()
+      ? String(classCfgRow.label).trim()
+      : null;
+
+  const globalCustomer =
+    defRow?.customer_label != null && String(defRow.customer_label).trim()
+      ? String(defRow.customer_label).trim()
+      : null;
+
+  const globalLabel =
+    defRow?.label != null && String(defRow.label).trim()
+      ? String(defRow.label).trim()
+      : null;
+
+  return classOverride ?? globalCustomer ?? globalLabel ?? kpi_key;
+}
+
 async function loadTechKpiConfig(sbAdmin: any): Promise<KpiCfg[]> {
-  const { data } = await sbAdmin.from("metrics_class_kpi_config").select("*").eq("class_type", "TECH");
-  const rows = (data ?? []) as any[];
+  const [{ data: classRows }, { data: defRows }] = await Promise.all([
+    sbAdmin.from("metrics_class_kpi_config").select("*").eq("class_type", "TECH"),
+    sbAdmin.from("metrics_kpi_def").select("kpi_key,customer_label,label"),
+  ]);
+
+  const defByKey = new Map<string, KpiDefRow>();
+  for (const d of (defRows ?? []) as KpiDefRow[]) {
+    const k = String(d?.kpi_key ?? "").trim();
+    if (!k) continue;
+    defByKey.set(k, d);
+  }
+
+  const rows = (classRows ?? []) as any[];
 
   const out: KpiCfg[] = rows
     .map((c) => {
@@ -131,12 +167,12 @@ async function loadTechKpiConfig(sbAdmin: any): Promise<KpiCfg[]> {
 
       if (!enabled || !show) return null;
 
-      const label = c.label ?? null;
-      const sort = c.sort_order ?? c.display_order ?? 999;
+      const label = preferredLabel(c, defByKey.get(kpi_key), kpi_key);
+      const sort = c.sort_order ?? c.display_order ?? c.report_order ?? 999;
 
       return { kpi_key, label, enabled: true, sort };
     })
-    .filter(Boolean) as any;
+    .filter(Boolean) as KpiCfg[];
 
   out.sort((a, b) => a.sort - b.sort || a.kpi_key.localeCompare(b.kpi_key));
   return out;

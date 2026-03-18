@@ -8,6 +8,10 @@ import { mapTilesWithPreset } from "@/features/tech/metrics/lib/mapTilesWithPres
 import MetricInspectorDrawer from "./MetricInspectorDrawer";
 import TnpsInspectorDrawer from "./TnpsInspectorDrawer";
 import { buildFtrDrawerModel, type FtrDebug } from "@/features/tech/metrics/lib/buildFtrDrawerModel";
+import {
+  buildToolUsageDrawerModel,
+  type ToolUsageDebug,
+} from "@/features/tech/metrics/lib/buildToolUsageDrawerModel";
 
 type RangeKey = "FM" | "3FM" | "12FM";
 type Tile = ScorecardTile;
@@ -26,51 +30,14 @@ type TnpsDebug = {
     tnps_promoters: number | null;
     tnps_detractors: number | null;
   }>;
-  trend?: Array<{
-    fiscal_end_date: string;
-    metric_date: string;
-    batch_id: string;
-    tnps_surveys: number | null;
-    tnps_promoters: number | null;
-    tnps_detractors: number | null;
-    kpi_value: number | null;
-    is_month_final: boolean;
-  }>;
+};
+
+type TnpsTileContext = {
+  sample_short?: number | null; // surveys
+  sample_long?: number | null; // promoters
+  detractors?: number | null;
+  meets_min_volume?: boolean | null;
 } | null;
-
-function RankCell(props: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border bg-muted/30 px-2 py-3 text-center">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-        {props.label}
-      </div>
-      <div className="mt-1 text-base font-semibold leading-none">{props.value}</div>
-    </div>
-  );
-}
-
-function MixStat(props: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border bg-muted/30 px-3 py-3">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-        {props.label}
-      </div>
-      <div className="mt-1 text-base font-semibold leading-none">{props.value}</div>
-    </div>
-  );
-}
-
-function MixRow(props: { label: string; count: string; pct: string }) {
-  return (
-    <div className="flex items-center justify-between rounded-xl border bg-muted/10 px-3 py-2">
-      <div className="min-w-0 text-sm font-medium">{props.label}</div>
-      <div className="ml-3 flex items-center gap-3 text-sm">
-        <span className="font-semibold">{props.count}</span>
-        <span className="text-muted-foreground">{props.pct}</span>
-      </div>
-    </div>
-  );
-}
 
 function InlineSpinner() {
   return (
@@ -90,10 +57,10 @@ function RangeChip(props: {
       onClick={props.onClick}
       disabled={props.pending}
       className={[
-        "flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-center text-xs font-medium transition active:scale-[0.98] disabled:cursor-default",
+        "flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-center text-xs font-medium transition active:scale-[0.98]",
         props.active
-          ? "border-[var(--to-accent)] bg-[color-mix(in_oklab,var(--to-accent)_10%,white)] text-foreground"
-          : "bg-muted/20 text-muted-foreground hover:bg-muted/30",
+          ? "border-[var(--to-accent)] bg-[color-mix(in_oklab,var(--to-accent)_10%,white)]"
+          : "bg-muted/20 text-muted-foreground",
         props.pending ? "opacity-90" : "",
       ].join(" ")}
     >
@@ -103,49 +70,96 @@ function RangeChip(props: {
   );
 }
 
+function isTnpsKey(kpiKey: string) {
+  return kpiKey.toLowerCase().includes("tnps");
+}
+
+function isToolUsageKey(kpiKey: string) {
+  const k = kpiKey.toLowerCase();
+  return k.includes("tool_usage") || k.includes("toolusage") || k.includes("tu_rate");
+}
+
+function formatTnpsSupportLine(tile: Tile): string | null {
+  const ctx = tile.context as TnpsTileContext;
+  const surveys = ctx?.sample_short ?? 0;
+  const promoters = ctx?.sample_long ?? 0;
+  const detractors = ctx?.detractors ?? 0;
+
+  if (!surveys || surveys <= 0) return null;
+
+  const passive = Math.max(0, surveys - promoters - detractors);
+  const parts: string[] = [];
+
+  if (promoters > 0) parts.push(`${promoters} Pro`);
+  if (passive > 0) parts.push(`${passive} Pass`);
+  if (detractors > 0) parts.push(`${detractors} Det`);
+
+  return parts.length ? parts.join(" • ") : null;
+}
+
 function formatSupportLine(tile: Tile): string | null {
-  if (tile.kpi_key !== "ftr_rate") return null;
+  if (tile.kpi_key === "ftr_rate") {
+    const jobs = tile.context?.sample_short;
+    const fails = tile.context?.sample_long;
 
-  const jobs = tile.context?.sample_short;
-  const fails = tile.context?.sample_long;
+    const left = jobs ? `${Math.round(jobs)} FTR jobs` : null;
+    const right = fails ? `${Math.round(fails)} fails` : null;
 
-  if ((jobs == null || !Number.isFinite(jobs)) && (fails == null || !Number.isFinite(fails))) {
-    return null;
+    return [left, right].filter(Boolean).join(" • ") || null;
   }
 
-  const left = jobs != null && Number.isFinite(jobs) ? `${Math.round(jobs)} FTR jobs` : null;
-  const right = fails != null && Number.isFinite(fails) ? `${Math.round(fails)} fails` : null;
+  if (isToolUsageKey(tile.kpi_key)) {
+    const eligible = tile.context?.sample_short;
+    const compliant = tile.context?.sample_long;
 
-  return [left, right].filter(Boolean).join(" • ");
+    const left = eligible ? `${Math.round(eligible)} eligible` : null;
+    const right = compliant ? `${Math.round(compliant)} compliant` : null;
+
+    return [left, right].filter(Boolean).join(" • ") || null;
+  }
+
+  if (isTnpsKey(tile.kpi_key)) {
+    return formatTnpsSupportLine(tile);
+  }
+
+  return null;
 }
 
 function MetricCard(props: { tile: Tile; onOpen: () => void }) {
-  const topColor = props.tile.band.paint?.border ?? "var(--to-border)";
   const supportLine = formatSupportLine(props.tile);
+  const borderColor = props.tile.band.paint?.border ?? "var(--to-border)";
+  const topBarColor = props.tile.band.paint?.border ?? "var(--to-border)";
 
   return (
     <button
       type="button"
       onClick={props.onOpen}
-      className="w-full overflow-hidden rounded-2xl border bg-card text-left transition active:scale-[0.99]"
-      style={{ borderColor: topColor }}
+      className="w-full overflow-hidden rounded-2xl border bg-card text-left active:scale-[0.99]"
+      style={{ borderColor }}
     >
-      <div className="h-1.5 w-full" style={{ backgroundColor: topColor }} />
+      <div className="h-1.5 w-full" style={{ backgroundColor: topBarColor }} />
+
       <div className="p-4">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">{props.tile.label}</div>
-        <div className="mt-1 text-xl font-semibold leading-none text-foreground">
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">
+          {props.tile.label}
+        </div>
+
+        <div className="mt-1 text-xl font-semibold leading-none">
           {props.tile.value_display ?? "—"}
         </div>
-        <div className="mt-1 text-sm text-muted-foreground">{props.tile.band.label}</div>
-        {supportLine ? <div className="mt-1 text-xs text-muted-foreground">{supportLine}</div> : null}
+
+        <div className="mt-1 text-sm text-muted-foreground">
+          {props.tile.band.label}
+        </div>
+
+        {supportLine ? (
+          <div className="mt-1 text-xs text-muted-foreground">
+            {supportLine}
+          </div>
+        ) : null}
       </div>
     </button>
   );
-}
-
-function isTnpsKey(kpiKey: string) {
-  const k = kpiKey.toLowerCase();
-  return k.includes("tnps");
 }
 
 export default function TechMetricsClient(props: {
@@ -154,15 +168,14 @@ export default function TechMetricsClient(props: {
   activePresetKey: string | null;
   ftrDebug: FtrDebug;
   tnpsDebug?: TnpsDebug;
+  toolUsageDebug?: ToolUsageDebug;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [pendingRange, setPendingRange] = useState<RangeKey | null>(null);
 
-  const urlRangeRaw = String(
-    searchParams.get("range") ?? props.initialRange ?? "FM"
-  ).toUpperCase();
+  const urlRangeRaw = String(searchParams.get("range") ?? props.initialRange ?? "FM").toUpperCase();
 
   const activeRangeFromUrl: RangeKey =
     urlRangeRaw === "3FM" ? "3FM" : urlRangeRaw === "12FM" ? "12FM" : "FM";
@@ -172,9 +185,7 @@ export default function TechMetricsClient(props: {
 
   function onSelectRange(next: RangeKey) {
     if (next === activeRangeFromUrl) return;
-
     setPendingRange(next);
-
     startTransition(() => {
       router.push(`/tech/metrics?range=${next}`);
     });
@@ -193,8 +204,7 @@ export default function TechMetricsClient(props: {
   );
 
   const ftrDrawerModel = useMemo(() => {
-    if (!openTile) return null;
-    if (openTile.kpi_key !== "ftr_rate") return null;
+    if (!openTile || openTile.kpi_key !== "ftr_rate") return null;
 
     return buildFtrDrawerModel({
       tile: openTile,
@@ -203,8 +213,19 @@ export default function TechMetricsClient(props: {
     });
   }, [openTile, props.ftrDebug, activeRangeFromUrl]);
 
+  const toolUsageDrawerModel = useMemo(() => {
+    if (!openTile || !isToolUsageKey(openTile.kpi_key)) return null;
+
+    return buildToolUsageDrawerModel({
+      tile: openTile,
+      toolUsageDebug: props.toolUsageDebug ?? null,
+      activeRange: activeRangeFromUrl,
+    });
+  }, [openTile, props.toolUsageDebug, activeRangeFromUrl]);
+
   const isFtrOpen = openTile?.kpi_key === "ftr_rate";
   const isTnpsOpen = !!openTile && isTnpsKey(openTile.kpi_key);
+  const isToolUsageOpen = !!openTile && isToolUsageKey(openTile.kpi_key);
 
   return (
     <>
@@ -231,34 +252,7 @@ export default function TechMetricsClient(props: {
         </div>
       </section>
 
-      <section className="rounded-2xl border bg-card p-4">
-        <div className="grid grid-cols-4 gap-2">
-          <RankCell label="Team" value="—" />
-          <RankCell label="Region" value="—" />
-          <RankCell label="Division" value="—" />
-          <RankCell label="National" value="—" />
-        </div>
-      </section>
-
-      <section className="rounded-2xl border bg-card p-4">
-        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Work Mix
-        </div>
-
-        <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl border bg-muted/20 p-2">
-          <MixStat label="Jobs" value="—" />
-          <MixStat label="Jobs/Day" value="—" />
-          <MixStat label="Workdays" value="—" />
-        </div>
-
-        <div className="mt-3 space-y-2">
-          <MixRow label="Install" count="—" pct="—" />
-          <MixRow label="Service" count="—" pct="—" />
-          <MixRow label="Trouble" count="—" pct="—" />
-        </div>
-      </section>
-
-      <section className={`space-y-3 transition-opacity ${isPending ? "opacity-85" : "opacity-100"}`}>
+      <section className={`space-y-3 ${isPending ? "opacity-85" : ""}`}>
         {tiles.map((tile) => (
           <MetricCard
             key={tile.kpi_key}
@@ -270,20 +264,26 @@ export default function TechMetricsClient(props: {
 
       <MetricInspectorDrawer
         open={!!openTile && isFtrOpen}
-        title={openTile?.label ?? "Metric"}
+        title={openTile?.label ?? ""}
         valueDisplay={openTile?.value_display ?? null}
-        bandLabel={openTile?.band.label ?? "—"}
+        bandLabel={openTile?.band.label ?? ""}
         accentColor={openTile?.band.paint?.border}
         onClose={() => setOpenMetricKey(null)}
         summaryRows={ftrDrawerModel?.summaryRows ?? []}
-        chart={
-          ftrDrawerModel?.chart ?? (
-            <div className="mt-3 flex h-28 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">
-              Trend chart placeholder
-            </div>
-          )
-        }
+        chart={ftrDrawerModel?.chart ?? null}
         periodDetail={ftrDrawerModel?.periodDetail ?? null}
+      />
+
+      <MetricInspectorDrawer
+        open={!!openTile && isToolUsageOpen}
+        title={openTile?.label ?? ""}
+        valueDisplay={openTile?.value_display ?? null}
+        bandLabel={openTile?.band.label ?? ""}
+        accentColor={openTile?.band.paint?.border}
+        onClose={() => setOpenMetricKey(null)}
+        summaryRows={toolUsageDrawerModel?.summaryRows ?? []}
+        chart={toolUsageDrawerModel?.chart ?? null}
+        periodDetail={toolUsageDrawerModel?.periodDetail ?? null}
       />
 
       <TnpsInspectorDrawer

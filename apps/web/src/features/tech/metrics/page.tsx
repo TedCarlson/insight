@@ -10,6 +10,7 @@ import {
 } from "@/features/tech/metrics/lib/getTechMetricsRangePayload.server";
 import { getMetricFtrPayload } from "@/features/tech/metrics/lib/getMetricFtrPayload.server";
 import { getMetricTnpsPayload } from "@/features/tech/metrics/lib/getMetricTnpsPayload.server";
+import { getMetricToolUsagePayload } from "@/features/tech/metrics/lib/getMetricToolUsagePayload.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -48,6 +49,11 @@ function isTnpsKey(kpiKey: string): boolean {
   return kpiKey.toLowerCase().includes("tnps");
 }
 
+function isToolUsageKey(kpiKey: string): boolean {
+  const k = kpiKey.toLowerCase();
+  return k.includes("tool_usage") || k.includes("toolusage") || k.includes("tu_rate");
+}
+
 export default async function TechMetricsFeaturePage(props: {
   searchParams?: Promise<{ range?: string }>;
 }) {
@@ -61,7 +67,7 @@ export default async function TechMetricsFeaturePage(props: {
   const range: MetricsRangeKey =
     rawRange === "3FM" ? "3FM" : rawRange === "12FM" ? "12FM" : "FM";
 
-  const [payload, activePresetKey, ftrPayload, tnpsPayload] =
+  const [payload, activePresetKey, ftrPayload, tnpsPayload, toolUsagePayload] =
     shell.ok && shell.person_id && who.tech_id
       ? await Promise.all([
           getTechMetricsRangePayload({
@@ -79,8 +85,13 @@ export default async function TechMetricsFeaturePage(props: {
             tech_id: who.tech_id,
             range,
           }),
+          getMetricToolUsagePayload({
+            person_id: shell.person_id,
+            tech_id: who.tech_id,
+            range,
+          }),
         ])
-      : [null, null, null, null];
+      : [null, null, null, null, null];
 
   const tiles =
     payload?.tiles?.map((tile) => {
@@ -104,6 +115,7 @@ export default async function TechMetricsFeaturePage(props: {
       if (isTnpsKey(tile.kpi_key)) {
         const tnpsValue = tnpsPayload?.summary?.tnps_score ?? null;
         const surveys = tnpsPayload?.summary?.tnps_surveys ?? null;
+        const promoters = tnpsPayload?.summary?.tnps_promoters ?? null;
         const detractors = tnpsPayload?.summary?.tnps_detractors ?? null;
 
         return {
@@ -112,7 +124,25 @@ export default async function TechMetricsFeaturePage(props: {
           value_display: formatTnps2(tnpsValue),
           context: {
             sample_short: surveys,
-            sample_long: detractors,
+            sample_long: promoters,
+            detractors,
+            meets_min_volume: null,
+          },
+        };
+      }
+
+      if (isToolUsageKey(tile.kpi_key)) {
+        const tuValue = toolUsagePayload?.summary?.tool_usage_rate ?? null;
+        const eligible = toolUsagePayload?.summary?.tu_eligible_jobs ?? null;
+        const compliant = toolUsagePayload?.summary?.tu_compliant_jobs ?? null;
+
+        return {
+          ...tile,
+          value: tuValue,
+          value_display: formatPct1(tuValue),
+          context: {
+            sample_short: eligible,
+            sample_long: compliant,
             meets_min_volume: null,
           },
         };
@@ -137,7 +167,8 @@ export default async function TechMetricsFeaturePage(props: {
         tiles={tiles}
         activePresetKey={activePresetKey}
         ftrDebug={ftrPayload?.debug ?? null}
-        tnpsDebug={tnpsPayload?.debug ?? null}
+        tnpsDebug={tnpsPayload?.debug ?? undefined}
+        toolUsageDebug={toolUsagePayload?.debug ?? null}
       />
     </div>
   );

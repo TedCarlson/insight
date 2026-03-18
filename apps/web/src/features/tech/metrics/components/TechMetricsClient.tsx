@@ -4,25 +4,12 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+import type { ScorecardTile } from "@/features/metrics/scorecard/lib/scorecard.types";
+import { mapTilesWithPreset } from "@/features/tech/metrics/lib/mapTilesWithPreset";
+
 type RangeKey = "FM" | "3FM" | "12FM";
 
-type TileBand = {
-  band_key: string;
-  label: string;
-  paint?: {
-    preset?: string | null;
-    bg?: string | null;
-    border?: string | null;
-    ink?: string | null;
-  };
-};
-
-type Tile = {
-  kpi_key: string;
-  label: string;
-  value_display: string | null;
-  band: TileBand;
-};
+type Tile = ScorecardTile;
 
 function RankCell(props: { label: string; value: string }) {
   return (
@@ -93,13 +80,14 @@ function MetricCard(props: {
       type="button"
       onClick={props.onOpen}
       className="w-full overflow-hidden rounded-2xl border bg-card text-left transition active:scale-[0.99]"
+      style={{ borderColor: topColor }}
     >
       <div className="h-1.5 w-full" style={{ backgroundColor: topColor }} />
       <div className="p-4">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">
           {props.tile.label}
         </div>
-        <div className="mt-1 text-xl font-semibold leading-none">
+        <div className="mt-1 text-xl font-semibold leading-none text-foreground">
           {props.tile.value_display ?? "—"}
         </div>
         <div className="mt-1 text-sm text-muted-foreground">
@@ -145,7 +133,7 @@ function MetricDrawer(props: {
               <div className="text-xs uppercase tracking-wide text-muted-foreground">
                 {props.tile.label}
               </div>
-              <div className="mt-1 text-2xl font-semibold leading-none">
+              <div className="mt-1 text-2xl font-semibold leading-none text-foreground">
                 {props.tile.value_display ?? "—"}
               </div>
               <div className="mt-1 text-sm text-muted-foreground">
@@ -195,17 +183,26 @@ function MetricDrawer(props: {
 export default function TechMetricsClient(props: {
   initialRange: RangeKey;
   tiles: Tile[];
+  activePresetKey: string | null;
 }) {
   const searchParams = useSearchParams();
-  const urlRangeRaw = String(searchParams.get("range") ?? props.initialRange ?? "FM").toUpperCase();
+  const urlRangeRaw = String(
+    searchParams.get("range") ?? props.initialRange ?? "FM"
+  ).toUpperCase();
+
   const activeRange: RangeKey =
     urlRangeRaw === "3FM" ? "3FM" : urlRangeRaw === "12FM" ? "12FM" : "FM";
+
+  const tiles = useMemo(
+    () => mapTilesWithPreset(props.tiles, props.activePresetKey),
+    [props.tiles, props.activePresetKey]
+  );
 
   const [openMetricKey, setOpenMetricKey] = useState<string | null>(null);
 
   const openTile = useMemo(
-    () => props.tiles.find((t) => t.kpi_key === openMetricKey) ?? null,
-    [openMetricKey, props.tiles]
+    () => tiles.find((t) => t.kpi_key === openMetricKey) ?? null,
+    [openMetricKey, tiles]
   );
 
   return (
@@ -246,7 +243,7 @@ export default function TechMetricsClient(props: {
       </section>
 
       <section className="space-y-3">
-        {props.tiles.map((tile) => (
+        {tiles.map((tile) => (
           <MetricCard
             key={tile.kpi_key}
             tile={tile}

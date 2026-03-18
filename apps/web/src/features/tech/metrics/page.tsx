@@ -1,3 +1,5 @@
+import { headers } from "next/headers";
+
 import TechSurfaceHeader from "@/features/tech/shared/components/TechSurfaceHeader";
 import { getTechWhoAmI } from "@/features/tech/shared/lib/getTechWhoAmI";
 import TechMetricsClient from "@/features/tech/metrics/components/TechMetricsClient";
@@ -5,6 +7,27 @@ import { getTechScorecardPayload } from "@/features/metrics/scorecard/lib/getTec
 import { getTechShellContext } from "@/features/tech/lib/getTechShellContext";
 
 type RangeKey = "FM" | "3FM" | "12FM";
+
+async function getActivePresetKey(): Promise<string | null> {
+  try {
+    const h = await headers();
+    const protocol = h.get("x-forwarded-proto") ?? "http";
+    const host = h.get("x-forwarded-host") ?? h.get("host");
+
+    if (!host) return null;
+
+    const res = await fetch(`${protocol}://${host}/api/admin/metrics-colors`, {
+      cache: "no-store",
+    });
+
+    if (!res.ok) return null;
+
+    const json = await res.json().catch(() => null);
+    return json?.activePresetKey ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export default async function TechMetricsFeaturePage(props: {
   searchParams?: Promise<{ range?: string }>;
@@ -19,10 +42,13 @@ export default async function TechMetricsFeaturePage(props: {
   const range: RangeKey =
     rawRange === "3FM" ? "3FM" : rawRange === "12FM" ? "12FM" : "FM";
 
-  const payload =
+  const [payload, activePresetKey] =
     shell.ok && shell.person_id
-      ? await getTechScorecardPayload({ person_id: shell.person_id })
-      : null;
+      ? await Promise.all([
+          getTechScorecardPayload({ person_id: shell.person_id }),
+          getActivePresetKey(),
+        ])
+      : [null, null];
 
   return (
     <div className="space-y-4">
@@ -38,6 +64,7 @@ export default async function TechMetricsFeaturePage(props: {
       <TechMetricsClient
         initialRange={range}
         tiles={payload?.tiles ?? []}
+        activePresetKey={activePresetKey}
       />
     </div>
   );

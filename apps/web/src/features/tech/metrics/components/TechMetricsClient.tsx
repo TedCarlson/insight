@@ -12,6 +12,30 @@ import {
   buildToolUsageDrawerModel,
   type ToolUsageDebug,
 } from "@/features/tech/metrics/lib/buildToolUsageDrawerModel";
+import {
+  buildPurePassDrawerModel,
+  type PurePassDebug,
+} from "@/features/tech/metrics/lib/buildPurePassDrawerModel";
+import {
+  build48HrDrawerModel,
+  type Callback48HrDebug,
+} from "@/features/tech/metrics/lib/build48HrDrawerModel";
+import {
+  buildRepeatDrawerModel,
+  type RepeatDebug,
+} from "@/features/tech/metrics/lib/buildRepeatDrawerModel";
+import {
+  buildSoiDrawerModel,
+  type SoiDebug,
+} from "@/features/tech/metrics/lib/buildSoiDrawerModel";
+import {
+  buildReworkDrawerModel,
+  type ReworkDebug,
+} from "@/features/tech/metrics/lib/buildReworkDrawerModel";
+import {
+  buildMetDrawerModel,
+  type MetDebug,
+} from "@/features/tech/metrics/lib/buildMetDrawerModel";
 
 type RangeKey = "FM" | "3FM" | "12FM";
 type Tile = ScorecardTile;
@@ -33,8 +57,8 @@ type TnpsDebug = {
 };
 
 type TnpsTileContext = {
-  sample_short?: number | null; // surveys
-  sample_long?: number | null; // promoters
+  sample_short?: number | null;
+  sample_long?: number | null;
   detractors?: number | null;
   meets_min_volume?: boolean | null;
 } | null;
@@ -79,6 +103,33 @@ function isToolUsageKey(kpiKey: string) {
   return k.includes("tool_usage") || k.includes("toolusage") || k.includes("tu_rate");
 }
 
+function isPurePassKey(kpiKey: string) {
+  const k = kpiKey.toLowerCase();
+  return k.includes("pure_pass") || k.includes("purepass") || k.includes("pht_pure_pass");
+}
+
+function is48HrKey(kpiKey: string) {
+  const k = kpiKey.toLowerCase();
+  return k.includes("48hr") || k.includes("48_hr") || k.includes("callback");
+}
+
+function isRepeatKey(kpiKey: string) {
+  return kpiKey.toLowerCase().includes("repeat");
+}
+
+function isSoiKey(kpiKey: string) {
+  return kpiKey.toLowerCase().includes("soi");
+}
+
+function isReworkKey(kpiKey: string) {
+  return kpiKey.toLowerCase().includes("rework");
+}
+
+function isMetKey(kpiKey: string) {
+  const k = kpiKey.toLowerCase();
+  return k === "met_rate" || k === "met" || k.includes("metrate");
+}
+
 function formatTnpsSupportLine(tile: Tile): string | null {
   const ctx = tile.context as TnpsTileContext;
   const surveys = ctx?.sample_short ?? 0;
@@ -90,9 +141,9 @@ function formatTnpsSupportLine(tile: Tile): string | null {
   const passive = Math.max(0, surveys - promoters - detractors);
   const parts: string[] = [];
 
-  if (promoters > 0) parts.push(`${promoters} Promotors`);
-  if (passive > 0) parts.push(`${passive} Passives`);
-  if (detractors > 0) parts.push(`${detractors} Detractors`);
+  if (promoters > 0) parts.push(`${promoters} Pro`);
+  if (passive > 0) parts.push(`${passive} Pass`);
+  if (detractors > 0) parts.push(`${detractors} Det`);
 
   return parts.length ? parts.join(" • ") : null;
 }
@@ -101,20 +152,64 @@ function formatSupportLine(tile: Tile): string | null {
   if (tile.kpi_key === "ftr_rate") {
     const jobs = tile.context?.sample_short;
     const fails = tile.context?.sample_long;
-
     const left = jobs ? `${Math.round(jobs)} FTR jobs` : null;
     const right = fails ? `${Math.round(fails)} fails` : null;
-
     return [left, right].filter(Boolean).join(" • ") || null;
   }
 
   if (isToolUsageKey(tile.kpi_key)) {
     const eligible = tile.context?.sample_short;
     const compliant = tile.context?.sample_long;
-
     const left = eligible ? `${Math.round(eligible)} eligible` : null;
     const right = compliant ? `${Math.round(compliant)} compliant` : null;
+    return [left, right].filter(Boolean).join(" • ") || null;
+  }
 
+  if (isPurePassKey(tile.kpi_key)) {
+    const jobs = tile.context?.sample_short;
+    const purePass = tile.context?.sample_long;
+    const left = jobs ? `${Math.round(jobs)} PHT jobs` : null;
+    const right = purePass ? `${Math.round(purePass)} pure pass` : null;
+    return [left, right].filter(Boolean).join(" • ") || null;
+  }
+
+  if (is48HrKey(tile.kpi_key)) {
+    const orders = tile.context?.sample_short;
+    const eligible = tile.context?.sample_long;
+    const left = orders ? `${Math.round(orders)} orders` : null;
+    const right = eligible ? `${Math.round(eligible)} eligible` : null;
+    return [left, right].filter(Boolean).join(" • ") || null;
+  }
+
+  if (isRepeatKey(tile.kpi_key)) {
+    const repeats = tile.context?.sample_short;
+    const tcs = tile.context?.sample_long;
+    const left = repeats ? `${Math.round(repeats)} repeats` : null;
+    const right = tcs ? `${Math.round(tcs)} TCs` : null;
+    return [left, right].filter(Boolean).join(" • ") || null;
+  }
+
+  if (isSoiKey(tile.kpi_key)) {
+    const soi = tile.context?.sample_short;
+    const installs = tile.context?.sample_long;
+    const left = soi ? `${Math.round(soi)} SOI` : null;
+    const right = installs ? `${Math.round(installs)} installs` : null;
+    return [left, right].filter(Boolean).join(" • ") || null;
+  }
+
+  if (isReworkKey(tile.kpi_key)) {
+    const rework = tile.context?.sample_short;
+    const appts = tile.context?.sample_long;
+    const left = rework ? `${Math.round(rework)} rework` : null;
+    const right = appts ? `${Math.round(appts)} appts` : null;
+    return [left, right].filter(Boolean).join(" • ") || null;
+  }
+
+  if (isMetKey(tile.kpi_key)) {
+    const met = tile.context?.sample_short;
+    const appts = tile.context?.sample_long;
+    const left = met ? `${Math.round(met)} met` : null;
+    const right = appts ? `${Math.round(appts)} appts` : null;
     return [left, right].filter(Boolean).join(" • ") || null;
   }
 
@@ -153,9 +248,7 @@ function MetricCard(props: { tile: Tile; onOpen: () => void }) {
         </div>
 
         {supportLine ? (
-          <div className="mt-1 text-xs text-muted-foreground">
-            {supportLine}
-          </div>
+          <div className="mt-1 text-xs text-muted-foreground">{supportLine}</div>
         ) : null}
       </div>
     </button>
@@ -169,6 +262,12 @@ export default function TechMetricsClient(props: {
   ftrDebug: FtrDebug;
   tnpsDebug?: TnpsDebug;
   toolUsageDebug?: ToolUsageDebug;
+  purePassDebug?: PurePassDebug;
+  callback48HrDebug?: Callback48HrDebug;
+  repeatDebug?: RepeatDebug;
+  soiDebug?: SoiDebug;
+  reworkDebug?: ReworkDebug;
+  metDebug?: MetDebug;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -205,7 +304,6 @@ export default function TechMetricsClient(props: {
 
   const ftrDrawerModel = useMemo(() => {
     if (!openTile || openTile.kpi_key !== "ftr_rate") return null;
-
     return buildFtrDrawerModel({
       tile: openTile,
       ftrDebug: props.ftrDebug,
@@ -215,7 +313,6 @@ export default function TechMetricsClient(props: {
 
   const toolUsageDrawerModel = useMemo(() => {
     if (!openTile || !isToolUsageKey(openTile.kpi_key)) return null;
-
     return buildToolUsageDrawerModel({
       tile: openTile,
       toolUsageDebug: props.toolUsageDebug ?? null,
@@ -223,9 +320,69 @@ export default function TechMetricsClient(props: {
     });
   }, [openTile, props.toolUsageDebug, activeRangeFromUrl]);
 
+  const purePassDrawerModel = useMemo(() => {
+    if (!openTile || !isPurePassKey(openTile.kpi_key)) return null;
+    return buildPurePassDrawerModel({
+      tile: openTile,
+      purePassDebug: props.purePassDebug ?? null,
+      activeRange: activeRangeFromUrl,
+    });
+  }, [openTile, props.purePassDebug, activeRangeFromUrl]);
+
+  const callback48HrDrawerModel = useMemo(() => {
+    if (!openTile || !is48HrKey(openTile.kpi_key)) return null;
+    return build48HrDrawerModel({
+      tile: openTile,
+      callback48HrDebug: props.callback48HrDebug ?? null,
+      activeRange: activeRangeFromUrl,
+    });
+  }, [openTile, props.callback48HrDebug, activeRangeFromUrl]);
+
+  const repeatDrawerModel = useMemo(() => {
+    if (!openTile || !isRepeatKey(openTile.kpi_key)) return null;
+    return buildRepeatDrawerModel({
+      tile: openTile,
+      repeatDebug: props.repeatDebug ?? null,
+      activeRange: activeRangeFromUrl,
+    });
+  }, [openTile, props.repeatDebug, activeRangeFromUrl]);
+
+  const soiDrawerModel = useMemo(() => {
+    if (!openTile || !isSoiKey(openTile.kpi_key)) return null;
+    return buildSoiDrawerModel({
+      tile: openTile,
+      soiDebug: props.soiDebug ?? null,
+      activeRange: activeRangeFromUrl,
+    });
+  }, [openTile, props.soiDebug, activeRangeFromUrl]);
+
+  const reworkDrawerModel = useMemo(() => {
+    if (!openTile || !isReworkKey(openTile.kpi_key)) return null;
+    return buildReworkDrawerModel({
+      tile: openTile,
+      reworkDebug: props.reworkDebug ?? null,
+      activeRange: activeRangeFromUrl,
+    });
+  }, [openTile, props.reworkDebug, activeRangeFromUrl]);
+
+  const metDrawerModel = useMemo(() => {
+    if (!openTile || !isMetKey(openTile.kpi_key)) return null;
+    return buildMetDrawerModel({
+      tile: openTile,
+      metDebug: props.metDebug ?? null,
+      activeRange: activeRangeFromUrl,
+    });
+  }, [openTile, props.metDebug, activeRangeFromUrl]);
+
   const isFtrOpen = openTile?.kpi_key === "ftr_rate";
   const isTnpsOpen = !!openTile && isTnpsKey(openTile.kpi_key);
   const isToolUsageOpen = !!openTile && isToolUsageKey(openTile.kpi_key);
+  const isPurePassOpen = !!openTile && isPurePassKey(openTile.kpi_key);
+  const is48HrOpen = !!openTile && is48HrKey(openTile.kpi_key);
+  const isRepeatOpen = !!openTile && isRepeatKey(openTile.kpi_key);
+  const isSoiOpen = !!openTile && isSoiKey(openTile.kpi_key);
+  const isReworkOpen = !!openTile && isReworkKey(openTile.kpi_key);
+  const isMetOpen = !!openTile && isMetKey(openTile.kpi_key);
 
   return (
     <>
@@ -284,6 +441,78 @@ export default function TechMetricsClient(props: {
         summaryRows={toolUsageDrawerModel?.summaryRows ?? []}
         chart={toolUsageDrawerModel?.chart ?? null}
         periodDetail={toolUsageDrawerModel?.periodDetail ?? null}
+      />
+
+      <MetricInspectorDrawer
+        open={!!openTile && isPurePassOpen}
+        title={openTile?.label ?? ""}
+        valueDisplay={openTile?.value_display ?? null}
+        bandLabel={openTile?.band.label ?? ""}
+        accentColor={openTile?.band.paint?.border}
+        onClose={() => setOpenMetricKey(null)}
+        summaryRows={purePassDrawerModel?.summaryRows ?? []}
+        chart={purePassDrawerModel?.chart ?? null}
+        periodDetail={purePassDrawerModel?.periodDetail ?? null}
+      />
+
+      <MetricInspectorDrawer
+        open={!!openTile && is48HrOpen}
+        title={openTile?.label ?? ""}
+        valueDisplay={openTile?.value_display ?? null}
+        bandLabel={openTile?.band.label ?? ""}
+        accentColor={openTile?.band.paint?.border}
+        onClose={() => setOpenMetricKey(null)}
+        summaryRows={callback48HrDrawerModel?.summaryRows ?? []}
+        chart={callback48HrDrawerModel?.chart ?? null}
+        periodDetail={callback48HrDrawerModel?.periodDetail ?? null}
+      />
+
+      <MetricInspectorDrawer
+        open={!!openTile && isRepeatOpen}
+        title={openTile?.label ?? ""}
+        valueDisplay={openTile?.value_display ?? null}
+        bandLabel={openTile?.band.label ?? ""}
+        accentColor={openTile?.band.paint?.border}
+        onClose={() => setOpenMetricKey(null)}
+        summaryRows={repeatDrawerModel?.summaryRows ?? []}
+        chart={repeatDrawerModel?.chart ?? null}
+        periodDetail={repeatDrawerModel?.periodDetail ?? null}
+      />
+
+      <MetricInspectorDrawer
+        open={!!openTile && isSoiOpen}
+        title={openTile?.label ?? ""}
+        valueDisplay={openTile?.value_display ?? null}
+        bandLabel={openTile?.band.label ?? ""}
+        accentColor={openTile?.band.paint?.border}
+        onClose={() => setOpenMetricKey(null)}
+        summaryRows={soiDrawerModel?.summaryRows ?? []}
+        chart={soiDrawerModel?.chart ?? null}
+        periodDetail={soiDrawerModel?.periodDetail ?? null}
+      />
+
+      <MetricInspectorDrawer
+        open={!!openTile && isReworkOpen}
+        title={openTile?.label ?? ""}
+        valueDisplay={openTile?.value_display ?? null}
+        bandLabel={openTile?.band.label ?? ""}
+        accentColor={openTile?.band.paint?.border}
+        onClose={() => setOpenMetricKey(null)}
+        summaryRows={reworkDrawerModel?.summaryRows ?? []}
+        chart={reworkDrawerModel?.chart ?? null}
+        periodDetail={reworkDrawerModel?.periodDetail ?? null}
+      />
+
+      <MetricInspectorDrawer
+        open={!!openTile && isMetOpen}
+        title={openTile?.label ?? ""}
+        valueDisplay={openTile?.value_display ?? null}
+        bandLabel={openTile?.band.label ?? ""}
+        accentColor={openTile?.band.paint?.border}
+        onClose={() => setOpenMetricKey(null)}
+        summaryRows={metDrawerModel?.summaryRows ?? []}
+        chart={metDrawerModel?.chart ?? null}
+        periodDetail={metDrawerModel?.periodDetail ?? null}
       />
 
       <TnpsInspectorDrawer

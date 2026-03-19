@@ -24,10 +24,14 @@ function MobileMetricCard(props: { metric: BpViewRosterMetricCell }) {
   );
 }
 
-function MobileRowCard(props: { row: BpViewRosterRow }) {
+function MobileRowCard(props: {
+  row: BpViewRosterRow;
+  onSelectRow: (row: BpViewRosterRow) => void;
+}) {
   return (
     <button
       type="button"
+      onClick={() => props.onSelectRow(props.row)}
       className="w-full rounded-2xl border bg-card p-4 text-left active:scale-[0.99]"
     >
       <div className="text-sm font-semibold">{props.row.full_name}</div>
@@ -83,6 +87,7 @@ function DesktopCell(props: {
 export default function BpViewRosterSurface(props: {
   columns: Array<{ kpi_key: string; label: string }>;
   rows: BpViewRosterRow[];
+  onSelectRow: (row: BpViewRosterRow) => void;
 }) {
   return (
     <section className="rounded-2xl border bg-card p-4">
@@ -97,7 +102,7 @@ export default function BpViewRosterSurface(props: {
 
       <div className="space-y-3 md:hidden">
         {props.rows.map((row) => (
-          <MobileRowCard key={row.person_id} row={row} />
+          <MobileRowCard key={row.person_id} row={row} onSelectRow={props.onSelectRow} />
         ))}
       </div>
 
@@ -122,6 +127,7 @@ export default function BpViewRosterSurface(props: {
             <button
               key={row.person_id}
               type="button"
+              onClick={() => props.onSelectRow(row)}
               className="grid w-full min-w-[1100px] border-b text-left hover:bg-muted/10"
               style={{
                 gridTemplateColumns: `260px repeat(${props.columns.length}, minmax(110px, 1fr)) 120px`,

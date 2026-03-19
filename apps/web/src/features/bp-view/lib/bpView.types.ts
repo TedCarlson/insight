@@ -1,11 +1,13 @@
 import type { BandKey } from "@/features/metrics/scorecard/lib/scorecard.types";
 
+export type BpRangeKey = "FM" | "3FM" | "12FM";
+
 export type BpViewHeaderData = {
   role_label: string;
   scope_label: string;
   org_label: string;
   org_count: number;
-  range_label: "FM" | "3FM" | "12FM";
+  range_label: BpRangeKey;
   as_of_date: string;
 };
 

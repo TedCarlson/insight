@@ -1,12 +1,14 @@
-import type { BpViewHeaderData } from "../lib/bpView.types";
+import type { BpRangeKey, BpViewHeaderData } from "../lib/bpView.types";
 
 function RangeChip(props: {
   label: string;
   active?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
       type="button"
+      onClick={props.onClick}
       className={[
         "rounded-xl border px-3 py-2 text-xs font-medium transition",
         props.active
@@ -54,8 +56,10 @@ function InfoPill(props: {
 
 export default function BpViewHeader(props: {
   header: BpViewHeaderData;
+  range: BpRangeKey;
+  onRangeChange: (next: BpRangeKey) => void;
 }) {
-  const { header } = props;
+  const { header, range, onRangeChange } = props;
 
   return (
     <section className="rounded-2xl border bg-card p-4">
@@ -90,9 +94,9 @@ export default function BpViewHeader(props: {
             Range
           </div>
           <div className="flex flex-wrap gap-2">
-            <RangeChip label="FM" active={header.range_label === "FM"} />
-            <RangeChip label="3FM" active={header.range_label === "3FM"} />
-            <RangeChip label="12FM" active={header.range_label === "12FM"} />
+            <RangeChip label="FM" active={range === "FM"} onClick={() => onRangeChange("FM")} />
+            <RangeChip label="3FM" active={range === "3FM"} onClick={() => onRangeChange("3FM")} />
+            <RangeChip label="12FM" active={range === "12FM"} onClick={() => onRangeChange("12FM")} />
           </div>
         </div>
       </div>

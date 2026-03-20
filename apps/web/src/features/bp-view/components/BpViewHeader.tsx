@@ -1,3 +1,6 @@
+"use client";
+
+import { useRouter, useSearchParams } from "next/navigation";
 import type { BpRangeKey, BpViewHeaderData } from "../lib/bpView.types";
 
 function RangeChip(props: {
@@ -56,10 +59,16 @@ function InfoPill(props: {
 
 export default function BpViewHeader(props: {
   header: BpViewHeaderData;
-  range: BpRangeKey;
-  onRangeChange: (next: BpRangeKey) => void;
 }) {
-  const { header, range, onRangeChange } = props;
+  const { header } = props;
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  function setRange(next: BpRangeKey) {
+    const qs = new URLSearchParams(searchParams.toString());
+    qs.set("range", next);
+    router.replace(`/bp/view?${qs.toString()}`);
+  }
 
   return (
     <section className="rounded-2xl border bg-card p-4">
@@ -94,9 +103,21 @@ export default function BpViewHeader(props: {
             Range
           </div>
           <div className="flex flex-wrap gap-2">
-            <RangeChip label="FM" active={range === "FM"} onClick={() => onRangeChange("FM")} />
-            <RangeChip label="3FM" active={range === "3FM"} onClick={() => onRangeChange("3FM")} />
-            <RangeChip label="12FM" active={range === "12FM"} onClick={() => onRangeChange("12FM")} />
+            <RangeChip
+              label="Current"
+              active={header.range_label === "FM"}
+              onClick={() => setRange("FM")}
+            />
+            <RangeChip
+              label="3 FM"
+              active={header.range_label === "3FM"}
+              onClick={() => setRange("3FM")}
+            />
+            <RangeChip
+              label="12 FM"
+              active={header.range_label === "12FM"}
+              onClick={() => setRange("12FM")}
+            />
           </div>
         </div>
       </div>

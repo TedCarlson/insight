@@ -28,9 +28,7 @@ type Params = {
   rubricByKpi: Map<string, RubricRow[]>;
   orgLabelsById: Map<string, string>;
 
-  /**
-   * 🔥 NEW: KPI override layer (tech-view style injection)
-   */
+  // KPI override layer (tech-view style injection)
   kpiOverrides?: Record<string, Map<string, number | null>>;
 };
 
@@ -93,17 +91,11 @@ export function buildBpRosterRows(params: Params): BpViewRosterRow[] {
     for (const kpi of kpis) {
       let value: number | null = null;
 
-      /**
-       * 🔥 PRIORITY 1 — KPI OVERRIDE (REAL ENGINE)
-       */
       const overrideMap = kpiOverrides?.[kpi.kpi_key];
 
       if (overrideMap) {
         value = overrideMap.get(techId) ?? null;
       } else if (fact) {
-        /**
-         * fallback to snapshot (temporary until all KPIs migrated)
-         */
         value = extractFromFact(fact, kpi.kpi_key);
       }
 
@@ -116,9 +108,23 @@ export function buildBpRosterRows(params: Params): BpViewRosterRow[] {
       metrics.push({
         kpi_key: kpi.kpi_key,
         label: kpi.label,
+
         value,
         value_display: formatValue(value),
         band_key: band,
+
+        delta_value: null,
+        delta_display: null,
+
+        rank_value: null,
+        rank_display: null,
+
+        rank_delta_value: null,
+        rank_delta_display: null,
+
+        score_value: null,
+        score_weight: null,
+        score_contribution: null,
       });
     }
 
@@ -131,6 +137,7 @@ export function buildBpRosterRows(params: Params): BpViewRosterRow[] {
       tech_id: techId,
       full_name: person?.full_name ?? "Unknown",
       context: orgLabel ?? "",
+      rank: null,
       metrics,
       below_target_count: belowTargetCount,
     });

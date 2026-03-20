@@ -95,11 +95,11 @@ async function resolveFtrByTech(params: {
   return map;
 }
 
-async function loadP4pConfig(
+async function loadViewKpiConfig(
   admin: ReturnType<typeof supabaseAdmin>
 ): Promise<KpiCfg[]> {
   const [{ data: classRows }, { data: defRows }] = await Promise.all([
-    admin.from("metrics_class_kpi_config").select("*").eq("class_type", "P4P"),
+    admin.from("metrics_class_kpi_config").select("*").eq("class_type", "TECH"),
     admin.from("metrics_kpi_def").select("kpi_key,customer_label,label"),
   ]);
 
@@ -181,7 +181,7 @@ export async function getBpViewPayload(
 
   const [scope, p4pConfig] = await Promise.all([
     resolveBpScope(),
-    loadP4pConfig(admin),
+    loadViewKpiConfig(admin),
   ]);
 
   const rubricByKpi = await loadRubrics(

@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { BpViewKpiItem } from "../lib/bpView.types";
 
 function topBarClass(bandKey: string) {
@@ -8,45 +11,108 @@ function topBarClass(bandKey: string) {
   return "bg-[var(--to-border)]";
 }
 
-function KpiCard(props: { item: BpViewKpiItem }) {
-  const { item } = props;
-
+function PrimaryKpiCard({ item }: { item: BpViewKpiItem }) {
   return (
-    <button
-      type="button"
-      className="w-full overflow-hidden rounded-2xl border bg-card text-left active:scale-[0.99]"
-    >
-      <div className={`h-1.5 w-full ${topBarClass(item.band_key)}`} />
-      <div className="p-4">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">
+    <div className="overflow-hidden rounded-xl border bg-card">
+      <div className={`h-1 w-full ${topBarClass(item.band_key)}`} />
+      <div className="px-3 py-2.5">
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
           {item.label}
         </div>
-        <div className="mt-1 text-xl font-semibold leading-none">
-          {item.value_display ?? "—"}
+
+        <div className="mt-1 flex items-end justify-between gap-3">
+          <div className="text-xl font-semibold leading-none">
+            {item.value_display ?? "—"}
+          </div>
+
+          <div className="text-[10px] text-muted-foreground whitespace-nowrap">
+            {item.band_label}
+          </div>
         </div>
-        <div className="mt-1 text-sm text-muted-foreground">{item.band_label}</div>
+
         {item.support ? (
-          <div className="mt-1 text-xs text-muted-foreground">{item.support}</div>
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            {item.support}
+          </div>
         ) : null}
       </div>
-    </button>
+    </div>
   );
 }
 
-export default function BpViewKpiStrip(props: {
+function SecondaryKpiCard({ item }: { item: BpViewKpiItem }) {
+  return (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <div className={`h-1 w-full ${topBarClass(item.band_key)}`} />
+      <div className="px-2.5 py-2">
+        <div className="truncate text-[9px] uppercase tracking-wide text-muted-foreground">
+          {item.label}
+        </div>
+
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold leading-none">
+            {item.value_display ?? "—"}
+          </div>
+          <div className="text-[9px] text-muted-foreground whitespace-nowrap">
+            {item.band_label}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function BpViewKpiStrip({
+  items,
+}: {
   items: BpViewKpiItem[];
 }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const primary = items.slice(0, 3);
+  const secondary = items.slice(3);
+
   return (
-    <section className="rounded-2xl border bg-card p-4">
-      <div className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        Executive KPI Strip
+    <section className="rounded-2xl border bg-card p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Executive KPI Strip
+        </div>
+
+        {secondary.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:bg-muted/40 hover:text-foreground"
+          >
+            <span>{expanded ? "Hide extras" : "Show extras"}</span>
+            <span className="opacity-70">+{secondary.length}</span>
+            <span className={`transition-transform ${expanded ? "rotate-180" : ""}`}>
+              ▾
+            </span>
+          </button>
+        ) : null}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {props.items.map((item) => (
-          <KpiCard key={item.kpi_key} item={item} />
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+        {primary.map((item) => (
+          <PrimaryKpiCard key={item.kpi_key} item={item} />
         ))}
       </div>
+
+      {expanded && secondary.length > 0 ? (
+        <div className="mt-2 rounded-xl border bg-muted/10 p-2">
+          <div className="mb-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+            Additional KPIs
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-3 xl:grid-cols-6">
+            {secondary.map((item) => (
+              <SecondaryKpiCard key={item.kpi_key} item={item} />
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

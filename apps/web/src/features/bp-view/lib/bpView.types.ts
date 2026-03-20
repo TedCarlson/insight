@@ -24,9 +24,24 @@ export type BpViewKpiItem = {
 export type BpViewRosterMetricCell = {
   kpi_key: string;
   label: string;
+
   value: number | null;
   value_display: string | null;
   band_key: BandKey;
+
+  // future-facing executive cell contract
+  delta_value: number | null;
+  delta_display: string | null;
+
+  rank_value: number | null;
+  rank_display: string | null;
+
+  rank_delta_value: number | null;
+  rank_delta_display: string | null;
+
+  score_value: number | null;
+  score_weight: number | null;
+  score_contribution: number | null;
 };
 
 export type BpViewRosterRow = {
@@ -34,6 +49,10 @@ export type BpViewRosterRow = {
   tech_id: string;
   full_name: string;
   context: string;
+
+  // range/view-facing rank (official or derived later)
+  rank: number | null;
+
   metrics: BpViewRosterMetricCell[];
   below_target_count: number;
 };

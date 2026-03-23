@@ -27,8 +27,6 @@ type Params = {
   kpis: KpiCfg[];
   rubricByKpi: Map<string, RubricRow[]>;
   orgLabelsById: Map<string, string>;
-
-  // KPI override layer (tech-view style injection)
   kpiOverrides?: Record<string, Map<string, number | null>>;
 };
 
@@ -39,10 +37,7 @@ function formatValue(value: number | null): string | null {
   return value.toFixed(2);
 }
 
-function resolveBand(
-  value: number | null,
-  rubric?: RubricRow[]
-): BandKey {
+function resolveBand(value: number | null, rubric?: RubricRow[]): BandKey {
   if (value == null || !rubric?.length) return "NO_DATA" as BandKey;
 
   for (const r of rubric) {
@@ -57,12 +52,95 @@ function resolveBand(
   return "NO_DATA" as BandKey;
 }
 
-function extractFromFact(fact: FactRow, kpiKey: string): number | null {
-  const raw = fact?.[kpiKey];
-  if (raw == null) return null;
+function parseRawFactValue(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
 
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object"
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof value === "object") {
+    return value as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+function extractFromFact(fact: FactRow, kpiKey: string): number | null {
+  if (!fact) return null;
+
+  const directRaw = fact?.[kpiKey];
+  if (directRaw != null) {
+    const directNum = Number(directRaw);
+    if (Number.isFinite(directNum)) return directNum;
+  }
+
+  const raw = parseRawFactValue(fact.raw);
+  if (!raw) return null;
+
+  const rawFieldMap: Record<string, string[]> = {
+    tnps: ["tNPS Rate", "tnps", "tnps_score", "tNPS"],
+    tnps_score: ["tNPS Rate", "tnps_score", "tnps", "tNPS"],
+
+    ftr_rate: ["FTR%", "ftr_rate", "FTR Rate"],
+
+    tool_usage: ["ToolUsage", "Tool Usage", "tool_usage", "tool_usage_rate"],
+    tool_usage_rate: ["ToolUsage", "Tool Usage", "tool_usage_rate", "tool_usage"],
+
+    pure_pass: ["PHT Pure Pass%", "pure_pass", "pure_pass_rate", "pht_pure_pass_rate"],
+    pure_pass_rate: ["PHT Pure Pass%", "pure_pass_rate", "pure_pass", "pht_pure_pass_rate"],
+    pht_pure_pass_rate: ["PHT Pure Pass%", "pht_pure_pass_rate", "pure_pass_rate", "pure_pass"],
+
+    contact_48hr: [
+      "48Hr Contact Rate%",
+      "contact_48hr",
+      "contact_48hr_rate",
+      "callback_rate_48hr",
+    ],
+    contact_48hr_rate: [
+      "48Hr Contact Rate%",
+      "contact_48hr_rate",
+      "contact_48hr",
+      "callback_rate_48hr",
+    ],
+    callback_rate_48hr: [
+      "48Hr Contact Rate%",
+      "callback_rate_48hr",
+      "contact_48hr_rate",
+      "contact_48hr",
+    ],
+
+    repeat: ["Repeat Rate%", "repeat", "repeat_rate"],
+    repeat_rate: ["Repeat Rate%", "repeat_rate", "repeat"],
+
+    rework: ["Rework Rate%", "rework", "rework_rate"],
+    rework_rate: ["Rework Rate%", "rework_rate", "rework"],
+
+    soi: ["SOI Rate%", "soi", "soi_rate"],
+    soi_rate: ["SOI Rate%", "soi_rate", "soi"],
+
+    met: ["MetRate", "met", "met_rate"],
+    met_rate: ["MetRate", "met_rate", "met"],
+  };
+
+  const candidateKeys = rawFieldMap[kpiKey] ?? [kpiKey];
+
+  for (const candidateKey of candidateKeys) {
+    const value = raw[candidateKey];
+    if (value == null) continue;
+
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+
+  return null;
 }
 
 export function buildBpRosterRows(params: Params): BpViewRosterRow[] {
@@ -130,13 +208,16 @@ export function buildBpRosterRows(params: Params): BpViewRosterRow[] {
 
     const orgLabel =
       orgLabelsById.get(String(assignment.pc_org_id ?? "")) ??
-      assignment.pc_org_id;
+      String(assignment.pc_org_id ?? "");
+
+    const resolvedFullName = String(person?.full_name ?? "Unknown");
+    const fullNameWithTechId = `${resolvedFullName} • ${techId}`;
 
     rows.push({
       person_id: String(assignment.person_id ?? ""),
       tech_id: techId,
-      full_name: person?.full_name ?? "Unknown",
-      context: orgLabel ?? "",
+      full_name: fullNameWithTechId,
+      context: orgLabel,
       rank: null,
       metrics,
       below_target_count: belowTargetCount,

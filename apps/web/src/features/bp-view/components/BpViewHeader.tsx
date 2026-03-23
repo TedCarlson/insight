@@ -1,25 +1,43 @@
 "use client";
 
+import { useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { BpRangeKey, BpViewHeaderData } from "../lib/bpView.types";
+
+function normalizeRange(value: string | null | undefined): BpRangeKey {
+  const upper = String(value ?? "FM").toUpperCase();
+  if (upper === "3FM") return "3FM";
+  if (upper === "12FM") return "12FM";
+  return "FM";
+}
+
+function InlineSpinner() {
+  return (
+    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+  );
+}
 
 function RangeChip(props: {
   label: string;
   active?: boolean;
+  pending?: boolean;
   onClick?: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={props.onClick}
+      disabled={props.pending}
       className={[
-        "rounded-xl border px-3 py-2 text-xs font-medium transition",
+        "flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition active:scale-[0.98]",
         props.active
           ? "border-[var(--to-accent)] bg-[color-mix(in_oklab,var(--to-accent)_10%,white)] text-foreground"
           : "bg-background text-muted-foreground hover:bg-muted/30",
+        props.pending ? "opacity-90" : "",
       ].join(" ")}
     >
-      {props.label}
+      {props.pending ? <InlineSpinner /> : null}
+      <span>{props.label}</span>
     </button>
   );
 }
@@ -61,17 +79,43 @@ export default function BpViewHeader(props: {
   header: BpViewHeaderData;
 }) {
   const { header } = props;
+
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [isPending, startTransition] = useTransition();
+  const [pendingRange, setPendingRange] = useState<BpRangeKey | null>(null);
+
+  const activeRangeFromUrl = normalizeRange(searchParams.get("range"));
+  const optimisticRange =
+    isPending && pendingRange ? pendingRange : activeRangeFromUrl;
 
   function setRange(next: BpRangeKey) {
-    const qs = new URLSearchParams(searchParams.toString());
-    qs.set("range", next);
-    router.replace(`/bp/view?${qs.toString()}`);
+    if (next === activeRangeFromUrl) return;
+
+    setPendingRange(next);
+
+    startTransition(() => {
+      const qs = new URLSearchParams(searchParams.toString());
+
+      if (next === "FM") {
+        qs.delete("range");
+      } else {
+        qs.set("range", next);
+      }
+
+      const href = qs.toString() ? `/bp/view?${qs.toString()}` : "/bp/view";
+      router.push(href);
+      router.refresh();
+    });
   }
 
   return (
-    <section className="rounded-2xl border bg-card p-4">
+    <section
+      className={[
+        "rounded-2xl border bg-card p-4 transition",
+        isPending ? "opacity-90" : "",
+      ].join(" ")}
+    >
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="space-y-1">
           <div className="text-xl font-semibold">BP View</div>
@@ -105,17 +149,20 @@ export default function BpViewHeader(props: {
           <div className="flex flex-wrap gap-2">
             <RangeChip
               label="Current"
-              active={header.range_label === "FM"}
+              active={optimisticRange === "FM"}
+              pending={isPending && pendingRange === "FM"}
               onClick={() => setRange("FM")}
             />
             <RangeChip
               label="3 FM"
-              active={header.range_label === "3FM"}
+              active={optimisticRange === "3FM"}
+              pending={isPending && pendingRange === "3FM"}
               onClick={() => setRange("3FM")}
             />
             <RangeChip
               label="12 FM"
-              active={header.range_label === "12FM"}
+              active={optimisticRange === "12FM"}
+              pending={isPending && pendingRange === "12FM"}
               onClick={() => setRange("12FM")}
             />
           </div>

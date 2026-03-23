@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import {
   avgOrNull,
+  computePct,
   fetchMetricRawRows,
   getFinalRowsPerMonth,
   groupRowsByTech,
@@ -9,7 +10,7 @@ import {
   type RangeKey,
 } from "./shared";
 
-export async function resolveBpFtrByTech(args: {
+export async function resolveBpRepeatByTech(args: {
   admin?: ReturnType<typeof supabaseAdmin>;
   techIds: string[];
   pcOrgIds: string[];
@@ -37,41 +38,40 @@ export async function resolveBpFtrByTech(args: {
     const techRows = rowsByTech.get(techId) ?? [];
     const selectedMonths = getFinalRowsPerMonth(techRows).slice(0, monthLimit);
 
-    let totalContactJobs = 0;
-    let totalFailJobs = 0;
+    let totalJobs = 0;
+    let totalRepeats = 0;
     const fallbackRates: number[] = [];
 
     for (const month of selectedMonths) {
       const raw = month.row.raw;
 
-      const contactJobs = pickNum(raw, [
-        "Total FTR/Contact Jobs",
-        "total_ftr_contact_jobs",
-        "ftr_contact_jobs",
+      const jobs = pickNum(raw, [
+        "Repeat Eligible Jobs",
+        "repeat_eligible_jobs",
+        "Repeat Jobs",
+        "repeat_jobs",
+        "Total Jobs",
+        "total_jobs",
       ]);
 
-      const failJobs = pickNum(raw, [
-        "FTRFailJobs",
-        "ftr_fail_jobs",
-        "FTR Fail Jobs",
+      const repeats = pickNum(raw, [
+        "Repeat Jobs Count",
+        "repeat_jobs_count",
+        "repeat_count",
+        "Repeat Count",
       ]);
 
-      if (contactJobs != null && contactJobs > 0) {
-        totalContactJobs += contactJobs;
-        totalFailJobs += failJobs ?? 0;
-        continue;
-      }
-
-      if (failJobs != null && failJobs > 0) {
-        totalFailJobs += failJobs;
-        fallbackRates.push(0);
+      if (jobs != null && jobs > 0) {
+        totalJobs += jobs;
+        totalRepeats += repeats ?? 0;
         continue;
       }
 
       const fallback = pickNum(raw, [
-        "ftr_rate",
-        "FTR Rate",
-        "FTR %",
+        "Repeat Rate%",
+        "Repeat Rate %",
+        "repeat_rate",
+        "repeat",
       ]);
 
       if (fallback != null && Number.isFinite(fallback)) {
@@ -81,8 +81,8 @@ export async function resolveBpFtrByTech(args: {
 
     let finalValue: number | null = null;
 
-    if (totalContactJobs > 0) {
-      finalValue = 100 * (1 - totalFailJobs / totalContactJobs);
+    if (totalJobs > 0) {
+      finalValue = computePct(totalJobs, totalRepeats);
     } else {
       finalValue = avgOrNull(fallbackRates);
     }

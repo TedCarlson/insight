@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import {
   avgOrNull,
+  computeTnpsScore,
   fetchMetricRawRows,
   getFinalRowsPerMonth,
   groupRowsByTech,
@@ -9,7 +10,7 @@ import {
   type RangeKey,
 } from "./shared";
 
-export async function resolveBpFtrByTech(args: {
+export async function resolveBpTnpsByTech(args: {
   admin?: ReturnType<typeof supabaseAdmin>;
   techIds: string[];
   pcOrgIds: string[];
@@ -37,41 +38,42 @@ export async function resolveBpFtrByTech(args: {
     const techRows = rowsByTech.get(techId) ?? [];
     const selectedMonths = getFinalRowsPerMonth(techRows).slice(0, monthLimit);
 
-    let totalContactJobs = 0;
-    let totalFailJobs = 0;
+    let totalSurveys = 0;
+    let totalPromoters = 0;
+    let totalDetractors = 0;
     const fallbackRates: number[] = [];
 
     for (const month of selectedMonths) {
       const raw = month.row.raw;
 
-      const contactJobs = pickNum(raw, [
-        "Total FTR/Contact Jobs",
-        "total_ftr_contact_jobs",
-        "ftr_contact_jobs",
+      const surveys = pickNum(raw, [
+        "tNPS Surveys",
+        "tnps_surveys",
+        "tNPS_Surveys",
+        "Surveys",
       ]);
 
-      const failJobs = pickNum(raw, [
-        "FTRFailJobs",
-        "ftr_fail_jobs",
-        "FTR Fail Jobs",
+      const promoters = pickNum(raw, [
+        "Promoters",
+        "tnps_promoters",
       ]);
 
-      if (contactJobs != null && contactJobs > 0) {
-        totalContactJobs += contactJobs;
-        totalFailJobs += failJobs ?? 0;
-        continue;
-      }
+      const detractors = pickNum(raw, [
+        "Detractors",
+        "tnps_detractors",
+      ]);
 
-      if (failJobs != null && failJobs > 0) {
-        totalFailJobs += failJobs;
-        fallbackRates.push(0);
+      if (surveys != null && surveys > 0) {
+        totalSurveys += surveys;
+        totalPromoters += promoters ?? 0;
+        totalDetractors += detractors ?? 0;
         continue;
       }
 
       const fallback = pickNum(raw, [
-        "ftr_rate",
-        "FTR Rate",
-        "FTR %",
+        "tnps",
+        "tnps_score",
+        "tNPS",
       ]);
 
       if (fallback != null && Number.isFinite(fallback)) {
@@ -81,8 +83,12 @@ export async function resolveBpFtrByTech(args: {
 
     let finalValue: number | null = null;
 
-    if (totalContactJobs > 0) {
-      finalValue = 100 * (1 - totalFailJobs / totalContactJobs);
+    if (totalSurveys > 0) {
+      finalValue = computeTnpsScore(
+        totalSurveys,
+        totalPromoters,
+        totalDetractors
+      );
     } else {
       finalValue = avgOrNull(fallbackRates);
     }

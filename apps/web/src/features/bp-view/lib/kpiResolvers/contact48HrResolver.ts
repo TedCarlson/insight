@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import {
   avgOrNull,
+  computePct,
   fetchMetricRawRows,
   getFinalRowsPerMonth,
   groupRowsByTech,
@@ -9,7 +10,7 @@ import {
   type RangeKey,
 } from "./shared";
 
-export async function resolveBpFtrByTech(args: {
+export async function resolveBp48HrByTech(args: {
   admin?: ReturnType<typeof supabaseAdmin>;
   techIds: string[];
   pcOrgIds: string[];
@@ -37,41 +38,43 @@ export async function resolveBpFtrByTech(args: {
     const techRows = rowsByTech.get(techId) ?? [];
     const selectedMonths = getFinalRowsPerMonth(techRows).slice(0, monthLimit);
 
-    let totalContactJobs = 0;
-    let totalFailJobs = 0;
+    let totalEligible = 0;
+    let totalContacts = 0;
     const fallbackRates: number[] = [];
 
     for (const month of selectedMonths) {
       const raw = month.row.raw;
 
-      const contactJobs = pickNum(raw, [
-        "Total FTR/Contact Jobs",
-        "total_ftr_contact_jobs",
-        "ftr_contact_jobs",
+      const eligible = pickNum(raw, [
+        "48Hr Eligible Orders",
+        "48hr_eligible_orders",
+        "48hr eligible",
+        "callback_48hr_eligible",
+        "Total Orders",
+        "total_orders",
       ]);
 
-      const failJobs = pickNum(raw, [
-        "FTRFailJobs",
-        "ftr_fail_jobs",
-        "FTR Fail Jobs",
+      const contacts = pickNum(raw, [
+        "48Hr Contact Orders",
+        "48HrContactOrders",
+        "contact_orders_48hr",
+        "callback_48hr_contacts",
       ]);
 
-      if (contactJobs != null && contactJobs > 0) {
-        totalContactJobs += contactJobs;
-        totalFailJobs += failJobs ?? 0;
-        continue;
-      }
-
-      if (failJobs != null && failJobs > 0) {
-        totalFailJobs += failJobs;
-        fallbackRates.push(0);
+      if (eligible != null && eligible > 0) {
+        totalEligible += eligible;
+        totalContacts += contacts ?? 0;
         continue;
       }
 
       const fallback = pickNum(raw, [
-        "ftr_rate",
-        "FTR Rate",
-        "FTR %",
+        "48Hr Contact Rate%",
+        "48Hr Contact Rate %",
+        "48HrContactRate",
+        "contact_rate_48hr",
+        "contact_48hr_rate",
+        "contact_48hr",
+        "callback_rate_48hr",
       ]);
 
       if (fallback != null && Number.isFinite(fallback)) {
@@ -81,8 +84,8 @@ export async function resolveBpFtrByTech(args: {
 
     let finalValue: number | null = null;
 
-    if (totalContactJobs > 0) {
-      finalValue = 100 * (1 - totalFailJobs / totalContactJobs);
+    if (totalEligible > 0) {
+      finalValue = computePct(totalEligible, totalContacts);
     } else {
       finalValue = avgOrNull(fallbackRates);
     }

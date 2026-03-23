@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import {
   avgOrNull,
+  computePct,
   fetchMetricRawRows,
   getFinalRowsPerMonth,
   groupRowsByTech,
@@ -9,7 +10,7 @@ import {
   type RangeKey,
 } from "./shared";
 
-export async function resolveBpFtrByTech(args: {
+export async function resolveBpPurePassByTech(args: {
   admin?: ReturnType<typeof supabaseAdmin>;
   techIds: string[];
   pcOrgIds: string[];
@@ -37,41 +38,38 @@ export async function resolveBpFtrByTech(args: {
     const techRows = rowsByTech.get(techId) ?? [];
     const selectedMonths = getFinalRowsPerMonth(techRows).slice(0, monthLimit);
 
-    let totalContactJobs = 0;
-    let totalFailJobs = 0;
+    let totalJobs = 0;
+    let totalPurePass = 0;
     const fallbackRates: number[] = [];
 
     for (const month of selectedMonths) {
       const raw = month.row.raw;
 
-      const contactJobs = pickNum(raw, [
-        "Total FTR/Contact Jobs",
-        "total_ftr_contact_jobs",
-        "ftr_contact_jobs",
+      const jobs = pickNum(raw, [
+        "PHT Jobs",
+        "pht_jobs",
+        "PHT_Jobs",
       ]);
 
-      const failJobs = pickNum(raw, [
-        "FTRFailJobs",
-        "ftr_fail_jobs",
-        "FTR Fail Jobs",
+      const purePass = pickNum(raw, [
+        "PHT Pure Pass",
+        "pht_pure_pass",
+        "PHT_Pure_Pass",
       ]);
 
-      if (contactJobs != null && contactJobs > 0) {
-        totalContactJobs += contactJobs;
-        totalFailJobs += failJobs ?? 0;
-        continue;
-      }
-
-      if (failJobs != null && failJobs > 0) {
-        totalFailJobs += failJobs;
-        fallbackRates.push(0);
+      if (jobs != null && jobs > 0) {
+        totalJobs += jobs;
+        totalPurePass += purePass ?? 0;
         continue;
       }
 
       const fallback = pickNum(raw, [
-        "ftr_rate",
-        "FTR Rate",
-        "FTR %",
+        "PHT Pure Pass%",
+        "PHT Pure Pass %",
+        "pht_pure_pass_pct",
+        "pure_pass_rate",
+        "pure_pass",
+        "pht_pure_pass_rate",
       ]);
 
       if (fallback != null && Number.isFinite(fallback)) {
@@ -81,8 +79,8 @@ export async function resolveBpFtrByTech(args: {
 
     let finalValue: number | null = null;
 
-    if (totalContactJobs > 0) {
-      finalValue = 100 * (1 - totalFailJobs / totalContactJobs);
+    if (totalJobs > 0) {
+      finalValue = computePct(totalJobs, totalPurePass);
     } else {
       finalValue = avgOrNull(fallbackRates);
     }

@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import {
   avgOrNull,
+  computePct,
   fetchMetricRawRows,
   getFinalRowsPerMonth,
   groupRowsByTech,
@@ -9,7 +10,7 @@ import {
   type RangeKey,
 } from "./shared";
 
-export async function resolveBpFtrByTech(args: {
+export async function resolveBpReworkByTech(args: {
   admin?: ReturnType<typeof supabaseAdmin>;
   techIds: string[];
   pcOrgIds: string[];
@@ -37,41 +38,39 @@ export async function resolveBpFtrByTech(args: {
     const techRows = rowsByTech.get(techId) ?? [];
     const selectedMonths = getFinalRowsPerMonth(techRows).slice(0, monthLimit);
 
-    let totalContactJobs = 0;
-    let totalFailJobs = 0;
+    let totalAppts = 0;
+    let totalRework = 0;
     const fallbackRates: number[] = [];
 
     for (const month of selectedMonths) {
       const raw = month.row.raw;
 
-      const contactJobs = pickNum(raw, [
-        "Total FTR/Contact Jobs",
-        "total_ftr_contact_jobs",
-        "ftr_contact_jobs",
+      const totalAppointments = pickNum(raw, [
+        "TotalAppts",
+        "Total Appts",
+        "total_appts",
+        "Total Appointments",
+        "total_appointments",
       ]);
 
-      const failJobs = pickNum(raw, [
-        "FTRFailJobs",
-        "ftr_fail_jobs",
-        "FTR Fail Jobs",
+      const reworkCount = pickNum(raw, [
+        "Rework Count",
+        "rework_count",
+        "ReworkCount",
       ]);
 
-      if (contactJobs != null && contactJobs > 0) {
-        totalContactJobs += contactJobs;
-        totalFailJobs += failJobs ?? 0;
-        continue;
-      }
-
-      if (failJobs != null && failJobs > 0) {
-        totalFailJobs += failJobs;
-        fallbackRates.push(0);
+      if (totalAppointments != null && totalAppointments > 0) {
+        totalAppts += totalAppointments;
+        totalRework += reworkCount ?? 0;
         continue;
       }
 
       const fallback = pickNum(raw, [
-        "ftr_rate",
-        "FTR Rate",
-        "FTR %",
+        "Rework Rate%",
+        "Rework Rate %",
+        "rework_rate",
+        "rework_rate_pct",
+        "rework",
       ]);
 
       if (fallback != null && Number.isFinite(fallback)) {
@@ -81,8 +80,8 @@ export async function resolveBpFtrByTech(args: {
 
     let finalValue: number | null = null;
 
-    if (totalContactJobs > 0) {
-      finalValue = 100 * (1 - totalFailJobs / totalContactJobs);
+    if (totalAppts > 0) {
+      finalValue = computePct(totalAppts, totalRework);
     } else {
       finalValue = avgOrNull(fallbackRates);
     }

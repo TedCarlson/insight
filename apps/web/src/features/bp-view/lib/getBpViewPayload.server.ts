@@ -1,17 +1,13 @@
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import type { BandKey } from "@/features/metrics/scorecard/lib/scorecard.types";
 import type { BpViewPayload } from "./bpView.types";
-import {
-  isoToday,
-  latestFactByTech,
-  monthWindowStart,
-} from "./bpViewMetricHelpers";
+import { isoToday } from "./bpViewMetricHelpers";
 import { resolveBpScope } from "./resolveBpScope.server";
 import { buildBpRosterRows } from "./buildBpRosterRows";
 import { buildBpKpiStrip } from "./buildBpKpiStrip";
 import { buildBpRiskStrip } from "./buildBpRiskStrip";
 
-type RangeKey = "FM" | "3FM" | "12FM";
+export type RangeKey = "FM" | "3FM" | "12FM";
 
 type Args = {
   range: RangeKey;
@@ -37,62 +33,41 @@ type FactRow = {
   [key: string]: unknown;
 };
 
-/**
- * 🔥 KPI RESOLVER (PHASE 1 — FTR ONLY)
- * This mirrors Tech View math pattern (not snapshot-based)
- */
-async function resolveFtrByTech(params: {
-  techIds: string[];
-  pcOrgIds: string[];
-  range: RangeKey;
-}) {
-  const admin = supabaseAdmin();
+function numOrNull(x: unknown): number | null {
+  const n = typeof x === "string" ? Number(x) : x;
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
 
-  const { data } = await admin
-    .from("metrics_raw_row")
-    .select("tech_id,fiscal_end_date,metric_date,batch_id,raw")
-    .in("tech_id", params.techIds)
-    .in("pc_org_id", params.pcOrgIds)
-    .order("fiscal_end_date", { ascending: false })
-    .order("metric_date", { ascending: false });
+function dedupeLatestRowPerFiscalMonth(rows: FactRow[]): FactRow[] {
+  const byFiscal = new Map<string, FactRow>();
 
-  const map = new Map<string, number | null>();
+  for (const row of rows) {
+    const fiscal = String(row?.fiscal_end_date ?? "").slice(0, 10);
+    if (!fiscal) continue;
 
-  for (const row of data ?? []) {
-    const techId = String(row.tech_id ?? "");
-    if (!techId) continue;
-
-    let raw: any = row.raw;
-    if (typeof raw === "string") {
-      try {
-        raw = JSON.parse(raw);
-      } catch {
-        raw = {};
-      }
-    }
-
-    const contact =
-      Number(
-        raw?.["Total FTR/Contact Jobs"] ??
-          raw?.["total_ftr_contact_jobs"] ??
-          raw?.["ftr_contact_jobs"]
-      ) || 0;
-
-    const fails =
-      Number(
-        raw?.["FTRFailJobs"] ??
-          raw?.["ftr_fail_jobs"] ??
-          raw?.["FTR Fail Jobs"]
-      ) || 0;
-
-    if (contact > 0) {
-      map.set(techId, 100 * (1 - fails / contact));
-    } else {
-      map.set(techId, null);
+    if (!byFiscal.has(fiscal)) {
+      byFiscal.set(fiscal, row);
     }
   }
 
-  return map;
+  return Array.from(byFiscal.values());
+}
+
+function monthsToTake(range: RangeKey): number {
+  if (range === "3FM") return 3;
+  if (range === "12FM") return 12;
+  return 1;
+}
+
+function averageForKpi(rows: FactRow[], kpiKey: string): number | null {
+  const nums = rows
+    .map((r) => numOrNull(r?.[kpiKey]))
+    .filter((v): v is number => v !== null);
+
+  if (!nums.length) return null;
+
+  const sum = nums.reduce((acc, n) => acc + n, 0);
+  return sum / nums.length;
 }
 
 async function loadViewKpiConfig(
@@ -108,14 +83,24 @@ async function loadViewKpiConfig(
     { customer_label?: string | null; label?: string | null }
   >();
 
-  for (const row of (defRows ?? []) as any[]) {
+  for (const row of (defRows ?? []) as Array<{
+    kpi_key?: unknown;
+    customer_label?: unknown;
+    label?: unknown;
+  }>) {
     const k = String(row?.kpi_key ?? "").trim();
-    if (k) defByKey.set(k, row);
+    if (!k) continue;
+
+    defByKey.set(k, {
+      customer_label:
+        row?.customer_label == null ? null : String(row.customer_label),
+      label: row?.label == null ? null : String(row.label),
+    });
   }
 
   const out: KpiCfg[] = [];
 
-  for (const row of (classRows ?? []) as any[]) {
+  for (const row of (classRows ?? []) as Array<Record<string, unknown>>) {
     const kpi_key = String(row?.kpi_key ?? "").trim();
     if (!kpi_key) continue;
 
@@ -127,7 +112,7 @@ async function loadViewKpiConfig(
     const def = defByKey.get(kpi_key);
 
     const label =
-      (row?.label && String(row.label).trim()) ||
+      (row.label && String(row.label).trim()) ||
       (def?.customer_label && String(def.customer_label).trim()) ||
       (def?.label && String(def.label).trim()) ||
       kpi_key;
@@ -159,7 +144,12 @@ async function loadRubrics(
     .eq("is_active", true)
     .in("kpi_key", kpiKeys);
 
-  for (const row of (data ?? []) as any[]) {
+  for (const row of (data ?? []) as Array<{
+    kpi_key: string;
+    band_key: BandKey;
+    min_value: number | null;
+    max_value: number | null;
+  }>) {
     const key = String(row.kpi_key);
     const arr = out.get(key) ?? [];
     arr.push({
@@ -174,9 +164,49 @@ async function loadRubrics(
   return out;
 }
 
-export async function getBpViewPayload(
-  args: Args
-): Promise<BpViewPayload> {
+function buildRangedFactByTech(args: {
+  factRows: FactRow[];
+  techIds: string[];
+  kpis: KpiCfg[];
+  range: RangeKey;
+}): Map<string, FactRow> {
+  const { factRows, techIds, kpis, range } = args;
+
+  const rowsByTech = new Map<string, FactRow[]>();
+
+  for (const row of factRows) {
+    const techId = String(row.tech_id ?? "");
+    if (!techId) continue;
+
+    const arr = rowsByTech.get(techId) ?? [];
+    arr.push(row);
+    rowsByTech.set(techId, arr);
+  }
+
+  const factByTech = new Map<string, FactRow>();
+
+  for (const techId of techIds) {
+    const rows = rowsByTech.get(techId) ?? [];
+    const latestRowsByMonth = dedupeLatestRowPerFiscalMonth(rows);
+    const selectedRows = latestRowsByMonth.slice(0, monthsToTake(range));
+
+    const syntheticFact: FactRow = {
+      tech_id: techId,
+      metric_date: selectedRows[0]?.metric_date ?? null,
+      fiscal_end_date: selectedRows[0]?.fiscal_end_date ?? null,
+    };
+
+    for (const kpi of kpis) {
+      syntheticFact[kpi.kpi_key] = averageForKpi(selectedRows, kpi.kpi_key);
+    }
+
+    factByTech.set(techId, syntheticFact);
+  }
+
+  return factByTech;
+}
+
+export async function getBpViewPayload(args: Args): Promise<BpViewPayload> {
   const admin = supabaseAdmin();
 
   const [scope, p4pConfig] = await Promise.all([
@@ -205,28 +235,23 @@ export async function getBpViewPayload(
     )
   );
 
-  /**
-   * 🔥 REAL KPI INJECTION (FTR)
-   */
-  const ftrByTech = await resolveFtrByTech({
-    techIds,
-    pcOrgIds,
-    range: args.range,
-  });
-
   const factRes = techIds.length
     ? await admin
         .from("metrics_tech_fact_day")
         .select("*")
         .in("pc_org_id", pcOrgIds)
-        .gte("fiscal_end_date", monthWindowStart(args.range))
         .in("tech_id", techIds)
+        .order("fiscal_end_date", { ascending: false })
         .order("metric_date", { ascending: false })
+        .limit(10000)
     : { data: [] as FactRow[] };
 
-  const factByTech = latestFactByTech(
-    (factRes.data ?? []) as FactRow[]
-  );
+  const factByTech = buildRangedFactByTech({
+    factRows: (factRes.data ?? []) as FactRow[],
+    techIds,
+    kpis: p4pConfig,
+    range: args.range,
+  });
 
   const roster_rows = buildBpRosterRows({
     scopedAssignments: scope.scoped_assignments,
@@ -235,13 +260,6 @@ export async function getBpViewPayload(
     kpis: p4pConfig,
     rubricByKpi,
     orgLabelsById: scope.org_labels_by_id,
-
-    /**
-     * 🔥 KPI OVERRIDES (ENGINE FOUNDATION)
-     */
-    kpiOverrides: {
-      ftr_rate: ftrByTech,
-    },
   });
 
   const kpi_strip = buildBpKpiStrip({
@@ -271,10 +289,8 @@ export async function getBpViewPayload(
         : scope.org_labels_by_id.get(scope.selected_pc_org_id) ??
           scope.selected_pc_org_id
       : scope.company_label
-      ? `${scope.company_label} • ${orgCount} org${
-          orgCount === 1 ? "" : "s"
-        }`
-      : `${orgCount} org${orgCount === 1 ? "" : "s"}`;
+        ? `${scope.company_label} • ${orgCount} org${orgCount === 1 ? "" : "s"}`
+        : `${orgCount} org${orgCount === 1 ? "" : "s"}`;
 
   return {
     header: {

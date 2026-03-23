@@ -1,4 +1,3 @@
-// Replace the entire file:
 // apps/web/src/components/TechRouteGate.tsx
 
 "use client";
@@ -11,7 +10,12 @@ import { useAccessPass } from "@/state/access";
 import { isTechExperienceUser } from "@/shared/access/access";
 
 function isAllowedTechPath(pathname: string) {
-  return pathname === "/tech" || pathname.startsWith("/tech/");
+  return (
+    pathname === "/tech" ||
+    pathname.startsWith("/tech/") ||
+    pathname === "/field-log" ||
+    pathname.startsWith("/field-log/")
+  );
 }
 
 export default function TechRouteGate({ children }: { children: React.ReactNode }) {

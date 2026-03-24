@@ -31,6 +31,14 @@ export function resolveCoreNavContext(args: {
     };
   }
 
+  if (surfaceFamily === "ITG_SUPERVISOR") {
+    return {
+      role: "ITG_SUPERVISOR",
+      surfaceFamily,
+      useScopedRail: true,
+    };
+  }
+
   if (surfaceFamily === "BP") {
     return {
       role: "BP_SUPERVISOR",

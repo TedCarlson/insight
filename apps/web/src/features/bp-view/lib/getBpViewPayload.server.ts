@@ -7,8 +7,11 @@ import { buildBpRosterRows } from "./buildBpRosterRows";
 import { buildBpKpiStrip } from "./buildBpKpiStrip";
 import { buildBpRiskStrip } from "./buildBpRiskStrip";
 import { resolveBpWorkMixByTech } from "./kpiResolvers/workMixResolver";
-
-export type RangeKey = "FM" | "3FM" | "12FM";
+import {
+  resolveAllBpKpis,
+  type RangeKey,
+} from "./bpViewResolverRegistry";
+import { sortBpRosterRows } from "./sortBpRosterRows";
 
 type Args = {
   range: RangeKey;
@@ -26,60 +29,6 @@ type RubricRow = {
   min_value: number | null;
   max_value: number | null;
 };
-
-type FactRow = {
-  tech_id: string | null;
-  metric_date: string | null;
-  fiscal_end_date: string | null;
-  raw?: unknown;
-  [key: string]: unknown;
-};
-
-function numOrNull(x: unknown): number | null {
-  const n = typeof x === "string" ? Number(x) : x;
-  return typeof n === "number" && Number.isFinite(n) ? n : null;
-}
-
-function dedupeLatestRowPerFiscalMonth(rows: FactRow[]): FactRow[] {
-  const byFiscal = new Map<string, FactRow>();
-
-  for (const row of rows) {
-    const fiscal = String(row?.fiscal_end_date ?? "").slice(0, 10);
-    if (!fiscal) continue;
-
-    const existing = byFiscal.get(fiscal);
-    if (!existing) {
-      byFiscal.set(fiscal, row);
-      continue;
-    }
-
-    const existingTs = new Date(String(existing.metric_date ?? "")).getTime();
-    const currentTs = new Date(String(row.metric_date ?? "")).getTime();
-
-    if (Number.isFinite(currentTs) && (!Number.isFinite(existingTs) || currentTs > existingTs)) {
-      byFiscal.set(fiscal, row);
-    }
-  }
-
-  return Array.from(byFiscal.values());
-}
-
-function monthsToTake(range: RangeKey): number {
-  if (range === "3FM") return 3;
-  if (range === "12FM") return 12;
-  return 1;
-}
-
-function averageForKpi(rows: FactRow[], kpiKey: string): number | null {
-  const nums = rows
-    .map((r) => numOrNull(r?.[kpiKey]))
-    .filter((v): v is number => v !== null);
-
-  if (!nums.length) return null;
-
-  const sum = nums.reduce((acc, n) => acc + n, 0);
-  return sum / nums.length;
-}
 
 async function loadViewKpiConfig(
   admin: ReturnType<typeof supabaseAdmin>
@@ -175,48 +124,6 @@ async function loadRubrics(
   return out;
 }
 
-function buildRangedFactByTech(args: {
-  factRows: FactRow[];
-  techIds: string[];
-  kpis: KpiCfg[];
-  range: RangeKey;
-}): Map<string, FactRow> {
-  const { factRows, techIds, kpis, range } = args;
-
-  const rowsByTech = new Map<string, FactRow[]>();
-
-  for (const row of factRows) {
-    const techId = String(row.tech_id ?? "");
-    if (!techId) continue;
-
-    const arr = rowsByTech.get(techId) ?? [];
-    arr.push(row);
-    rowsByTech.set(techId, arr);
-  }
-
-  const factByTech = new Map<string, FactRow>();
-
-  for (const techId of techIds) {
-    const rows = rowsByTech.get(techId) ?? [];
-    const latestRowsByMonth = dedupeLatestRowPerFiscalMonth(rows);
-    const selectedRows = latestRowsByMonth.slice(0, monthsToTake(range));
-
-    const syntheticFact: FactRow = {
-      tech_id: techId,
-      metric_date: selectedRows[0]?.metric_date ?? null,
-      fiscal_end_date: selectedRows[0]?.fiscal_end_date ?? null,
-    };
-
-    for (const kpi of kpis) {
-      syntheticFact[kpi.kpi_key] = averageForKpi(selectedRows, kpi.kpi_key);
-    }
-
-    factByTech.set(techId, syntheticFact);
-  }
-
-  return factByTech;
-}
-
 function pct(part: number, total: number): number | null {
   if (total <= 0) return null;
   return (100 * part) / total;
@@ -275,43 +182,38 @@ export async function getBpViewPayload(args: Args): Promise<BpViewPayload> {
     )
   );
 
-  const factRes = techIds.length
-    ? await admin
-        .from("metrics_tech_fact_day")
-        .select("*")
-        .in("pc_org_id", pcOrgIds)
-        .in("tech_id", techIds)
-        .order("fiscal_end_date", { ascending: false })
-        .order("metric_date", { ascending: false })
-        .limit(10000)
-    : { data: [] as FactRow[] };
+  const [kpiOverrides, workMixByTech] = await Promise.all([
+    resolveAllBpKpis({
+      admin,
+      techIds,
+      pcOrgIds,
+      range: args.range,
+    }),
+    resolveBpWorkMixByTech({
+      admin,
+      techIds,
+      pcOrgIds,
+      range: args.range,
+    }),
+  ]);
 
-  const factRows = (factRes.data ?? []) as FactRow[];
+  const rosterColumns = p4pConfig.map((k) => ({
+    kpi_key: k.kpi_key,
+    label: k.label,
+  }));
 
-  const factByTech = buildRangedFactByTech({
-    factRows,
-    techIds,
-    kpis: p4pConfig,
-    range: args.range,
-  });
-
-  // ✅ CRITICAL FIX (THIS WAS MISSING)
-  const workMixByTech = await resolveBpWorkMixByTech({
-    admin,
-    techIds,
-    pcOrgIds,
-    range: args.range,
-  });
-
-  const roster_rows = buildBpRosterRows({
+  const unsortedRosterRows = buildBpRosterRows({
     scopedAssignments: scope.scoped_assignments,
     peopleById: scope.people_by_id,
-    factByTech,
+    factByTech: new Map(),
     kpis: p4pConfig,
     rubricByKpi,
     orgLabelsById: scope.org_labels_by_id,
-    workMixByTech, // ✅ THIS IS WHY IT WAS ZERO
+    workMixByTech,
+    kpiOverrides,
   });
+
+  const roster_rows = sortBpRosterRows(unsortedRosterRows, rosterColumns);
 
   const kpi_strip = buildBpKpiStrip({
     rosterRows: roster_rows,
@@ -338,8 +240,10 @@ export async function getBpViewPayload(args: Args): Promise<BpViewPayload> {
   const scope_label =
     scope.role_label === "BP Supervisor"
       ? scope.company_label
-        ? `${scope.org_labels_by_id.get(scope.selected_pc_org_id) ??
-            scope.selected_pc_org_id} • ${scope.company_label}`
+        ? `${
+            scope.org_labels_by_id.get(scope.selected_pc_org_id) ??
+            scope.selected_pc_org_id
+          } • ${scope.company_label}`
         : scope.org_labels_by_id.get(scope.selected_pc_org_id) ??
           scope.selected_pc_org_id
       : scope.company_label
@@ -363,10 +267,7 @@ export async function getBpViewPayload(args: Args): Promise<BpViewPayload> {
     kpi_strip,
     risk_strip,
     work_mix,
-    roster_columns: p4pConfig.map((k) => ({
-      kpi_key: k.kpi_key,
-      label: k.label,
-    })),
+    roster_columns: rosterColumns,
     roster_rows,
   };
 }

@@ -6,6 +6,7 @@ import BpViewClientShell from "./BpViewClientShell";
 
 function normalizeRange(value: string | null | undefined): BpRangeKey {
   const upper = String(value ?? "FM").toUpperCase();
+  if (upper === "PREVIOUS") return "PREVIOUS";
   if (upper === "3FM") return "3FM";
   if (upper === "12FM") return "12FM";
   return "FM";

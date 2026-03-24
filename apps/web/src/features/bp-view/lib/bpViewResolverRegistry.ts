@@ -9,7 +9,10 @@ import { resolveBpRepeatByTech } from "./kpiResolvers/repeatResolver";
 import { resolveBpReworkByTech } from "./kpiResolvers/reworkResolver";
 import { resolveBpSoiByTech } from "./kpiResolvers/soiResolver";
 import { resolveBpMetByTech } from "./kpiResolvers/metResolver";
-import type { RangeKey } from "./kpiResolvers/shared";
+import {
+  resolveFiscalEndDatesForRange,
+  type RangeKey,
+} from "./kpiResolvers/shared";
 
 export type { RangeKey };
 
@@ -64,6 +67,19 @@ export async function resolveAllBpKpis(args: Args): Promise<KpiOverrideMaps> {
     return emptyOverrides();
   }
 
+  const fiscalEndDates = await resolveFiscalEndDatesForRange({
+    admin,
+    range,
+  });
+
+  const sharedArgs = {
+    admin,
+    techIds,
+    pcOrgIds,
+    range,
+    fiscalEndDates,
+  };
+
   const [
     tnpsByTech,
     ftrByTech,
@@ -75,15 +91,15 @@ export async function resolveAllBpKpis(args: Args): Promise<KpiOverrideMaps> {
     soiByTech,
     metByTech,
   ] = await Promise.all([
-    resolveBpTnpsByTech({ admin, techIds, pcOrgIds, range }),
-    resolveBpFtrByTech({ admin, techIds, pcOrgIds, range }),
-    resolveBpToolUsageByTech({ admin, techIds, pcOrgIds, range }),
-    resolveBpPurePassByTech({ admin, techIds, pcOrgIds, range }),
-    resolveBp48HrByTech({ admin, techIds, pcOrgIds, range }),
-    resolveBpRepeatByTech({ admin, techIds, pcOrgIds, range }),
-    resolveBpReworkByTech({ admin, techIds, pcOrgIds, range }),
-    resolveBpSoiByTech({ admin, techIds, pcOrgIds, range }),
-    resolveBpMetByTech({ admin, techIds, pcOrgIds, range }),
+    resolveBpTnpsByTech(sharedArgs),
+    resolveBpFtrByTech(sharedArgs),
+    resolveBpToolUsageByTech(sharedArgs),
+    resolveBpPurePassByTech(sharedArgs),
+    resolveBp48HrByTech(sharedArgs),
+    resolveBpRepeatByTech(sharedArgs),
+    resolveBpReworkByTech(sharedArgs),
+    resolveBpSoiByTech(sharedArgs),
+    resolveBpMetByTech(sharedArgs),
   ]);
 
   return {

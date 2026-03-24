@@ -27,21 +27,28 @@ function formatMetricValue(value: number | null): string {
   return value.toFixed(2);
 }
 
-/**
- * 🔥 Band styling (matches workforce)
- */
-function bandClass(band?: string | null) {
-  switch (band) {
-    case "EXCEEDS":
-    case "MEETS":
-      return "border-green-500 text-green-700 bg-green-50";
-    case "NEEDS_IMPROVEMENT":
-      return "border-amber-500 text-amber-700 bg-amber-50";
-    case "MISSES":
-      return "border-red-500 text-red-700 bg-red-50";
-    default:
-      return "border-muted text-muted-foreground";
+function bandPillClass(bandKey?: string | null) {
+  if (bandKey === "EXCEEDS") {
+    return "border-[var(--to-success)] bg-[color-mix(in_oklab,var(--to-success)_10%,white)]";
   }
+  if (bandKey === "MEETS") {
+    return "border-[var(--to-primary)] bg-[color-mix(in_oklab,var(--to-primary)_10%,white)]";
+  }
+  if (bandKey === "NEEDS_IMPROVEMENT") {
+    return "border-[var(--to-warning)] bg-[color-mix(in_oklab,var(--to-warning)_10%,white)]";
+  }
+  if (bandKey === "MISSES") {
+    return "border-[var(--to-danger)] bg-[color-mix(in_oklab,var(--to-danger)_10%,white)]";
+  }
+  return "border-[var(--to-border)] bg-muted/10";
+}
+
+function isSecondaryMetric(index: number) {
+  return index >= 3;
+}
+
+function sectionDividerClass(index: number) {
+  return index === 3 ? "border-l border-[var(--to-border)] pl-4" : "";
 }
 
 type ParityRow = {
@@ -81,27 +88,22 @@ function buildParityRow(args: {
   >();
 
   for (const col of rosterColumns) {
-    const values: number[] = [];
-    const bands: Record<string, number> = {};
+    const values = rows.map((row) => {
+      const metric = row.metrics.find((m) => m.kpi_key === col.kpi_key);
+      return numOrNull(metric?.value);
+    });
 
+    const value = avg(values);
+
+    const bands: Record<string, number> = {};
     for (const row of rows) {
       const metric = row.metrics.find((m) => m.kpi_key === col.kpi_key);
-      const v = numOrNull(metric?.value ?? null);
-
-      if (v != null) values.push(v);
-
-      if (metric?.band_key) {
-        bands[metric.band_key] = (bands[metric.band_key] || 0) + 1;
-      }
+      const band = metric?.band_key ?? null;
+      if (!band) continue;
+      bands[band] = (bands[band] ?? 0) + 1;
     }
 
-    const value = values.length
-      ? values.reduce((s, n) => s + n, 0) / values.length
-      : null;
-
-    // dominant band
-    const band =
-      Object.entries(bands).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    const band = Object.entries(bands).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
     metrics.set(col.kpi_key, { value, band });
   }
@@ -118,15 +120,21 @@ function buildParityRow(args: {
   };
 }
 
-function HeaderCell(props: {
+function DesktopHeaderCell(props: {
   children: React.ReactNode;
   align?: "left" | "center" | "right";
+  className?: string;
 }) {
   return (
     <div
       className={[
-        "px-3 py-2 text-[11px] font-medium text-muted-foreground",
-        props.align === "center" ? "text-center" : "text-left",
+        "px-2 py-2 text-[11px] font-medium text-muted-foreground",
+        props.align === "right"
+          ? "text-right"
+          : props.align === "center"
+            ? "text-center"
+            : "text-left",
+        props.className ?? "",
       ].join(" ")}
     >
       {props.children}
@@ -134,22 +142,53 @@ function HeaderCell(props: {
   );
 }
 
-function BodyCell(props: {
+function DesktopCell(props: {
   children: React.ReactNode;
   align?: "left" | "center" | "right";
   strong?: boolean;
-  divider?: boolean;
+  className?: string;
 }) {
   return (
     <div
       className={[
-        "px-3 py-2.5 text-sm",
-        props.align === "center" ? "text-center" : "text-left",
+        "px-2 py-2.5 text-sm",
+        props.align === "right"
+          ? "text-right"
+          : props.align === "center"
+            ? "text-center"
+            : "text-left",
         props.strong ? "font-semibold" : "",
-        props.divider ? "border-l" : "",
+        props.className ?? "",
       ].join(" ")}
     >
       {props.children}
+    </div>
+  );
+}
+
+function DesktopMetricBadge(props: {
+  value: number | null;
+  band?: string | null;
+  secondary?: boolean;
+}) {
+  return (
+    <div
+      className={[
+        `inline-flex min-w-[58px] items-center justify-center rounded-md border px-2 py-1 text-sm font-medium ${bandPillClass(props.band)}`,
+        props.secondary ? "opacity-95" : "",
+      ].join(" ")}
+    >
+      {formatMetricValue(props.value)}
+    </div>
+  );
+}
+
+function DesktopWorkMixBadge(props: {
+  value: number;
+}) {
+  return (
+    <div className="inline-flex min-w-[58px] items-center justify-center rounded-md border border-[var(--to-border)] bg-muted/10 px-2 py-1 text-sm font-medium">
+      {props.value}
     </div>
   );
 }
@@ -162,6 +201,7 @@ export default function CompanySupervisorParityTable(props: {
 }) {
   const { rows, rosterColumns, primarySegment, bpContractor } = props;
 
+  const [isOpen, setIsOpen] = useState(false);
   const [showMix, setShowMix] = useState(false);
 
   const parityRows = useMemo(() => {
@@ -178,7 +218,14 @@ export default function CompanySupervisorParityTable(props: {
       if (bpContractor !== "ALL") {
         const rowsFiltered = bpRows.filter((r) => r.contractor_name === bpContractor);
         return rowsFiltered.length
-          ? [buildParityRow({ key: bpContractor, label: bpContractor, rows: rowsFiltered, rosterColumns })]
+          ? [
+              buildParityRow({
+                key: bpContractor,
+                label: bpContractor,
+                rows: rowsFiltered,
+                rosterColumns,
+              }),
+            ]
           : [];
       }
 
@@ -201,96 +248,144 @@ export default function CompanySupervisorParityTable(props: {
         rows: rows.filter((r) => r.team_class === "BP"),
         rosterColumns,
       }),
-    ];
+    ].filter((row) => row.headcount > 0);
   }, [rows, rosterColumns, primarySegment, bpContractor]);
 
   const gridTemplate = `180px repeat(${rosterColumns.length}, minmax(84px, 1fr)) ${
-    showMix ? "84px 84px 84px 84px" : ""
-  } 72px`;
+    showMix ? "repeat(4, minmax(84px, 1fr)) " : ""
+  }72px`;
+  const minWidth = showMix ? "1380px" : "1040px";
 
   return (
     <section className="rounded-2xl border bg-card p-4">
-      <div className="mb-3 flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Team Parity
           </div>
           <div className="mt-1 text-sm text-muted-foreground">
-            Admin-driven KPI order • quick scan by active workforce slice
+            Comparative view for the active workforce slice
           </div>
         </div>
 
         <button
-          onClick={() => setShowMix((v) => !v)}
-          className="text-xs border rounded-lg px-3 py-1 bg-muted/20 hover:bg-muted/40"
+          type="button"
+          onClick={() => setIsOpen((v) => !v)}
+          className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] text-muted-foreground transition hover:bg-muted/40 hover:text-foreground"
         >
-          {showMix ? "Hide work mix" : "Show work mix +"}
+          <span>{isOpen ? "Hide parity" : "Show parity"}</span>
+          <span className={`transition-transform ${isOpen ? "rotate-180" : ""}`}>
+            ▾
+          </span>
         </button>
       </div>
 
-      <div className="overflow-auto rounded-2xl border">
-        <div
-          className="grid border-b bg-muted/10"
-          style={{ gridTemplateColumns: gridTemplate }}
-        >
-          <HeaderCell>Group</HeaderCell>
+      {isOpen ? (
+        <div className="mt-4 rounded-2xl border bg-muted/[0.04] p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="text-sm text-muted-foreground">
+              KPI order aligned to team performance
+            </div>
 
-          {rosterColumns.map((c) => (
-            <HeaderCell key={c.kpi_key} align="center">
-              {c.label}
-            </HeaderCell>
-          ))}
-
-          {showMix && (
-            <>
-              <HeaderCell align="center">Installs</HeaderCell>
-              <HeaderCell align="center">TCs</HeaderCell>
-              <HeaderCell align="center">SROs</HeaderCell>
-              <HeaderCell align="center">Jobs</HeaderCell>
-            </>
-          )}
-
-          <HeaderCell align="center">HC</HeaderCell>
-        </div>
-
-        {parityRows.map((row) => (
-          <div
-            key={row.key}
-            className="grid border-b last:border-b-0"
-            style={{ gridTemplateColumns: gridTemplate }}
-          >
-            <BodyCell strong>{row.label}</BodyCell>
-
-            {rosterColumns.map((c) => {
-              const metric = row.metrics.get(c.kpi_key);
-              return (
-                <BodyCell key={c.kpi_key} align="center">
-                  <span
-                    className={`inline-block rounded-md border px-2 py-0.5 text-xs ${bandClass(
-                      metric?.band
-                    )}`}
-                  >
-                    {formatMetricValue(metric?.value ?? null)}
-                  </span>
-                </BodyCell>
-              );
-            })}
-
-            {showMix && (
-              <>
-                <BodyCell align="center" divider>{row.installs}</BodyCell>
-                <BodyCell align="center">{row.tcs}</BodyCell>
-                <BodyCell align="center">{row.sros}</BodyCell>
-                <BodyCell align="center">{row.jobs}</BodyCell>
-              </>
-            )}
-
-            <BodyCell align="center" divider>
-              {row.headcount}
-            </BodyCell>
+            <button
+              type="button"
+              onClick={() => setShowMix((v) => !v)}
+              className="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:bg-muted/40 hover:text-foreground"
+            >
+              <span>{showMix ? "Hide work mix" : "Show work mix"}</span>
+              <span className={`transition-transform ${showMix ? "rotate-180" : ""}`}>
+                ▾
+              </span>
+            </button>
           </div>
-        ))}
-      </div>
+
+          <div className="overflow-auto rounded-2xl border">
+            <div
+              className="grid border-b bg-muted/10"
+              style={{ gridTemplateColumns: gridTemplate, minWidth }}
+            >
+              <DesktopHeaderCell>Group</DesktopHeaderCell>
+
+              {rosterColumns.map((col, index) => (
+                <DesktopHeaderCell
+                  key={col.kpi_key}
+                  align="center"
+                  className={sectionDividerClass(index)}
+                >
+                  {col.label}
+                </DesktopHeaderCell>
+              ))}
+
+              {showMix ? (
+                <>
+                  <DesktopHeaderCell
+                    align="center"
+                    className="border-l border-[var(--to-border)] pl-4"
+                  >
+                    Installs
+                  </DesktopHeaderCell>
+                  <DesktopHeaderCell align="center">TCs</DesktopHeaderCell>
+                  <DesktopHeaderCell align="center">SROs</DesktopHeaderCell>
+                  <DesktopHeaderCell align="center">Jobs</DesktopHeaderCell>
+                </>
+              ) : null}
+
+              <DesktopHeaderCell align="center">HC</DesktopHeaderCell>
+            </div>
+
+            {parityRows.map((row) => (
+              <div
+                key={row.key}
+                className="grid border-b last:border-b-0"
+                style={{ gridTemplateColumns: gridTemplate, minWidth }}
+              >
+                <DesktopCell strong>{row.label}</DesktopCell>
+
+                {rosterColumns.map((col, index) => {
+                  const metric = row.metrics.get(col.kpi_key);
+                  return (
+                    <DesktopCell
+                      key={col.kpi_key}
+                      align="center"
+                      className={sectionDividerClass(index)}
+                    >
+                      <DesktopMetricBadge
+                        value={metric?.value ?? null}
+                        band={metric?.band ?? null}
+                        secondary={isSecondaryMetric(index)}
+                      />
+                    </DesktopCell>
+                  );
+                })}
+
+                {showMix ? (
+                  <>
+                    <DesktopCell
+                      align="center"
+                      className="border-l border-[var(--to-border)] pl-4"
+                    >
+                      <DesktopWorkMixBadge value={row.installs} />
+                    </DesktopCell>
+                    <DesktopCell align="center">
+                      <DesktopWorkMixBadge value={row.tcs} />
+                    </DesktopCell>
+                    <DesktopCell align="center">
+                      <DesktopWorkMixBadge value={row.sros} />
+                    </DesktopCell>
+                    <DesktopCell align="center">
+                      <DesktopWorkMixBadge value={row.jobs} />
+                    </DesktopCell>
+                  </>
+                ) : null}
+
+                <DesktopCell align="center">
+                  <DesktopWorkMixBadge value={row.headcount} />
+                </DesktopCell>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -6,6 +6,7 @@ import type { BpRangeKey, BpViewHeaderData } from "../lib/bpView.types";
 
 function normalizeRange(value: string | null | undefined): BpRangeKey {
   const upper = String(value ?? "FM").toUpperCase();
+  if (upper === "PREVIOUS") return "PREVIOUS";
   if (upper === "3FM") return "3FM";
   if (upper === "12FM") return "12FM";
   return "FM";
@@ -154,6 +155,12 @@ export default function BpViewHeader(props: {
               active={optimisticRange === "FM"}
               pending={isPending && pendingRange === "FM"}
               onClick={() => setRange("FM")}
+            />
+            <RangeChip
+              label="Previous"
+              active={optimisticRange === "PREVIOUS"}
+              pending={isPending && pendingRange === "PREVIOUS"}
+              onClick={() => setRange("PREVIOUS")}
             />
             <RangeChip
               label="3 FM"

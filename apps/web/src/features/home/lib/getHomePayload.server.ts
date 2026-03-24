@@ -9,6 +9,7 @@ export type HomeRole =
   | "BP_SUPERVISOR"
   | "BP_LEAD"
   | "BP_OWNER"
+  | "ITG_SUPERVISOR"
   | "UNSCOPED"
   | "UNKNOWN";
 
@@ -36,7 +37,9 @@ type BootShape = {
   is_app_owner?: boolean;
 };
 
-function resolveRole(assignments: Array<{ position_title?: string | null }>): HomeRole {
+function resolveRole(
+  assignments: Array<{ position_title?: string | null }>
+): HomeRole {
   const titles = new Set(
     assignments
       .map((a) => (a.position_title ? String(a.position_title).trim() : null))
@@ -46,6 +49,7 @@ function resolveRole(assignments: Array<{ position_title?: string | null }>): Ho
   if (titles.has("BP Owner")) return "BP_OWNER";
   if (titles.has("BP Lead")) return "BP_LEAD";
   if (titles.has("BP Supervisor")) return "BP_SUPERVISOR";
+  if (titles.has("ITG Supervisor")) return "ITG_SUPERVISOR";
   if (titles.has("Technician")) return "TECH";
 
   return "UNKNOWN";
@@ -70,7 +74,9 @@ async function loadOrgLabel(pc_org_id: string): Promise<string | null> {
   return data?.pc_org_name ?? null;
 }
 
-function buildPrivilegedDestinations(hasSelectedOrg: boolean): HomeDestination[] {
+function buildPrivilegedDestinations(
+  hasSelectedOrg: boolean
+): HomeDestination[] {
   const items: HomeDestination[] = [
     {
       label: "Home",
@@ -107,6 +113,12 @@ function buildPrivilegedDestinations(hasSelectedOrg: boolean): HomeDestination[]
     });
 
     items.splice(4, 0, {
+      label: "Company Supervisor",
+      href: "/company-supervisor",
+      description: "Hybrid workforce view across ITG and BP reporting scope",
+    });
+
+    items.splice(5, 0, {
       label: "Dispatch Console",
       href: "/dispatch-console",
       description: "Live job routing, assignments, and activity log",
@@ -116,9 +128,42 @@ function buildPrivilegedDestinations(hasSelectedOrg: boolean): HomeDestination[]
   return items;
 }
 
-function buildDestinations(role: HomeRole, hasSelectedOrg: boolean): HomeDestination[] {
+function buildDestinations(
+  role: HomeRole,
+  hasSelectedOrg: boolean
+): HomeDestination[] {
   if (role === "APP_OWNER" || role === "ADMIN") {
     return buildPrivilegedDestinations(hasSelectedOrg);
+  }
+
+  if (role === "ITG_SUPERVISOR") {
+    return [
+      {
+        label: "Company Supervisor",
+        href: "/company-supervisor",
+        description: "Hybrid workforce performance, KPI strip, and risk surface",
+      },
+      {
+        label: "Metrics",
+        href: "/metrics",
+        description: "Metrics reporting, uploads, and configuration",
+      },
+      {
+        label: "Route Lock",
+        href: "/route-lock",
+        description: "Schedule, quota, and route planning controls",
+      },
+      {
+        label: "Dispatch Console",
+        href: "/dispatch-console",
+        description: "Live job routing, assignments, and activity log",
+      },
+      {
+        label: "Field Log",
+        href: "/field-log",
+        description: "Submit, review, and track field activity",
+      },
+    ];
   }
 
   if (role === "BP_OWNER" || role === "BP_LEAD" || role === "BP_SUPERVISOR") {
@@ -246,7 +291,9 @@ export async function getHomePayload(): Promise<HomePayload> {
         .eq("person_id", boot.person_id as string)
         .eq("pc_org_id", selectedPcOrgId)
         .eq("active", true)
-    : Promise.resolve({ data: [] as Array<{ position_title?: string | null }> });
+    : Promise.resolve({
+        data: [] as Array<{ position_title?: string | null }>,
+      });
 
   const orgLabelPromise = selectedPcOrgId
     ? loadOrgLabel(selectedPcOrgId)
@@ -259,7 +306,8 @@ export async function getHomePayload(): Promise<HomePayload> {
   ]);
 
   const resolvedRole = privilegedRole ?? resolveRole(assignmentRes.data ?? []);
-  const role = resolvedRole === "UNKNOWN" && !hasSelectedOrg ? "UNSCOPED" : resolvedRole;
+  const role =
+    resolvedRole === "UNKNOWN" && !hasSelectedOrg ? "UNSCOPED" : resolvedRole;
 
   return {
     full_name: personRes.data?.full_name ?? boot.full_name ?? null,

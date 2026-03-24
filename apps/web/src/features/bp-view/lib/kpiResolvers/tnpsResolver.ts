@@ -3,9 +3,7 @@ import {
   avgOrNull,
   computeTnpsScore,
   fetchMetricRawRows,
-  getFinalRowsPerMonth,
   groupRowsByTech,
-  monthsToTake,
   pickNum,
   type RangeKey,
 } from "./shared";
@@ -15,9 +13,10 @@ export async function resolveBpTnpsByTech(args: {
   techIds: string[];
   pcOrgIds: string[];
   range: RangeKey;
+  fiscalEndDates?: string[];
 }): Promise<Map<string, number | null>> {
   const admin = args.admin ?? supabaseAdmin();
-  const { techIds, pcOrgIds, range } = args;
+  const { techIds, pcOrgIds, fiscalEndDates } = args;
 
   const result = new Map<string, number | null>();
 
@@ -29,22 +28,21 @@ export async function resolveBpTnpsByTech(args: {
     admin,
     techIds,
     pcOrgIds,
+    fiscalEndDates,
   });
 
   const rowsByTech = groupRowsByTech(rows);
-  const monthLimit = monthsToTake(range);
 
   for (const techId of techIds) {
     const techRows = rowsByTech.get(techId) ?? [];
-    const selectedMonths = getFinalRowsPerMonth(techRows).slice(0, monthLimit);
 
     let totalSurveys = 0;
     let totalPromoters = 0;
     let totalDetractors = 0;
     const fallbackRates: number[] = [];
 
-    for (const month of selectedMonths) {
-      const raw = month.row.raw;
+    for (const row of techRows) {
+      const raw = row.raw;
 
       const surveys = pickNum(raw, [
         "tNPS Surveys",

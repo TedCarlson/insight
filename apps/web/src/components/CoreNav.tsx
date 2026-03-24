@@ -23,6 +23,7 @@ import {
 import { OrgSelector } from "@/components/OrgSelector";
 import { useSession } from "@/state/session";
 import { useOrg } from "@/state/org";
+import { useAccessPass } from "@/state/access";
 import { useOrgConsoleAccess } from "@/hooks/useOrgConsoleAccess";
 import { buildRoleNav, type AppRole } from "@/lib/nav/buildRoleNav";
 import { resolveCoreNavContext } from "@/lib/nav/resolveCoreNavContext";
@@ -44,6 +45,12 @@ type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
+type GrantChip = {
+  key: "RM" | "RL" | "MM";
+  label: string;
+  tooltip: string;
+};
+
 function isActivePath(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(href + "/");
@@ -53,7 +60,7 @@ function rememberLob(lob: "FULFILLMENT" | "LOCATE") {
   try {
     window.localStorage.setItem("to_lob", lob);
   } catch {
-    /* ignore */
+    // ignore
   }
 }
 
@@ -103,6 +110,8 @@ function iconForNavKey(
       return ClipboardList;
     case "bpview":
       return BarChart3;
+    case "supervisor":
+      return Users;
     case "roster":
       return Users;
     case "routelock":
@@ -121,6 +130,7 @@ function readShellRoleHint(): AppRole | null {
 
   if (
     role === "TECH" ||
+    role === "ITG_SUPERVISOR" ||
     role === "BP_SUPERVISOR" ||
     role === "BP_LEAD" ||
     role === "BP_OWNER" ||
@@ -157,7 +167,12 @@ function mapRoleNavToItems(
 
   if (
     useScopedRail &&
-    (role === "BP_SUPERVISOR" || role === "BP_LEAD" || role === "BP_OWNER")
+    (
+      role === "ITG_SUPERVISOR" ||
+      role === "BP_SUPERVISOR" ||
+      role === "BP_LEAD" ||
+      role === "BP_OWNER"
+    )
   ) {
     return buildRoleNav(role).map((item) => ({
       ...item,
@@ -173,6 +188,48 @@ function mapRoleNavToItems(
     { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console", icon: ClipboardCheck },
     { key: "fieldlog", label: "Field Log", href: "/field-log", icon: ClipboardList },
   ];
+}
+
+function buildGrantChips(permissions: string[] | undefined): GrantChip[] {
+  const perms = Array.isArray(permissions) ? permissions : [];
+  const chips: GrantChip[] = [];
+
+  if (perms.includes("roster_manage")) {
+    chips.push({
+      key: "RM",
+      label: "RM",
+      tooltip: "Roster Management",
+    });
+  }
+
+  if (perms.includes("route_lock_manage")) {
+    chips.push({
+      key: "RL",
+      label: "RL",
+      tooltip: "Route Lock",
+    });
+  }
+
+  if (perms.includes("metrics_manage")) {
+    chips.push({
+      key: "MM",
+      label: "MM",
+      tooltip: "Metrics Management",
+    });
+  }
+
+  return chips;
+}
+
+function GrantChipPill(props: { chip: GrantChip }) {
+  return (
+    <div
+      title={props.chip.tooltip}
+      className="inline-flex items-center justify-center rounded-md border bg-background/70 px-2 py-1 text-[10px] font-semibold tracking-wide text-foreground"
+    >
+      {props.chip.label}
+    </div>
+  );
 }
 
 function TechMobileNav(props: {
@@ -288,6 +345,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
 
   const { ready, signedIn, email, isOwner } = useSession();
   const { selectedOrgId } = useOrg();
+  const { accessPass } = useAccessPass();
   const { canManageConsole } = useOrgConsoleAccess();
 
   const shouldHideForRoute = HIDE_ON_PREFIXES.some((p) => pathname.startsWith(p));
@@ -300,8 +358,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
   useEffect(() => {
     if (!open) return;
     setOpen(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
+  }, [open, pathname]);
 
   useEffect(() => {
     if (!open) return;
@@ -333,11 +390,13 @@ export default function CoreNav({ lob }: CoreNavProps) {
         surfaceFamily:
           hintRole === "TECH"
             ? "TECH"
-            : hintRole === "BP_SUPERVISOR" ||
-              hintRole === "BP_LEAD" ||
-              hintRole === "BP_OWNER"
-            ? "BP"
-            : base.surfaceFamily,
+            : hintRole === "ITG_SUPERVISOR"
+              ? "ITG_SUPERVISOR"
+              : hintRole === "BP_SUPERVISOR" ||
+                  hintRole === "BP_LEAD" ||
+                  hintRole === "BP_OWNER"
+                ? "BP"
+                : base.surfaceFamily,
         useScopedRail: hintRole !== "UNKNOWN",
       };
     }
@@ -353,6 +412,11 @@ export default function CoreNav({ lob }: CoreNavProps) {
   const navItems = useMemo<NavItem[]>(() => {
     return mapRoleNavToItems(navContext.role, navContext.useScopedRail, lob);
   }, [navContext.role, navContext.useScopedRail, lob]);
+
+  const grantChips = useMemo(() => {
+    if (!navContext.useScopedRail) return [];
+    return buildGrantChips(accessPass?.permissions);
+  }, [navContext.useScopedRail, accessPass?.permissions]);
 
   const canSeeAdmin = isOwner || canManageConsole;
 
@@ -465,7 +529,21 @@ export default function CoreNav({ lob }: CoreNavProps) {
 
       <div className="mt-4 rounded-lg border bg-background/60 p-3">
         <div className="text-[11px] text-muted-foreground mb-2">Scope</div>
-        <OrgSelector label="PC" />
+
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <OrgSelector label="PC" />
+          </div>
+
+          {grantChips.length ? (
+            <div className="flex flex-wrap justify-end gap-1 pt-0.5">
+              {grantChips.map((chip) => (
+                <GrantChipPill key={chip.key} chip={chip} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+
         {!selectedOrgId ? (
           <div className="mt-2 text-[11px] text-muted-foreground">
             Select a PC to unlock scoped pages.
@@ -508,7 +586,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
               }}
               className={cls(
                 "mt-2 flex items-center gap-3 rounded-lg px-3 py-2 border",
-                isActivePath(pathname, "/admin")
+                pathname === "/admin" || pathname.startsWith("/admin/")
                   ? "bg-muted font-medium"
                   : "hover:bg-muted/60 text-muted-foreground"
               )}
@@ -517,81 +595,68 @@ export default function CoreNav({ lob }: CoreNavProps) {
               <span className="text-sm">Admin</span>
             </Link>
           ) : null}
+
+          {showFieldLogBack ? (
+            <Link
+              href={fieldLogBackHref}
+              prefetch={false}
+              onClick={() => {
+                if (variant === "drawer") setOpen(false);
+              }}
+              className="mt-2 flex items-center gap-3 rounded-lg px-3 py-2 border hover:bg-muted/60 text-muted-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              <span className="text-sm">Back to Field Log</span>
+            </Link>
+          ) : null}
         </nav>
       </div>
 
-      <div className="flex-1" />
-
-      <div className="mt-6 rounded-lg border bg-background/60 p-3">
-        <div className="text-[11px] text-muted-foreground">Signed in</div>
-        <div className="mt-1 text-sm truncate">{email ?? "—"}</div>
-
-        <button
-          type="button"
-          onClick={onSignOut}
-          className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted"
-        >
-          <LogOut className="h-4 w-4" />
-          Sign out
-        </button>
+      <div className="mt-auto pt-6">
+        <div className="rounded-lg border bg-background/60 p-3">
+          <div className="text-[11px] text-muted-foreground">Signed in</div>
+          <div className="mt-1 text-sm break-all">{email ?? "—"}</div>
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </button>
+        </div>
       </div>
     </div>
   );
 
   return (
     <>
-      <aside className="hidden lg:block fixed left-0 top-0 z-50 h-screen w-72 border-r bg-background/80 backdrop-blur">
+      <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-50 lg:flex lg:w-72 lg:border-r lg:bg-background/95 lg:backdrop-blur">
         <RailContent variant="rail" />
       </aside>
 
-      <header className="lg:hidden fixed top-0 left-0 right-0 z-50 border-b bg-background/80 backdrop-blur">
-        <div className="flex items-center justify-between px-4 py-3">
-          {showFieldLogBack ? (
-            <Link
-              href={fieldLogBackHref}
-              prefetch={false}
-              className="rounded-md border px-2 py-2 hover:bg-muted"
-              aria-label="Back"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setOpen(true)}
-              className="rounded-md border px-2 py-2 hover:bg-muted"
-              aria-label="Open menu"
-            >
-              <Menu className="h-4 w-4" />
-            </button>
-          )}
-
-          <Link href={homeHref} prefetch={false} className="text-sm font-semibold">
-            Insight
-          </Link>
-
-          <div className="w-10" />
-        </div>
-      </header>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="fixed left-4 top-4 z-50 inline-flex h-10 w-10 items-center justify-center rounded-md border bg-background/90 backdrop-blur lg:hidden"
+        aria-label="Open navigation menu"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
 
       {open
         ? createPortal(
             <div className="fixed inset-0 z-[70] lg:hidden">
               <button
                 type="button"
-                aria-label="Close menu backdrop"
+                aria-label="Close navigation backdrop"
                 className="absolute inset-0"
                 onClick={() => setOpen(false)}
                 style={{ background: "rgba(0,0,0,0.35)" }}
               />
               <div className="absolute inset-0 backdrop-blur-sm" />
-
               <div
-                className="absolute left-0 top-0 h-full w-[88vw] max-w-sm border-r bg-background shadow-2xl"
-                style={{
-                  transform: "translateX(0)",
-                  transition: "transform 180ms ease-out",
-                }}
+                className="absolute left-0 top-0 h-full w-[82vw] max-w-sm border-r bg-background shadow-2xl"
                 role="dialog"
                 aria-modal="true"
               >

@@ -3,8 +3,8 @@ import {
   fetchMetricRawRows,
   getFinalRowsPerMonth,
   groupRowsByTech,
-  monthsToTake,
   pickNum,
+  resolveFiscalEndDatesForRange,
   type RangeKey,
 } from "./shared";
 
@@ -20,6 +20,7 @@ export async function resolveBpWorkMixByTech(args: {
   techIds: string[];
   pcOrgIds: string[];
   range: RangeKey;
+  fiscalEndDates?: string[];
 }): Promise<Map<string, WorkMixRow>> {
   const admin = args.admin ?? supabaseAdmin();
   const { techIds, pcOrgIds, range } = args;
@@ -30,42 +31,53 @@ export async function resolveBpWorkMixByTech(args: {
     return result;
   }
 
+  const fiscalEndDates =
+    args.fiscalEndDates && args.fiscalEndDates.length
+      ? args.fiscalEndDates
+      : await resolveFiscalEndDatesForRange({
+          admin,
+          range,
+        });
+
   const rows = await fetchMetricRawRows({
     admin,
     techIds,
     pcOrgIds,
+    fiscalEndDates,
   });
 
   const rowsByTech = groupRowsByTech(rows);
-  const monthLimit = monthsToTake(range);
 
   for (const techId of techIds) {
     const techRows = rowsByTech.get(techId) ?? [];
-    const selectedMonths = getFinalRowsPerMonth(techRows).slice(0, monthLimit);
+    const finalRowsByMonth = getFinalRowsPerMonth(techRows);
 
     let installs = 0;
     let tcs = 0;
     let sros = 0;
 
-    for (const month of selectedMonths) {
+    for (const month of finalRowsByMonth) {
       const raw = month.row.raw;
 
-      installs += pickNum(raw, [
-        "Installs",
-        "installs",
-      ]) ?? 0;
+      installs +=
+        pickNum(raw, [
+          "Installs",
+          "installs",
+        ]) ?? 0;
 
-      tcs += pickNum(raw, [
-        "TCs",
-        "tcs",
-        "TC",
-      ]) ?? 0;
+      tcs +=
+        pickNum(raw, [
+          "TCs",
+          "tcs",
+          "TC",
+        ]) ?? 0;
 
-      sros += pickNum(raw, [
-        "SROs",
-        "sros",
-        "SRO",
-      ]) ?? 0;
+      sros +=
+        pickNum(raw, [
+          "SROs",
+          "sros",
+          "SRO",
+        ]) ?? 0;
     }
 
     result.set(techId, {

@@ -13,10 +13,10 @@ import {
 import { sortBpRosterRows } from "@/features/bp-view/lib/sortBpRosterRows";
 
 import type {
-  CompanySupervisorPayload,
-  CompanySupervisorRosterRow,
-} from "./companySupervisorView.types";
-import { resolveCompanySupervisorScope } from "./resolveCompanySupervisorScope.server";
+  CompanyManagerPayload,
+  CompanyManagerRosterRow,
+} from "./companyManagerView.types";
+import { resolveCompanyManagerScope } from "./resolveCompanyManagerScope.server";
 
 type Args = {
   range: RangeKey;
@@ -134,13 +134,13 @@ function pct(part: number, total: number): number | null {
   return (100 * part) / total;
 }
 
-export async function getCompanySupervisorViewPayload(
+export async function getCompanyManagerViewPayload(
   args: Args
-): Promise<CompanySupervisorPayload> {
+): Promise<CompanyManagerPayload> {
   const admin = supabaseAdmin();
 
   const [scope, p4pConfig] = await Promise.all([
-    resolveCompanySupervisorScope(),
+    resolveCompanyManagerScope(),
     loadViewKpiConfig(admin),
   ]);
 
@@ -204,12 +204,12 @@ export async function getCompanySupervisorViewPayload(
       team_class: assignment?.team_class ?? "BP",
       contractor_name: assignment?.contractor_name ?? null,
     };
-  }) as CompanySupervisorRosterRow[];
+  }) as CompanyManagerRosterRow[];
 
   const roster_rows = sortBpRosterRows(
     unsortedRosterRows,
     rosterColumns
-  ) as CompanySupervisorRosterRow[];
+  ) as CompanyManagerRosterRow[];
 
   const kpi_strip = buildBpKpiStrip({
     rosterRows: roster_rows as any,
@@ -245,7 +245,7 @@ export async function getCompanySupervisorViewPayload(
   return {
     header: {
       role_label: scope.role_label,
-      scope_label: scope.company_label ?? "Company Supervisor",
+      scope_label: scope.company_label ?? "Company Manager",
       org_label:
         scope.org_labels_by_id.get(scope.selected_pc_org_id) ??
         scope.selected_pc_org_id,

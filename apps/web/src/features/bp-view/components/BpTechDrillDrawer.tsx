@@ -28,6 +28,11 @@ import BpMetricSparkline from "./BpMetricSparkline";
 import MetricPeriodDetailTable from "./MetricPeriodDetailTable";
 import { renderTnpsSentimentMix } from "../lib/renderTnpsSentimentMix";
 
+function mapBpRangeToTechRange(range: "FM" | "PREVIOUS" | "3FM" | "12FM") {
+  if (range === "PREVIOUS") return "FM"; 
+  return range;
+}
+
 type DrawerModel = {
   summaryRows: Array<{ label: string; value: string }>;
   chart: ReactNode;
@@ -323,7 +328,7 @@ const KPI_REGISTRY: RegistryEntry[] = [
     build: ({ payload, range }) =>
       buildBpTnpsDrawerModel({
         payload,
-        activeRange: range,
+        activeRange: mapBpRangeToTechRange(range),
       }),
   },
   {
@@ -333,7 +338,7 @@ const KPI_REGISTRY: RegistryEntry[] = [
       buildFtrDrawerModel({
         tile,
         ftrDebug: payload?.debug ?? null,
-        activeRange: range,
+        activeRange: mapBpRangeToTechRange(range),
       }),
   },
   {
@@ -346,7 +351,7 @@ const KPI_REGISTRY: RegistryEntry[] = [
       buildToolUsageDrawerModel({
         tile,
         toolUsageDebug: payload?.debug ?? null,
-        activeRange: range,
+        activeRange: mapBpRangeToTechRange(range),
       }),
   },
   {
@@ -359,7 +364,7 @@ const KPI_REGISTRY: RegistryEntry[] = [
       buildPurePassDrawerModel({
         tile,
         purePassDebug: payload?.debug ?? null,
-        activeRange: range,
+        activeRange: mapBpRangeToTechRange(range),
       }),
   },
   {
@@ -374,7 +379,7 @@ const KPI_REGISTRY: RegistryEntry[] = [
       build48HrDrawerModel({
         tile,
         callback48HrDebug: payload?.debug ?? null,
-        activeRange: range,
+        activeRange: mapBpRangeToTechRange(range),
       }),
   },
   {
@@ -384,7 +389,7 @@ const KPI_REGISTRY: RegistryEntry[] = [
       buildRepeatDrawerModel({
         tile,
         repeatDebug: payload?.debug ?? null,
-        activeRange: range,
+        activeRange: mapBpRangeToTechRange(range),
       }),
   },
   {
@@ -394,7 +399,7 @@ const KPI_REGISTRY: RegistryEntry[] = [
       buildSoiDrawerModel({
         tile,
         soiDebug: payload?.debug ?? null,
-        activeRange: range,
+        activeRange: mapBpRangeToTechRange(range),
       }),
   },
   {
@@ -404,7 +409,7 @@ const KPI_REGISTRY: RegistryEntry[] = [
       buildReworkDrawerModel({
         tile,
         reworkDebug: payload?.debug ?? null,
-        activeRange: range,
+        activeRange: mapBpRangeToTechRange(range),
       }),
   },
   {
@@ -417,7 +422,7 @@ const KPI_REGISTRY: RegistryEntry[] = [
       buildMetDrawerModel({
         tile,
         metDebug: payload?.debug ?? null,
-        activeRange: range,
+        activeRange: mapBpRangeToTechRange(range),
       }),
   },
 ];

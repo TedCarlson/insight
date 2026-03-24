@@ -1,5 +1,6 @@
 export type AppRole =
   | "TECH"
+  | "ITG_SUPERVISOR"
   | "BP_SUPERVISOR"
   | "BP_LEAD"
   | "BP_OWNER"
@@ -22,6 +23,15 @@ export function buildRoleNav(role: AppRole): RoleNavItem[] {
     ];
   }
 
+  if (role === "ITG_SUPERVISOR") {
+    return [
+      { key: "home", label: "Home", href: "/home" },
+      { key: "supervisor", label: "Team Metrics", href: "/company-supervisor" },
+      { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console" },
+      { key: "fieldlog", label: "Field Log", href: "/field-log" },
+    ];
+  }
+
   if (
     role === "BP_SUPERVISOR" ||
     role === "BP_LEAD" ||
@@ -29,7 +39,7 @@ export function buildRoleNav(role: AppRole): RoleNavItem[] {
   ) {
     return [
       { key: "home", label: "Home", href: "/home" },
-      { key: "bpview", label: "BP View", href: "/bp/view" },
+      { key: "bpview", label: "Team Metrics", href: "/bp/view" },
       { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console" },
       { key: "fieldlog", label: "Field Log", href: "/field-log" },
     ];

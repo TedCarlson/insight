@@ -1,6 +1,7 @@
 export type SurfaceFamily =
   | "TECH"
   | "BP"
+  | "ITG_SUPERVISOR"
   | "LOCATE"
   | "FULFILLMENT_LEGACY"
   | "UNKNOWN";
@@ -14,6 +15,11 @@ export function resolveSurfaceFamily(
   // TECH routes
   if (pathname === "/tech" || pathname.startsWith("/tech/")) {
     return "TECH";
+  }
+
+  // ITG Supervisor V2 surface
+  if (pathname === "/company-supervisor" || pathname.startsWith("/company-supervisor/")) {
+    return "ITG_SUPERVISOR";
   }
 
   // BP V2 surface + shared operational modules

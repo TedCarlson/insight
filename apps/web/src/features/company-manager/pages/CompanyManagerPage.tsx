@@ -10,16 +10,12 @@ import BpViewKpiStrip from "@/features/bp-view/components/BpViewKpiStrip";
 import BpViewRiskStrip from "@/features/bp-view/components/BpViewRiskStrip";
 import BpWorkMixCard from "@/features/bp-view/components/BpWorkMixCard";
 import BpTechDrillDrawer from "@/features/bp-view/components/BpTechDrillDrawer";
-
-import CompanySupervisorParityTable, {
-  type CompanySupervisorPrimarySegment,
-} from "../components/CompanySupervisorParityTable";
-import CompanySupervisorRosterSection from "../components/CompanySupervisorRosterSection";
+import BpViewRosterSurface from "@/features/bp-view/components/BpViewRosterSurface";
 
 import type {
-  CompanySupervisorPayload,
-  CompanySupervisorRosterRow,
-} from "../lib/companySupervisorView.types";
+  CompanyManagerPayload,
+  CompanyManagerRosterRow,
+} from "../lib/companyManagerView.types";
 
 type RangeKey = "FM" | "PREVIOUS" | "3FM" | "12FM";
 
@@ -67,27 +63,6 @@ function RangeChip(props: {
   );
 }
 
-function SegmentChip(props: {
-  label: string;
-  active?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      className={[
-        "rounded-xl border px-3 py-2 text-xs font-medium transition active:scale-[0.98]",
-        props.active
-          ? "border-[var(--to-accent)] bg-[color-mix(in_oklab,var(--to-accent)_10%,white)] text-foreground"
-          : "bg-background text-muted-foreground hover:bg-muted/30",
-      ].join(" ")}
-    >
-      {props.label}
-    </button>
-  );
-}
-
 function ScopeChip(props: {
   label: string;
   active?: boolean;
@@ -128,8 +103,8 @@ function formatRangeLabel(range: RangeKey) {
   return "12 FM";
 }
 
-export default function CompanySupervisorPage(props: {
-  payload: CompanySupervisorPayload;
+export default function CompanyManagerPage(props: {
+  payload: CompanyManagerPayload;
 }) {
   const { payload } = props;
 
@@ -138,11 +113,7 @@ export default function CompanySupervisorPage(props: {
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
   const [selectedRow, setSelectedRow] =
-    useState<CompanySupervisorRosterRow | null>(null);
-
-  const [primarySegment, setPrimarySegment] =
-    useState<CompanySupervisorPrimarySegment>("ALL");
-  const [bpContractor, setBpContractor] = useState<string>("ALL");
+    useState<CompanyManagerRosterRow | null>(null);
 
   const activeRangeFromUrl = normalizeRange(searchParams.get("range"));
   const [pendingRange, setPendingRange] = useState<RangeKey | null>(null);
@@ -170,22 +141,6 @@ export default function CompanySupervisorPage(props: {
     });
   }
 
-  function handlePrimarySegmentChange(next: CompanySupervisorPrimarySegment) {
-    setPrimarySegment(next);
-    if (next !== "BP") {
-      setBpContractor("ALL");
-    }
-  }
-
-  const bpContractors = Array.from(
-    new Set(
-      payload.roster_rows
-        .filter((row) => row.team_class === "BP")
-        .map((row) => row.contractor_name?.trim() ?? "")
-        .filter(Boolean)
-    )
-  ).sort((a, b) => a.localeCompare(b));
-
   const subtitleParts = [
     payload.header.role_label,
     payload.header.rep_full_name,
@@ -202,7 +157,7 @@ export default function CompanySupervisorPage(props: {
         >
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div className="space-y-1">
-              <div className="text-xl font-semibold">Company Supervisor</div>
+              <div className="text-xl font-semibold">Company Manager</div>
               <div className="text-sm text-muted-foreground">
                 {subtitleParts.join(" • ")}
               </div>
@@ -271,71 +226,27 @@ export default function CompanySupervisorPage(props: {
         <BpViewRiskStrip items={payload.risk_strip as any} />
 
         <Card className="p-4">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0 flex-1">
-              <BpWorkMixCard workMix={payload.work_mix as any} />
-            </div>
-
-            <div className="space-y-2 lg:pl-4">
-              <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Workforce Slice
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <SegmentChip
-                  label="ALL"
-                  active={primarySegment === "ALL"}
-                  onClick={() => handlePrimarySegmentChange("ALL")}
-                />
-                <SegmentChip
-                  label="ITG"
-                  active={primarySegment === "ITG"}
-                  onClick={() => handlePrimarySegmentChange("ITG")}
-                />
-                <SegmentChip
-                  label="BP"
-                  active={primarySegment === "BP"}
-                  onClick={() => handlePrimarySegmentChange("BP")}
-                />
-              </div>
-
-              {primarySegment === "BP" && bpContractors.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  <SegmentChip
-                    label="All BP"
-                    active={bpContractor === "ALL"}
-                    onClick={() => setBpContractor("ALL")}
-                  />
-                  {bpContractors.map((contractor) => (
-                    <SegmentChip
-                      key={contractor}
-                      label={contractor}
-                      active={bpContractor === contractor}
-                      onClick={() => setBpContractor(contractor)}
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
+          <BpWorkMixCard workMix={payload.work_mix as any} />
         </Card>
 
-        <CompanySupervisorParityTable
-          rows={payload.roster_rows}
-          rosterColumns={payload.roster_columns}
-          primarySegment={primarySegment}
-          bpContractor={bpContractor}
-        />
+        <Card className="p-4">
+          <div className="mb-4">
+            <div className="text-xs uppercase tracking-wide text-muted-foreground">
+              Workforce Performance
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              {`All workforce • ${payload.header.headcount} techs • Range: ${formatRangeLabel(
+                payload.header.range_label
+              )}`}
+            </div>
+          </div>
 
-        <CompanySupervisorRosterSection
-          rows={payload.roster_rows}
-          columns={payload.roster_columns}
-          primarySegment={primarySegment}
-          bpContractor={bpContractor}
-          title={`All workforce • ${payload.header.headcount} techs`}
-          subtitle={`Range: ${formatRangeLabel(payload.header.range_label)}`}
-          onSelectRow={setSelectedRow}
-        />
+          <BpViewRosterSurface
+            columns={payload.roster_columns}
+            rows={payload.roster_rows as any}
+            onSelectRow={(row) => setSelectedRow(row as CompanyManagerRosterRow)}
+          />
+        </Card>
       </div>
 
       <BpTechDrillDrawer

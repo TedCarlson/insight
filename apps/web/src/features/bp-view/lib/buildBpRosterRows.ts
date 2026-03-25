@@ -159,6 +159,34 @@ function firstNameOnly(fullName: string): string {
   return first || "Unknown";
 }
 
+function resolveOfficeLabel(args: {
+  assignment: any;
+  orgLabelsById: Map<string, string>;
+}) {
+  const { assignment, orgLabelsById } = args;
+
+  const directOffice =
+    assignment?.office_name ??
+    assignment?.office ??
+    assignment?.market_name ??
+    assignment?.market ??
+    assignment?.branch_name ??
+    assignment?.branch ??
+    null;
+
+  if (directOffice != null && String(directOffice).trim()) {
+    return String(directOffice).trim();
+  }
+
+  const pcOrgId = String(assignment?.pc_org_id ?? "").trim();
+
+  if (pcOrgId && orgLabelsById.has(pcOrgId)) {
+    return orgLabelsById.get(pcOrgId) ?? pcOrgId;
+  }
+
+  return pcOrgId || "Unknown";
+}
+
 export function buildBpRosterRows(params: Params): BpViewRosterRow[] {
   const {
     scopedAssignments,
@@ -223,9 +251,10 @@ export function buildBpRosterRows(params: Params): BpViewRosterRow[] {
       });
     }
 
-    const orgLabel =
-      orgLabelsById.get(String(assignment.pc_org_id ?? "")) ??
-      String(assignment.pc_org_id ?? "");
+    const officeLabel = resolveOfficeLabel({
+      assignment,
+      orgLabelsById,
+    });
 
     const resolvedFullName = String(person?.full_name ?? "Unknown");
     const shortName = firstNameOnly(resolvedFullName);
@@ -242,7 +271,12 @@ export function buildBpRosterRows(params: Params): BpViewRosterRow[] {
       person_id: String(assignment.person_id ?? ""),
       tech_id: techId,
       full_name: fullNameWithTechId,
-      context: orgLabel,
+      context: officeLabel,
+      office_name: assignment?.office_name ?? officeLabel,
+      leader_assignment_id: assignment?.leader_assignment_id ?? null,
+      leader_person_id: assignment?.leader_person_id ?? null,
+      leader_name: assignment?.leader_name ?? null,
+      leader_title: assignment?.leader_title ?? null,
       contractor_name:
         "contractor_name" in assignment
           ? (assignment.contractor_name ?? null)
@@ -251,7 +285,7 @@ export function buildBpRosterRows(params: Params): BpViewRosterRow[] {
       metrics,
       below_target_count: belowTargetCount,
       work_mix,
-    });
+    } as BpViewRosterRow);
   }
 
   return rows;

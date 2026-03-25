@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { PageShell } from "@/components/ui/PageShell";
@@ -11,6 +11,15 @@ import BpViewRiskStrip from "@/features/bp-view/components/BpViewRiskStrip";
 import BpWorkMixCard from "@/features/bp-view/components/BpWorkMixCard";
 import BpTechDrillDrawer from "@/features/bp-view/components/BpTechDrillDrawer";
 import BpViewRosterSurface from "@/features/bp-view/components/BpViewRosterSurface";
+
+import CompanyManagerControlBar, {
+  type CompanyManagerSegment,
+  type CompanyManagerViewMode,
+} from "../components/CompanyManagerControlBar";
+import CompanyManagerOfficeTable from "../components/CompanyManagerOfficeTable";
+import CompanyManagerLeadershipTable from "../components/CompanyManagerLeadershipTable";
+import { buildOfficeRollupRows } from "../lib/buildOfficeRollupRows";
+import { buildLeadershipRollupRows } from "../lib/buildLeadershipRollupRows";
 
 import type {
   CompanyManagerPayload,
@@ -103,6 +112,45 @@ function formatRangeLabel(range: RangeKey) {
   return "12 FM";
 }
 
+function filterRows(args: {
+  rows: CompanyManagerRosterRow[];
+  segment: CompanyManagerSegment;
+  contractor: string;
+  office: string | null;
+  leader: string | null;
+}) {
+  const { rows, segment, contractor, office, leader } = args;
+
+  let out = rows;
+
+  if (office) {
+    out = out.filter((row) => row.context === office);
+  }
+
+  if (leader) {
+    out = out.filter((row) => {
+      const leaderName = String((row as any).leader_name ?? "").trim() || "Unassigned";
+      const leaderTitle = String((row as any).leader_title ?? "").trim();
+      const leaderKey = `${leaderName}::${leaderTitle}`;
+      return leaderKey === leader;
+    });
+  }
+
+  if (segment === "ITG") {
+    out = out.filter((row) => row.team_class === "ITG");
+  }
+
+  if (segment === "BP") {
+    out = out.filter(
+      (row) =>
+        row.team_class === "BP" &&
+        (contractor === "ALL" || row.contractor_name === contractor)
+    );
+  }
+
+  return out;
+}
+
 export default function CompanyManagerPage(props: {
   payload: CompanyManagerPayload;
 }) {
@@ -114,6 +162,14 @@ export default function CompanyManagerPage(props: {
   const [isPending, startTransition] = useTransition();
   const [selectedRow, setSelectedRow] =
     useState<CompanyManagerRosterRow | null>(null);
+
+  const [viewMode, setViewMode] =
+    useState<CompanyManagerViewMode>("OFFICE");
+  const [segment, setSegment] =
+    useState<CompanyManagerSegment>("ALL");
+  const [contractor, setContractor] = useState<string>("ALL");
+  const [activeOffice, setActiveOffice] = useState<string | null>(null);
+  const [activeLeader, setActiveLeader] = useState<string | null>(null);
 
   const activeRangeFromUrl = normalizeRange(searchParams.get("range"));
   const [pendingRange, setPendingRange] = useState<RangeKey | null>(null);
@@ -141,10 +197,64 @@ export default function CompanyManagerPage(props: {
     });
   }
 
+  function handleSegmentChange(next: CompanyManagerSegment) {
+    setSegment(next);
+    if (next !== "BP") {
+      setContractor("ALL");
+    }
+  }
+
   const subtitleParts = [
     payload.header.role_label,
     payload.header.rep_full_name,
   ].filter(Boolean);
+
+  const contractorOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          payload.roster_rows
+            .filter((row) => row.team_class === "BP")
+            .map((row) => row.contractor_name?.trim() ?? "")
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b)),
+    [payload.roster_rows]
+  );
+
+  const baseFilteredRows = useMemo(
+    () =>
+      filterRows({
+        rows: payload.roster_rows,
+        segment,
+        contractor,
+        office: null,
+        leader: null,
+      }),
+    [payload.roster_rows, segment, contractor]
+  );
+
+  const officeRows = useMemo(
+    () => buildOfficeRollupRows(baseFilteredRows),
+    [baseFilteredRows]
+  );
+
+  const leadershipRows = useMemo(
+    () => buildLeadershipRollupRows(baseFilteredRows),
+    [baseFilteredRows]
+  );
+
+  const filteredRows = useMemo(
+    () =>
+      filterRows({
+        rows: payload.roster_rows,
+        segment,
+        contractor,
+        office: activeOffice,
+        leader: activeLeader,
+      }),
+    [payload.roster_rows, segment, contractor, activeOffice, activeLeader]
+  );
 
   return (
     <PageShell>
@@ -229,13 +339,106 @@ export default function CompanyManagerPage(props: {
           <BpWorkMixCard workMix={payload.work_mix as any} />
         </Card>
 
+        <CompanyManagerControlBar
+          viewMode={viewMode}
+          onViewModeChange={(next) => {
+            setViewMode(next);
+            if (next !== "OFFICE") setActiveOffice(null);
+            if (next !== "LEADERSHIP") setActiveLeader(null);
+          }}
+          segment={segment}
+          onSegmentChange={handleSegmentChange}
+          contractorOptions={contractorOptions}
+          contractor={contractor}
+          onContractorChange={setContractor}
+        />
+
+        {viewMode === "OFFICE" ? (
+          <Card className="p-4">
+            <div className="mb-4">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                Office Performance
+              </div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                {`${officeRows.length} offices • ${segment} segment • Range: ${formatRangeLabel(
+                  payload.header.range_label
+                )}`}
+              </div>
+            </div>
+
+            <CompanyManagerOfficeTable
+              rows={officeRows}
+              activeOffice={activeOffice}
+              onSelectOffice={(next) => {
+                setActiveOffice(next);
+                if (next) setActiveLeader(null);
+              }}
+            />
+          </Card>
+        ) : null}
+
+        {viewMode === "LEADERSHIP" ? (
+          <Card className="p-4">
+            <div className="mb-4">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                Leadership Performance
+              </div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                {`${leadershipRows.length} leaders • ${segment} segment • Range: ${formatRangeLabel(
+                  payload.header.range_label
+                )}`}
+              </div>
+            </div>
+
+            <CompanyManagerLeadershipTable
+              rows={leadershipRows}
+              activeLeader={activeLeader}
+              onSelectLeader={(next) => {
+                setActiveLeader(next);
+                if (next) setActiveOffice(null);
+              }}
+            />
+          </Card>
+        ) : null}
+
         <Card className="p-4">
           <div className="mb-4">
             <div className="text-xs uppercase tracking-wide text-muted-foreground">
               Workforce Performance
             </div>
+
+            {activeOffice ? (
+              <div className="mb-2 text-xs text-muted-foreground">
+                Viewing office:{" "}
+                <span className="font-medium">{activeOffice}</span>
+                <button
+                  type="button"
+                  className="ml-2 underline"
+                  onClick={() => setActiveOffice(null)}
+                >
+                  Clear
+                </button>
+              </div>
+            ) : null}
+
+            {activeLeader ? (
+              <div className="mb-2 text-xs text-muted-foreground">
+                Viewing leader:{" "}
+                <span className="font-medium">
+                  {activeLeader.split("::")[0]}
+                </span>
+                <button
+                  type="button"
+                  className="ml-2 underline"
+                  onClick={() => setActiveLeader(null)}
+                >
+                  Clear
+                </button>
+              </div>
+            ) : null}
+
             <div className="mt-1 text-sm text-muted-foreground">
-              {`All workforce • ${payload.header.headcount} techs • Range: ${formatRangeLabel(
+              {`${viewMode} view • ${filteredRows.length} techs • Range: ${formatRangeLabel(
                 payload.header.range_label
               )}`}
             </div>
@@ -243,7 +446,7 @@ export default function CompanyManagerPage(props: {
 
           <BpViewRosterSurface
             columns={payload.roster_columns}
-            rows={payload.roster_rows as any}
+            rows={filteredRows as any}
             onSelectRow={(row) => setSelectedRow(row as CompanyManagerRosterRow)}
           />
         </Card>

@@ -1,6 +1,7 @@
 export type AppRole =
   | "TECH"
   | "ITG_SUPERVISOR"
+  | "COMPANY_MANAGER"
   | "BP_SUPERVISOR"
   | "BP_LEAD"
   | "BP_OWNER"
@@ -27,6 +28,15 @@ export function buildRoleNav(role: AppRole): RoleNavItem[] {
     return [
       { key: "home", label: "Home", href: "/home" },
       { key: "supervisor", label: "Team Metrics", href: "/company-supervisor" },
+      { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console" },
+      { key: "fieldlog", label: "Field Log", href: "/field-log" },
+    ];
+  }
+
+  if (role === "COMPANY_MANAGER") {
+    return [
+      { key: "home", label: "Home", href: "/home" },
+      { key: "manager", label: "Team Metrics", href: "/company-manager" },
       { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console" },
       { key: "fieldlog", label: "Field Log", href: "/field-log" },
     ];

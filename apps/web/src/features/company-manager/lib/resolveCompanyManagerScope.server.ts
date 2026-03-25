@@ -13,6 +13,12 @@ export type CompanyManagerScopeAssignmentRow = {
   active: boolean | null;
   start_date?: string | null;
   end_date?: string | null;
+  office_id?: string | null;
+  office_name?: string | null;
+  leader_assignment_id?: string | null;
+  leader_person_id?: string | null;
+  leader_name?: string | null;
+  leader_title?: string | null;
   team_class?: TeamClass;
   contractor_name?: string | null;
 };
@@ -45,6 +51,11 @@ type LeadershipEdgeRow = {
 type ContractorRow = {
   contractor_id: string | null;
   contractor_name: string | null;
+};
+
+type OfficeRow = {
+  office_id: string | null;
+  office_name: string | null;
 };
 
 function isoToday() {
@@ -93,6 +104,28 @@ async function loadOrgLabels(
   return out;
 }
 
+async function loadOfficeLabels(
+  admin: ReturnType<typeof supabaseAdmin>,
+  officeIds: string[]
+) {
+  const out = new Map<string, string>();
+  if (!officeIds.length) return out;
+
+  const { data } = await admin
+    .from("office")
+    .select("office_id,office_name")
+    .in("office_id", officeIds);
+
+  for (const row of (data ?? []) as OfficeRow[]) {
+    const officeId = String(row.office_id ?? "").trim();
+    const officeName = String(row.office_name ?? "").trim();
+    if (!officeId || !officeName) continue;
+    out.set(officeId, officeName);
+  }
+
+  return out;
+}
+
 function uniqueByTech(rows: CompanyManagerScopeAssignmentRow[]) {
   const out = new Map<string, CompanyManagerScopeAssignmentRow>();
 
@@ -121,6 +154,20 @@ function isItgAssignment(args: {
   );
 }
 
+function isLeadershipDisplayAssignment(assignment: CompanyManagerScopeAssignmentRow) {
+  const title = String(assignment.position_title ?? "").toLowerCase();
+
+  if (!title) return false;
+  if (title.includes("technician")) return false;
+
+  return (
+    title.includes("supervisor") ||
+    title.includes("lead") ||
+    title.includes("owner") ||
+    title.includes("manager")
+  );
+}
+
 function buildChildrenByParent(edges: LeadershipEdgeRow[]) {
   const out = new Map<string, string[]>();
 
@@ -133,6 +180,20 @@ function buildChildrenByParent(edges: LeadershipEdgeRow[]) {
     const arr = out.get(parentId) ?? [];
     arr.push(childId);
     out.set(parentId, arr);
+  }
+
+  return out;
+}
+
+function buildParentByChild(edges: LeadershipEdgeRow[]) {
+  const out = new Map<string, string>();
+
+  for (const edge of edges) {
+    const parentId = String(edge.parent_assignment_id ?? "");
+    const childId = String(edge.child_assignment_id ?? "");
+    if (!parentId || !childId) continue;
+    if (edge.active === false) continue;
+    out.set(childId, parentId);
   }
 
   return out;
@@ -161,6 +222,32 @@ function collectDescendantAssignmentIds(args: {
   }
 
   return out;
+}
+
+function resolveNearestLeader(args: {
+  assignmentId: string;
+  parentByChild: Map<string, string>;
+  assignmentsById: Map<string, CompanyManagerScopeAssignmentRow>;
+  managerAssignmentIds: Set<string>;
+}) {
+  const { assignmentId, parentByChild, assignmentsById, managerAssignmentIds } = args;
+
+  let cursor = parentByChild.get(assignmentId) ?? null;
+
+  while (cursor) {
+    if (managerAssignmentIds.has(cursor)) {
+      return null;
+    }
+
+    const candidate = assignmentsById.get(cursor);
+    if (candidate && isLeadershipDisplayAssignment(candidate)) {
+      return candidate;
+    }
+
+    cursor = parentByChild.get(cursor) ?? null;
+  }
+
+  return null;
 }
 
 async function loadContractorLabels(
@@ -212,7 +299,7 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
     admin
       .from("assignment_admin_v")
       .select(
-        "assignment_id,person_id,pc_org_id,tech_id,start_date,end_date,position_title,active"
+        "assignment_id,person_id,pc_org_id,tech_id,start_date,end_date,position_title,active,office_id"
       )
       .eq("pc_org_id", selected_pc_org_id)
       .eq("active", true),
@@ -255,6 +342,7 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
     };
   }
 
+  const managerAssignmentIdSet = new Set(myAssignmentIds);
   const orgAssignmentIds = Array.from(assignmentsById.keys());
 
   const leadershipRes = orgAssignmentIds.length
@@ -267,6 +355,7 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
 
   const leadershipRows = (leadershipRes.data ?? []) as LeadershipEdgeRow[];
   const childrenByParent = buildChildrenByParent(leadershipRows);
+  const parentByChild = buildParentByChild(leadershipRows);
 
   const descendantAssignmentIds = collectDescendantAssignmentIds({
     seedIds: myAssignmentIds,
@@ -310,6 +399,16 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
 
   const contractorNameById = await loadContractorLabels(admin, contractorIds);
 
+  const officeIds = Array.from(
+    new Set(
+      allOrgAssignments
+        .map((assignment) => String(assignment.office_id ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  const officeNameById = await loadOfficeLabels(admin, officeIds);
+
   const descendantTechAssignments = descendantAssignments.filter(
     (assignment) => !!assignment.tech_id
   );
@@ -321,14 +420,39 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
 
       const personRole = String(person?.role ?? "");
       const coRefId = String(person?.co_ref_id ?? "");
+      const officeId = String(assignment.office_id ?? "").trim();
 
       const contractor_name =
         !isItg && personRole === "Contractors" && coRefId
           ? contractorNameById.get(coRefId) ?? null
           : null;
 
+      const office_name = officeId
+        ? officeNameById.get(officeId) ?? null
+        : null;
+
+      const assignmentId = String(assignment.assignment_id ?? "");
+      const leaderAssignment = assignmentId
+        ? resolveNearestLeader({
+            assignmentId,
+            parentByChild,
+            assignmentsById,
+            managerAssignmentIds: managerAssignmentIdSet,
+          })
+        : null;
+
+      const leaderPerson = leaderAssignment
+        ? people_by_id.get(String(leaderAssignment.person_id ?? ""))
+        : null;
+
       return {
         ...assignment,
+        office_id: officeId || null,
+        office_name,
+        leader_assignment_id: leaderAssignment?.assignment_id ?? null,
+        leader_person_id: leaderAssignment?.person_id ?? null,
+        leader_name: leaderPerson?.full_name ?? null,
+        leader_title: leaderAssignment?.position_title ?? null,
         team_class: isItg ? ("ITG" as TeamClass) : ("BP" as TeamClass),
         contractor_name: isItg ? null : contractor_name,
       };

@@ -112,6 +112,8 @@ function iconForNavKey(
       return BarChart3;
     case "supervisor":
       return Users;
+    case "manager":
+      return Users;
     case "roster":
       return Users;
     case "routelock":
@@ -131,6 +133,7 @@ function readShellRoleHint(): AppRole | null {
   if (
     role === "TECH" ||
     role === "ITG_SUPERVISOR" ||
+    role === "COMPANY_MANAGER" ||
     role === "BP_SUPERVISOR" ||
     role === "BP_LEAD" ||
     role === "BP_OWNER" ||
@@ -169,6 +172,7 @@ function mapRoleNavToItems(
     useScopedRail &&
     (
       role === "ITG_SUPERVISOR" ||
+      role === "COMPANY_MANAGER" ||
       role === "BP_SUPERVISOR" ||
       role === "BP_LEAD" ||
       role === "BP_OWNER"
@@ -392,11 +396,13 @@ export default function CoreNav({ lob }: CoreNavProps) {
             ? "TECH"
             : hintRole === "ITG_SUPERVISOR"
               ? "ITG_SUPERVISOR"
-              : hintRole === "BP_SUPERVISOR" ||
-                  hintRole === "BP_LEAD" ||
-                  hintRole === "BP_OWNER"
-                ? "BP"
-                : base.surfaceFamily,
+              : hintRole === "COMPANY_MANAGER"
+                ? "COMPANY_MANAGER"
+                : hintRole === "BP_SUPERVISOR" ||
+                    hintRole === "BP_LEAD" ||
+                    hintRole === "BP_OWNER"
+                  ? "BP"
+                  : base.surfaceFamily,
         useScopedRail: hintRole !== "UNKNOWN",
       };
     }

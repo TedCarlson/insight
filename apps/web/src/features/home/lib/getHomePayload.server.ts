@@ -10,6 +10,7 @@ export type HomeRole =
   | "BP_LEAD"
   | "BP_OWNER"
   | "ITG_SUPERVISOR"
+  | "COMPANY_MANAGER"
   | "UNSCOPED"
   | "UNKNOWN";
 
@@ -50,6 +51,13 @@ function resolveRole(
   if (titles.has("BP Lead")) return "BP_LEAD";
   if (titles.has("BP Supervisor")) return "BP_SUPERVISOR";
   if (titles.has("ITG Supervisor")) return "ITG_SUPERVISOR";
+  if (
+    titles.has("Manager") ||
+    titles.has("Project Manager") ||
+    titles.has("Regional Manager")
+  ) {
+    return "COMPANY_MANAGER";
+  }
   if (titles.has("Technician")) return "TECH";
 
   return "UNKNOWN";
@@ -119,6 +127,12 @@ function buildPrivilegedDestinations(
     });
 
     items.splice(5, 0, {
+      label: "Company Manager",
+      href: "/company-manager",
+      description: "Manager rollups across office, leadership, and workforce",
+    });
+
+    items.splice(6, 0, {
       label: "Dispatch Console",
       href: "/dispatch-console",
       description: "Live job routing, assignments, and activity log",
@@ -144,9 +158,39 @@ function buildDestinations(
         description: "Hybrid workforce performance, KPI strip, and risk surface",
       },
       {
-        label: "Metrics",
-        href: "/metrics",
-        description: "Metrics reporting, uploads, and configuration",
+        label: "Metrics Uploads",
+        href: "/metrics/uploads",
+        description: "Legacy bridge for metrics upload operations",
+      },
+      {
+        label: "Route Lock",
+        href: "/route-lock",
+        description: "Schedule, quota, and route planning controls",
+      },
+      {
+        label: "Dispatch Console",
+        href: "/dispatch-console",
+        description: "Live job routing, assignments, and activity log",
+      },
+      {
+        label: "Field Log",
+        href: "/field-log",
+        description: "Submit, review, and track field activity",
+      },
+    ];
+  }
+
+  if (role === "COMPANY_MANAGER") {
+    return [
+      {
+        label: "Company Manager",
+        href: "/company-manager",
+        description: "Office, leadership, and workforce performance suite",
+      },
+      {
+        label: "Metrics Uploads",
+        href: "/metrics/uploads",
+        description: "Legacy bridge for metrics upload operations",
       },
       {
         label: "Route Lock",

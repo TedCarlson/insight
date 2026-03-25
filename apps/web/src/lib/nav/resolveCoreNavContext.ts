@@ -39,6 +39,14 @@ export function resolveCoreNavContext(args: {
     };
   }
 
+  if (surfaceFamily === "COMPANY_MANAGER") {
+    return {
+      role: "COMPANY_MANAGER",
+      surfaceFamily,
+      useScopedRail: true,
+    };
+  }
+
   if (surfaceFamily === "BP") {
     return {
       role: "BP_SUPERVISOR",

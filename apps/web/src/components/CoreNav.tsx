@@ -15,6 +15,7 @@ import {
   LogOut,
   MapPin,
   Menu,
+  MoreHorizontal,
   ShieldCheck,
   Users,
   X,
@@ -236,6 +237,42 @@ function GrantChipPill(props: { chip: GrantChip }) {
   );
 }
 
+function buildMobileFooterItems(navItems: NavItem[], role: AppRole) {
+  const find = (key: string) => navItems.find((item) => item.key === key);
+  const roleSurfaceKey =
+    role === "COMPANY_MANAGER"
+      ? "manager"
+      : role === "ITG_SUPERVISOR"
+        ? "supervisor"
+        : role === "BP_SUPERVISOR" || role === "BP_LEAD" || role === "BP_OWNER"
+          ? "bpview"
+          : null;
+
+  const roleSurface = roleSurfaceKey ? find(roleSurfaceKey) : null;
+
+  const items: Array<NavItem & { mobileLabel?: string }> = [];
+  const home = find("home");
+  const dispatch = find("dispatch");
+  const fieldLog = find("fieldlog");
+
+  if (home) items.push(home);
+  if (roleSurface) {
+    items.push({
+      ...roleSurface,
+      mobileLabel:
+        role === "COMPANY_MANAGER"
+          ? "Manager"
+          : role === "ITG_SUPERVISOR"
+            ? "Team"
+            : "BP View",
+    });
+  }
+  if (dispatch) items.push({ ...dispatch, mobileLabel: "Dispatch" });
+  if (fieldLog) items.push({ ...fieldLog, mobileLabel: "Log" });
+
+  return items;
+}
+
 function TechMobileNav(props: {
   pathname: string;
   email: string | null | undefined;
@@ -342,6 +379,53 @@ function TechMobileNav(props: {
   );
 }
 
+function LeadershipMobileFooter(props: {
+  pathname: string;
+  navItems: NavItem[];
+  role: AppRole;
+  onMore: () => void;
+}) {
+  const footerItems = buildMobileFooterItems(props.navItems, props.role);
+
+  if (!footerItems.length) return null;
+
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/95 backdrop-blur lg:hidden">
+      <div className="grid grid-cols-5">
+        {footerItems.map((item) => {
+          const active = isActivePath(props.pathname, item.href);
+          const Icon = item.icon;
+
+          return (
+            <Link
+              key={item.key}
+              href={item.href}
+              prefetch={false}
+              className={cls(
+                "flex min-h-16 flex-col items-center justify-center gap-1 px-2 py-2 text-[11px]",
+                active ? "text-foreground" : "text-muted-foreground"
+              )}
+            >
+              <Icon className="h-5 w-5" />
+              <span>{item.mobileLabel ?? item.label}</span>
+            </Link>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={props.onMore}
+          className="flex min-h-16 flex-col items-center justify-center gap-1 px-2 py-2 text-[11px] text-muted-foreground"
+          aria-label="Open more navigation options"
+        >
+          <MoreHorizontal className="h-5 w-5" />
+          <span>More</span>
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 export default function CoreNav({ lob }: CoreNavProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -360,9 +444,8 @@ export default function CoreNav({ lob }: CoreNavProps) {
   const [hintRole, setHintRole] = useState<AppRole | null>(null);
 
   useEffect(() => {
-    if (!open) return;
     setOpen(false);
-  }, [open, pathname]);
+  }, [pathname]);
 
   useEffect(() => {
     if (!open) return;
@@ -425,6 +508,16 @@ export default function CoreNav({ lob }: CoreNavProps) {
   }, [navContext.useScopedRail, accessPass?.permissions]);
 
   const canSeeAdmin = isOwner || canManageConsole;
+  const showLeadershipMobileFooter =
+    !isTechRoute &&
+    navContext.useScopedRail &&
+    (
+      navContext.role === "ITG_SUPERVISOR" ||
+      navContext.role === "COMPANY_MANAGER" ||
+      navContext.role === "BP_SUPERVISOR" ||
+      navContext.role === "BP_LEAD" ||
+      navContext.role === "BP_OWNER"
+    );
 
   const onSignOut = useCallback(() => {
     window.location.assign("/auth/signout");
@@ -641,14 +734,23 @@ export default function CoreNav({ lob }: CoreNavProps) {
         <RailContent variant="rail" />
       </aside>
 
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="fixed left-4 top-4 z-50 inline-flex h-10 w-10 items-center justify-center rounded-md border bg-background/90 backdrop-blur lg:hidden"
-        aria-label="Open navigation menu"
-      >
-        <Menu className="h-5 w-5" />
-      </button>
+      {showLeadershipMobileFooter ? (
+        <LeadershipMobileFooter
+          pathname={pathname}
+          navItems={navItems}
+          role={navContext.role}
+          onMore={() => setOpen(true)}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="fixed left-4 top-4 z-50 inline-flex h-10 w-10 items-center justify-center rounded-md border bg-background/90 backdrop-blur lg:hidden"
+          aria-label="Open navigation menu"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      )}
 
       {open
         ? createPortal(

@@ -1,49 +1,24 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { supabaseServer } from "@/shared/data/supabase/server";
 
-async function rpcBoolWithFallback(
-  supabase: any,
-  fn: string,
-  auth_user_id?: string,
-): Promise<boolean> {
-  const apiClient: any = (supabase as any).schema
-    ? (supabase as any).schema("api")
-    : supabase;
+import { getHomePayload } from "@/features/home/lib/getHomePayload.server";
 
-  const attempts =
-    fn === "is_owner"
-      ? [{}]
-      : [{ p_auth_user_id: auth_user_id }, { auth_user_id }];
-
-  for (const args of attempts) {
-    const { data, error } = await apiClient.rpc(fn, args);
-    if (error) return false;
-    return Boolean(data);
+function resolveLandingHref(role: Awaited<ReturnType<typeof getHomePayload>>["role"]) {
+  if (role === "APP_OWNER" || role === "ADMIN") return "/home";
+  if (role === "BP_OWNER" || role === "BP_LEAD" || role === "BP_SUPERVISOR") {
+    return "/bp/view";
   }
-
-  return false;
+  if (role === "COMPANY_MANAGER") return "/company-manager";
+  if (role === "ITG_SUPERVISOR") return "/company-supervisor";
+  if (role === "TECH") return "/tech";
+  return "/home";
 }
 
 export default async function Page() {
-  const supabase = await supabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const payload = await getHomePayload();
 
-  if (user) {
-    const uid = user.id;
-
-    const [isOwner, isItg, isBp] = await Promise.all([
-      rpcBoolWithFallback(supabase, "is_owner"),
-      rpcBoolWithFallback(supabase, "is_itg_supervisor", uid),
-      rpcBoolWithFallback(supabase, "is_bp_supervisor", uid),
-    ]);
-
-    if (isOwner) redirect("/home");
-    if (isBp) redirect("/bp/view");
-    if (isItg) redirect("/company-supervisor");
-    redirect("/tech");
+  if (payload.full_name || payload.has_linked_person) {
+    redirect(resolveLandingHref(payload.role));
   }
 
   return (

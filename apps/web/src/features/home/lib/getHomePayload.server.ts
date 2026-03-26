@@ -51,7 +51,7 @@ function resolveRole(
   if (titles.has("BP Owner")) return "BP_OWNER";
   if (titles.has("BP Lead")) return "BP_LEAD";
   if (titles.has("BP Supervisor")) return "BP_SUPERVISOR";
-  if (titles.has("ITG Supervisor")) return "ITG_SUPERVISOR";
+
   if (
     titles.has("Manager") ||
     titles.has("Project Manager") ||
@@ -59,6 +59,8 @@ function resolveRole(
   ) {
     return "COMPANY_MANAGER";
   }
+
+  if (titles.has("ITG Supervisor")) return "ITG_SUPERVISOR";
   if (titles.has("Technician")) return "TECH";
 
   return "UNKNOWN";

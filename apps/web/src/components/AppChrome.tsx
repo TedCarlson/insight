@@ -15,7 +15,7 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
           : "min-h-screen flex flex-col lg:pl-72 pt-14 lg:pt-0"
       }
     >
-      <main className={isTechRoute ? "flex-1 px-4 py-4 pb-24" : "flex-1 px-6 py-6"}>
+      <main className={isTechRoute ? "flex-1 px-4 py-4 pb-24" : "flex-1 px-6 py-6 pb-24 lg:pb-6"}>
         {children}
       </main>
 

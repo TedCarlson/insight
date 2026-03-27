@@ -1,8 +1,8 @@
-import FtrSparkline from "@/features/tech/metrics/components/FtrSparkline";
+import Sparkline from "@/features/tech/metrics/components/Sparkline";
 import MetricPeriodDetailTable from "@/features/tech/metrics/components/MetricPeriodDetailTable";
-import type { ScorecardTile } from "@/features/metrics/scorecard/lib/scorecard.types";
+import type { ScorecardTile } from "@/shared/kpis/core/scorecardTypes";
+import type { MetricsRangeKey as RangeKey } from "@/shared/kpis/core/types";
 
-type RangeKey = "FM" | "3FM" | "12FM";
 type Tile = ScorecardTile;
 
 export type FtrDebug = {
@@ -14,6 +14,7 @@ export type FtrDebug = {
     fiscal_end_date: string;
     metric_date: string;
     batch_id: string;
+    inserted_at?: string;
     rows_in_month: number;
     total_ftr_contact_jobs: number | null;
     ftr_fail_jobs: number | null;
@@ -22,6 +23,7 @@ export type FtrDebug = {
     fiscal_end_date: string;
     metric_date: string;
     batch_id: string;
+    inserted_at?: string;
     kpi_value: number | null;
     is_month_final: boolean;
   }>;
@@ -57,18 +59,19 @@ export function buildFtrDrawerModel(args: {
   const selectedRows = args.ftrDebug?.selected_final_rows ?? [];
 
   const currentRows = selectedRows.slice(0, 1);
+  const previousRows = selectedRows.slice(0, 1);
   const last3Rows = selectedRows.slice(0, 3);
-  const last12Rows = selectedRows;
+  const last12Rows = selectedRows.slice(0, 12);
 
-  const summaryRows: Array<{ label: string; value: string }> = [
-    { label: "Current FM", value: computeRangeValue(currentRows) },
-  ];
+  const summaryRows: Array<{ label: string; value: string }> = [];
 
-  if (args.activeRange !== "FM") {
+  if (args.activeRange === "FM") {
+    summaryRows.push({ label: "Current FM", value: computeRangeValue(currentRows) });
+  } else if (args.activeRange === "PREVIOUS") {
+    summaryRows.push({ label: "Previous FM", value: computeRangeValue(previousRows) });
+  } else if (args.activeRange === "3FM") {
     summaryRows.push({ label: "Last 3 FM", value: computeRangeValue(last3Rows) });
-  }
-
-  if (args.activeRange === "12FM") {
+  } else if (args.activeRange === "12FM") {
     summaryRows.push({ label: "Last 12 FM", value: computeRangeValue(last12Rows) });
   }
 
@@ -106,7 +109,7 @@ export function buildFtrDrawerModel(args: {
   return {
     summaryRows,
     chart: (
-      <FtrSparkline
+      <Sparkline
         values={(args.ftrDebug?.trend ?? []).map((t) => ({
           kpi_value: t.kpi_value,
           is_month_final: t.is_month_final,

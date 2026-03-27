@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getTechScorecardPayload } from "@/features/metrics/scorecard";
-import {
-  getTechMetricsRangePayload,
-  type MetricsRangeKey,
-} from "@/features/tech/metrics/lib/getTechMetricsRangePayload.server";
+import { getTechMetricsRangePayload } from "@/features/tech/metrics/lib/getTechMetricsRangePayload.server";
+import type { MetricsRangeKey } from "@/shared/kpis/core/types";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 import { requireAccessPass } from "@/shared/access/requireAccessPass";
 import { hasCapability } from "@/shared/access/access";

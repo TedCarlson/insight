@@ -17,7 +17,12 @@ function resolveLandingHref(role: Awaited<ReturnType<typeof getHomePayload>>["ro
 export default async function Page() {
   const payload = await getHomePayload();
 
-  if (payload.full_name || payload.has_linked_person) {
+  const shouldRedirect =
+    payload.role === "APP_OWNER" ||
+    payload.role === "ADMIN" ||
+    payload.has_linked_person;
+
+  if (shouldRedirect) {
     redirect(resolveLandingHref(payload.role));
   }
 

@@ -1,13 +1,9 @@
-import { headers } from "next/headers";
-
 import TechSurfaceHeader from "@/features/tech/shared/components/TechSurfaceHeader";
 import { getTechWhoAmI } from "@/features/tech/shared/lib/getTechWhoAmI";
 import TechMetricsClient from "@/features/tech/metrics/components/TechMetricsClient";
 import { getTechShellContext } from "@/features/tech/lib/getTechShellContext";
-import {
-  getTechMetricsRangePayload,
-  type MetricsRangeKey,
-} from "@/features/tech/metrics/lib/getTechMetricsRangePayload.server";
+import { getTechMetricsRangePayload } from "@/features/tech/metrics/lib/getTechMetricsRangePayload.server";
+import type { MetricsRangeKey } from "@/shared/kpis/core/types";
 import { getMetricFtrPayload } from "@/features/tech/metrics/lib/getMetricFtrPayload.server";
 import { getMetricTnpsPayload } from "@/features/tech/metrics/lib/getMetricTnpsPayload.server";
 import { getMetricToolUsagePayload } from "@/features/tech/metrics/lib/getMetricToolUsagePayload.server";
@@ -20,36 +16,6 @@ import { getMetricMetPayload } from "@/features/tech/metrics/lib/getMetricMetPay
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-async function getActivePresetKey(): Promise<string | null> {
-  try {
-    const h = await headers();
-    const protocol = h.get("x-forwarded-proto") ?? "http";
-    const host = h.get("x-forwarded-host") ?? h.get("host");
-    if (!host) return null;
-
-    const res = await fetch(`${protocol}://${host}/api/admin/metrics-colors`, {
-      cache: "no-store",
-    });
-
-    if (!res.ok) return null;
-
-    const json = await res.json().catch(() => null);
-    return json?.activePresetKey ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function formatPct1(value: number | null): string | null {
-  if (value == null || !Number.isFinite(value)) return null;
-  return `${value.toFixed(1)}%`;
-}
-
-function formatTnps2(value: number | null): string | null {
-  if (value == null || !Number.isFinite(value)) return null;
-  return value.toFixed(2);
-}
 
 function isTnpsKey(kpiKey: string): boolean {
   return kpiKey.toLowerCase().includes("tnps");
@@ -97,12 +63,18 @@ export default async function TechMetricsFeaturePage(props: {
 
   const sp = (await props.searchParams) ?? {};
   const rawRange = String(sp.range ?? "FM").toUpperCase();
+
   const range: MetricsRangeKey =
-    rawRange === "3FM" ? "3FM" : rawRange === "12FM" ? "12FM" : "FM";
+    rawRange === "PREVIOUS"
+      ? "PREVIOUS"
+      : rawRange === "3FM"
+        ? "3FM"
+        : rawRange === "12FM"
+          ? "12FM"
+          : "FM";
 
   const [
     payload,
-    activePresetKey,
     ftrPayload,
     tnpsPayload,
     toolUsagePayload,
@@ -119,7 +91,6 @@ export default async function TechMetricsFeaturePage(props: {
             person_id: shell.person_id,
             range,
           }),
-          getActivePresetKey(),
           getMetricFtrPayload({
             person_id: shell.person_id,
             tech_id: who.tech_id,
@@ -166,19 +137,16 @@ export default async function TechMetricsFeaturePage(props: {
             range,
           }),
         ])
-      : [null, null, null, null, null, null, null, null, null, null, null];
+      : [null, null, null, null, null, null, null, null, null, null];
 
   const tiles =
     payload?.tiles?.map((tile) => {
       if (tile.kpi_key === "ftr_rate") {
-        const ftrValue = ftrPayload?.summary?.ftr_rate ?? null;
         const ftrJobs = ftrPayload?.summary?.total_contact_jobs ?? null;
         const failJobs = ftrPayload?.summary?.total_fail_jobs ?? null;
 
         return {
           ...tile,
-          value: ftrValue,
-          value_display: formatPct1(ftrValue),
           context: {
             sample_short: ftrJobs,
             sample_long: failJobs,
@@ -188,15 +156,12 @@ export default async function TechMetricsFeaturePage(props: {
       }
 
       if (isTnpsKey(tile.kpi_key)) {
-        const tnpsValue = tnpsPayload?.summary?.tnps_score ?? null;
         const surveys = tnpsPayload?.summary?.tnps_surveys ?? null;
         const promoters = tnpsPayload?.summary?.tnps_promoters ?? null;
         const detractors = tnpsPayload?.summary?.tnps_detractors ?? null;
 
         return {
           ...tile,
-          value: tnpsValue,
-          value_display: formatTnps2(tnpsValue),
           context: {
             sample_short: surveys,
             sample_long: promoters,
@@ -207,14 +172,11 @@ export default async function TechMetricsFeaturePage(props: {
       }
 
       if (isToolUsageKey(tile.kpi_key)) {
-        const tuValue = toolUsagePayload?.summary?.tool_usage_rate ?? null;
         const eligible = toolUsagePayload?.summary?.tu_eligible_jobs ?? null;
         const compliant = toolUsagePayload?.summary?.tu_compliant_jobs ?? null;
 
         return {
           ...tile,
-          value: tuValue,
-          value_display: formatPct1(tuValue),
           context: {
             sample_short: eligible,
             sample_long: compliant,
@@ -224,14 +186,11 @@ export default async function TechMetricsFeaturePage(props: {
       }
 
       if (isPurePassKey(tile.kpi_key)) {
-        const purePassValue = purePassPayload?.summary?.pure_pass_rate ?? null;
         const phtJobs = purePassPayload?.summary?.pht_jobs ?? null;
         const purePass = purePassPayload?.summary?.pure_pass ?? null;
 
         return {
           ...tile,
-          value: purePassValue,
-          value_display: formatPct1(purePassValue),
           context: {
             sample_short: phtJobs,
             sample_long: purePass,
@@ -241,14 +200,11 @@ export default async function TechMetricsFeaturePage(props: {
       }
 
       if (is48HrKey(tile.kpi_key)) {
-        const rate = callback48HrPayload?.summary?.callback_rate_48hr ?? null;
         const orders = callback48HrPayload?.summary?.contact_orders_48hr ?? null;
         const eligible = callback48HrPayload?.summary?.eligible_jobs_48hr ?? null;
 
         return {
           ...tile,
-          value: rate,
-          value_display: formatPct1(rate),
           context: {
             sample_short: orders,
             sample_long: eligible,
@@ -258,14 +214,11 @@ export default async function TechMetricsFeaturePage(props: {
       }
 
       if (isRepeatKey(tile.kpi_key)) {
-        const rate = repeatPayload?.summary?.repeat_rate ?? null;
         const repeats = repeatPayload?.summary?.repeat_count ?? null;
         const tcs = repeatPayload?.summary?.tc_count ?? null;
 
         return {
           ...tile,
-          value: rate,
-          value_display: formatPct1(rate),
           context: {
             sample_short: repeats,
             sample_long: tcs,
@@ -275,14 +228,11 @@ export default async function TechMetricsFeaturePage(props: {
       }
 
       if (isSoiKey(tile.kpi_key)) {
-        const rate = soiPayload?.summary?.soi_rate ?? null;
         const soiCount = soiPayload?.summary?.soi_count ?? null;
         const installs = soiPayload?.summary?.installs ?? null;
 
         return {
           ...tile,
-          value: rate,
-          value_display: formatPct1(rate),
           context: {
             sample_short: soiCount,
             sample_long: installs,
@@ -292,14 +242,11 @@ export default async function TechMetricsFeaturePage(props: {
       }
 
       if (isReworkKey(tile.kpi_key)) {
-        const rate = reworkPayload?.summary?.rework_rate ?? null;
         const reworkCount = reworkPayload?.summary?.rework_count ?? null;
         const totalAppts = reworkPayload?.summary?.total_appts ?? null;
 
         return {
           ...tile,
-          value: rate,
-          value_display: formatPct1(rate),
           context: {
             sample_short: reworkCount,
             sample_long: totalAppts,
@@ -309,14 +256,11 @@ export default async function TechMetricsFeaturePage(props: {
       }
 
       if (isMetKey(tile.kpi_key)) {
-        const rate = metPayload?.summary?.met_rate ?? null;
         const metCount = metPayload?.summary?.met_count ?? null;
         const totalAppts = metPayload?.summary?.total_appts ?? null;
 
         return {
           ...tile,
-          value: rate,
-          value_display: formatPct1(rate),
           context: {
             sample_short: metCount,
             sample_long: totalAppts,
@@ -342,7 +286,6 @@ export default async function TechMetricsFeaturePage(props: {
       <TechMetricsClient
         initialRange={range}
         tiles={tiles}
-        activePresetKey={activePresetKey}
         ftrDebug={ftrPayload?.debug ?? null}
         tnpsDebug={tnpsPayload?.debug ?? undefined}
         toolUsageDebug={toolUsagePayload?.debug ?? undefined}

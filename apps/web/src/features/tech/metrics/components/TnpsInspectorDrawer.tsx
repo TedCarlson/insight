@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ScorecardTile } from "@/features/metrics/scorecard/lib/scorecard.types";
+import type { ScorecardTile } from "@/shared/kpis/core/scorecardTypes";
 import MetricPeriodDetailTable from "./MetricPeriodDetailTable";
-
-type RangeKey = "FM" | "3FM" | "12FM";
+import type { MetricsRangeKey as RangeKey } from "@/shared/kpis/core/types";
 
 type TnpsDebug = {
   requested_range: string;
@@ -15,6 +14,7 @@ type TnpsDebug = {
     fiscal_end_date: string;
     metric_date: string;
     batch_id: string;
+    inserted_at?: string;
     rows_in_month: number;
     tnps_surveys: number | null;
     tnps_promoters: number | null;
@@ -24,6 +24,7 @@ type TnpsDebug = {
     fiscal_end_date: string;
     metric_date: string;
     batch_id: string;
+    inserted_at?: string;
     tnps_surveys: number | null;
     tnps_promoters: number | null;
     tnps_detractors: number | null;
@@ -162,12 +163,9 @@ function MixCard(props: {
   } as const;
 
   const numericValue =
-    typeof props.value === "number"
-      ? props.value
-      : Number(props.value);
+    typeof props.value === "number" ? props.value : Number(props.value);
 
   const isZero = !numericValue;
-
   const effectiveTone = !isZero && props.tone ? toneMap[props.tone] : null;
 
   return (
@@ -442,18 +440,19 @@ export default function TnpsInspectorDrawer(props: {
   const trend = props.tnpsDebug?.trend ?? [];
 
   const currentRows = selectedRows.slice(0, 1);
+  const previousRows = selectedRows.slice(0, 1);
   const last3Rows = selectedRows.slice(0, 3);
-  const last12Rows = selectedRows;
+  const last12Rows = selectedRows.slice(0, 12);
 
-  const summaryRows: Array<{ label: string; value: string }> = [
-    { label: "Current FM", value: buildRangeValue(currentRows) },
-  ];
+  const summaryRows: Array<{ label: string; value: string }> = [];
 
-  if (props.activeRange !== "FM") {
+  if (props.activeRange === "FM") {
+    summaryRows.push({ label: "Current FM", value: buildRangeValue(currentRows) });
+  } else if (props.activeRange === "PREVIOUS") {
+    summaryRows.push({ label: "Previous FM", value: buildRangeValue(previousRows) });
+  } else if (props.activeRange === "3FM") {
     summaryRows.push({ label: "Last 3 FM", value: buildRangeValue(last3Rows) });
-  }
-
-  if (props.activeRange === "12FM") {
+  } else if (props.activeRange === "12FM") {
     summaryRows.push({ label: "Last 12 FM", value: buildRangeValue(last12Rows) });
   }
 
@@ -482,7 +481,13 @@ export default function TnpsInspectorDrawer(props: {
 
   const periodFooter = {
     key: "footer",
-    cells: ["TOTAL", totalScore, totalSurveys || "—", totalPromoters || "—", totalDetractors || "—"],
+    cells: [
+      "TOTAL",
+      totalScore,
+      totalSurveys || "—",
+      totalPromoters || "—",
+      totalDetractors || "—",
+    ],
   };
 
   return (

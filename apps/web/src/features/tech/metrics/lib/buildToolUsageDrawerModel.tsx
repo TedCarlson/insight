@@ -1,8 +1,8 @@
-import FtrSparkline from "@/features/tech/metrics/components/FtrSparkline";
+import Sparkline from "@/features/tech/metrics/components/Sparkline";
 import MetricPeriodDetailTable from "@/features/tech/metrics/components/MetricPeriodDetailTable";
-import type { ScorecardTile } from "@/features/metrics/scorecard/lib/scorecard.types";
+import type { ScorecardTile } from "@/shared/kpis/core/scorecardTypes";
+import type { MetricsRangeKey as RangeKey } from "@/shared/kpis/core/types";
 
-type RangeKey = "FM" | "3FM" | "12FM";
 type Tile = ScorecardTile;
 
 export type ToolUsageDebug = {
@@ -14,6 +14,7 @@ export type ToolUsageDebug = {
     fiscal_end_date: string;
     metric_date: string;
     batch_id: string;
+    inserted_at?: string;
     rows_in_month: number;
     tu_eligible_jobs: number | null;
     tu_compliant_jobs: number | null;
@@ -23,6 +24,7 @@ export type ToolUsageDebug = {
     fiscal_end_date: string;
     metric_date: string;
     batch_id: string;
+    inserted_at?: string;
     tu_eligible_jobs: number | null;
     tu_compliant_jobs: number | null;
     tool_usage_rate: number | null;
@@ -76,21 +78,28 @@ export function buildToolUsageDrawerModel(args: {
   const selectedRows = args.toolUsageDebug?.selected_final_rows ?? [];
 
   const currentRows = selectedRows.slice(0, 1);
+  const previousRows = selectedRows.slice(0, 1);
   const last3Rows = selectedRows.slice(0, 3);
-  const last12Rows = selectedRows;
+  const last12Rows = selectedRows.slice(0, 12);
 
-  const summaryRows: Array<{ label: string; value: string }> = [
-    { label: "Current FM", value: computeRangeValue(currentRows) },
-  ];
+  const summaryRows: Array<{ label: string; value: string }> = [];
 
-  if (args.activeRange !== "FM") {
+  if (args.activeRange === "FM") {
+    summaryRows.push({
+      label: "Current FM",
+      value: computeRangeValue(currentRows),
+    });
+  } else if (args.activeRange === "PREVIOUS") {
+    summaryRows.push({
+      label: "Previous FM",
+      value: computeRangeValue(previousRows),
+    });
+  } else if (args.activeRange === "3FM") {
     summaryRows.push({
       label: "Last 3 FM",
       value: computeRangeValue(last3Rows),
     });
-  }
-
-  if (args.activeRange === "12FM") {
+  } else if (args.activeRange === "12FM") {
     summaryRows.push({
       label: "Last 12 FM",
       value: computeRangeValue(last12Rows),
@@ -132,7 +141,7 @@ export function buildToolUsageDrawerModel(args: {
   return {
     summaryRows,
     chart: (
-      <FtrSparkline
+      <Sparkline
         values={(args.toolUsageDebug?.trend ?? []).map((t) => ({
           kpi_value: t.kpi_value,
           is_month_final: t.is_month_final,

@@ -1,20 +1,12 @@
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
-
-export type MetricsRangeKey = "FM" | "3FM" | "12FM";
+import { resolveFiscalSelection } from "@/shared/kpis/core/rowSelection";
+import type { MetricsRangeKey, RawMetricRow } from "@/shared/kpis/core/types";
 
 type Args = {
   person_id: string;
   tech_id: string;
   range: MetricsRangeKey;
-};
-
-type RawRow = {
-  metric_date: string;
-  fiscal_end_date: string;
-  batch_id: string;
-  inserted_at: string;
-  raw: Record<string, unknown>;
 };
 
 function pickNum(obj: Record<string, unknown>, keys: string[]): number | null {
@@ -34,58 +26,6 @@ function computeTnpsScore(
 ): number | null {
   if (surveys > 0) return (100 * (promoters - detractors)) / surveys;
   return null;
-}
-
-function monthsToTake(range: MetricsRangeKey) {
-  if (range === "3FM") return 3;
-  if (range === "12FM") return 12;
-  return 1;
-}
-
-function groupByMonth(rows: RawRow[]) {
-  const map = new Map<string, RawRow[]>();
-
-  for (const r of rows) {
-    const key = r.fiscal_end_date;
-    const arr = map.get(key) ?? [];
-    arr.push(r);
-    map.set(key, arr);
-  }
-
-  return map;
-}
-
-function getFinalRowPerMonth(rows: RawRow[]) {
-  const grouped = groupByMonth(rows);
-  const out: Array<{
-    fiscal_end_date: string;
-    row: RawRow;
-    rows_in_month: number;
-  }> = [];
-
-  for (const [fiscal_end_date, arr] of grouped) {
-    arr.sort((a, b) => {
-      // 1. latest metric date in the fiscal container wins
-      const byMetricDate = b.metric_date.localeCompare(a.metric_date);
-      if (byMetricDate !== 0) return byMetricDate;
-
-      // 2. inside that same metric date, latest delivered insert wins
-      const byInsertedAt = b.inserted_at.localeCompare(a.inserted_at);
-      if (byInsertedAt !== 0) return byInsertedAt;
-
-      // 3. final stable tie-break only
-      return b.batch_id.localeCompare(a.batch_id);
-    });
-
-    out.push({
-      fiscal_end_date,
-      row: arr[0],
-      rows_in_month: arr.length,
-    });
-  }
-
-  out.sort((a, b) => b.fiscal_end_date.localeCompare(a.fiscal_end_date));
-  return out;
 }
 
 function parseRaw(raw: unknown): Record<string, unknown> {
@@ -126,7 +66,7 @@ export async function getMetricTnpsPayload(args: Args) {
     throw new Error(`getMetricTnpsPayload failed: ${error.message}`);
   }
 
-  const rows: RawRow[] = (data ?? []).map((r: any) => ({
+  const rows: RawMetricRow[] = (data ?? []).map((r: any) => ({
     metric_date: String(r.metric_date ?? "").slice(0, 10),
     fiscal_end_date: String(r.fiscal_end_date ?? "").slice(0, 10),
     batch_id: String(r.batch_id ?? ""),
@@ -136,50 +76,48 @@ export async function getMetricTnpsPayload(args: Args) {
 
   if (!rows.length) return null;
 
-  const finalRowsByMonth = getFinalRowPerMonth(rows);
+  const {
+    finalRowsByMonth,
+    selectedFinalRows,
+    selectedFiscalMonths,
+  } = resolveFiscalSelection(rows, args.range);
+
   const distinctFiscalMonthsFound = finalRowsByMonth.map((x) => x.fiscal_end_date);
-  const selectedMonthCount = monthsToTake(args.range);
-  const selectedFinalRows = finalRowsByMonth.slice(0, selectedMonthCount);
-  const selectedFiscalMonths = new Set(
-    selectedFinalRows.map((x) => x.fiscal_end_date)
-  );
+
+  const summaryRows =
+    args.range === "FM" || args.range === "PREVIOUS"
+      ? selectedFinalRows.length
+        ? [selectedFinalRows[0].row]
+        : []
+      : selectedFinalRows.map((x) => x.row);
 
   let totalSurveys = 0;
   let totalPromoters = 0;
   let totalDetractors = 0;
 
-  for (const item of selectedFinalRows) {
-    const r = item.row;
-
-    const surveys = pickNum(r.raw, [
+  for (const row of summaryRows) {
+    const surveys = pickNum(row.raw, [
       "tNPS Surveys",
       "tnps_surveys",
       "tNPS_Surveys",
       "Surveys",
     ]);
 
-    const promoters = pickNum(r.raw, [
-      "Promoters",
-      "tnps_promoters",
-    ]);
+    const promoters = pickNum(row.raw, ["Promoters", "tnps_promoters"]);
 
-    const detractors = pickNum(r.raw, [
-      "Detractors",
-      "tnps_detractors",
-    ]);
+    const detractors = pickNum(row.raw, ["Detractors", "tnps_detractors"]);
 
     if (surveys != null && surveys > 0) {
       totalSurveys += surveys;
-      if (promoters != null) totalPromoters += promoters;
-      if (detractors != null) totalDetractors += detractors;
+      totalPromoters += promoters ?? 0;
+      totalDetractors += detractors ?? 0;
     }
   }
 
-  const summaryTnps = computeTnpsScore(
-    totalSurveys,
-    totalPromoters,
-    totalDetractors
-  );
+  const summaryTnps =
+    totalSurveys > 0
+      ? computeTnpsScore(totalSurveys, totalPromoters, totalDetractors)
+      : null;
 
   const monthFinalMap = new Set(
     selectedFinalRows.map(
@@ -198,15 +136,9 @@ export async function getMetricTnpsPayload(args: Args) {
         "Surveys",
       ]);
 
-      const promoters = pickNum(r.raw, [
-        "Promoters",
-        "tnps_promoters",
-      ]);
+      const promoters = pickNum(r.raw, ["Promoters", "tnps_promoters"]);
 
-      const detractors = pickNum(r.raw, [
-        "Detractors",
-        "tnps_detractors",
-      ]);
+      const detractors = pickNum(r.raw, ["Detractors", "tnps_detractors"]);
 
       const kpiValue =
         surveys != null && surveys > 0
@@ -254,15 +186,9 @@ export async function getMetricTnpsPayload(args: Args) {
           "Surveys",
         ]);
 
-        const promoters = pickNum(x.row.raw, [
-          "Promoters",
-          "tnps_promoters",
-        ]);
+        const promoters = pickNum(x.row.raw, ["Promoters", "tnps_promoters"]);
 
-        const detractors = pickNum(x.row.raw, [
-          "Detractors",
-          "tnps_detractors",
-        ]);
+        const detractors = pickNum(x.row.raw, ["Detractors", "tnps_detractors"]);
 
         return {
           fiscal_end_date: x.row.fiscal_end_date,

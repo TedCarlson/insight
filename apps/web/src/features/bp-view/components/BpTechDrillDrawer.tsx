@@ -10,10 +10,8 @@ import type {
   BpViewRosterRow,
 } from "../lib/bpView.types";
 
-import type {
-  BandKey,
-  ScorecardTile,
-} from "@/features/metrics/scorecard/lib/scorecard.types";
+import type { ScorecardTile } from "@/shared/kpis/core/scorecardTypes";
+import type { KpiBandKey as BandKey } from "@/shared/kpis/core/types";
 
 import { buildFtrDrawerModel } from "@/features/tech/metrics/lib/buildFtrDrawerModel";
 import { buildToolUsageDrawerModel } from "@/features/tech/metrics/lib/buildToolUsageDrawerModel";

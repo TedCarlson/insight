@@ -3,11 +3,16 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import type { ScorecardTile } from "@/features/metrics/scorecard/lib/scorecard.types";
-import { mapTilesWithPreset } from "@/features/tech/metrics/lib/mapTilesWithPreset";
+import type { ScorecardTile } from "@/shared/kpis/core/scorecardTypes";
+import type { MetricsRangeKey as RangeKey } from "@/shared/kpis/core/types";
+
 import MetricInspectorDrawer from "./MetricInspectorDrawer";
 import TnpsInspectorDrawer from "./TnpsInspectorDrawer";
-import { buildFtrDrawerModel, type FtrDebug } from "@/features/tech/metrics/lib/buildFtrDrawerModel";
+
+import {
+  buildFtrDrawerModel,
+  type FtrDebug,
+} from "@/features/tech/metrics/lib/buildFtrDrawerModel";
 import {
   buildToolUsageDrawerModel,
   type ToolUsageDebug,
@@ -37,7 +42,6 @@ import {
   type MetDebug,
 } from "@/features/tech/metrics/lib/buildMetDrawerModel";
 
-type RangeKey = "FM" | "3FM" | "12FM";
 type Tile = ScorecardTile;
 
 type TnpsDebug = {
@@ -49,10 +53,22 @@ type TnpsDebug = {
     fiscal_end_date: string;
     metric_date: string;
     batch_id: string;
+    inserted_at?: string;
     rows_in_month: number;
     tnps_surveys: number | null;
     tnps_promoters: number | null;
     tnps_detractors: number | null;
+  }>;
+  trend?: Array<{
+    fiscal_end_date: string;
+    metric_date: string;
+    batch_id: string;
+    inserted_at?: string;
+    tnps_surveys: number | null;
+    tnps_promoters: number | null;
+    tnps_detractors: number | null;
+    kpi_value: number | null;
+    is_month_final: boolean;
   }>;
 };
 
@@ -150,64 +166,64 @@ function formatTnpsSupportLine(tile: Tile): string | null {
 
 function formatSupportLine(tile: Tile): string | null {
   if (tile.kpi_key === "ftr_rate") {
-    const jobs = tile.context?.sample_short;
-    const fails = tile.context?.sample_long;
+    const jobs = tile.context?.sample_short as number | null | undefined;
+    const fails = tile.context?.sample_long as number | null | undefined;
     const left = jobs ? `${Math.round(jobs)} FTR jobs` : null;
     const right = fails ? `${Math.round(fails)} fails` : null;
     return [left, right].filter(Boolean).join(" • ") || null;
   }
 
   if (isToolUsageKey(tile.kpi_key)) {
-    const eligible = tile.context?.sample_short;
-    const compliant = tile.context?.sample_long;
+    const eligible = tile.context?.sample_short as number | null | undefined;
+    const compliant = tile.context?.sample_long as number | null | undefined;
     const left = eligible ? `${Math.round(eligible)} eligible` : null;
     const right = compliant ? `${Math.round(compliant)} compliant` : null;
     return [left, right].filter(Boolean).join(" • ") || null;
   }
 
   if (isPurePassKey(tile.kpi_key)) {
-    const jobs = tile.context?.sample_short;
-    const purePass = tile.context?.sample_long;
+    const jobs = tile.context?.sample_short as number | null | undefined;
+    const purePass = tile.context?.sample_long as number | null | undefined;
     const left = jobs ? `${Math.round(jobs)} PHT jobs` : null;
     const right = purePass ? `${Math.round(purePass)} pure pass` : null;
     return [left, right].filter(Boolean).join(" • ") || null;
   }
 
   if (is48HrKey(tile.kpi_key)) {
-    const orders = tile.context?.sample_short;
-    const eligible = tile.context?.sample_long;
+    const orders = tile.context?.sample_short as number | null | undefined;
+    const eligible = tile.context?.sample_long as number | null | undefined;
     const left = orders ? `${Math.round(orders)} orders` : null;
     const right = eligible ? `${Math.round(eligible)} eligible` : null;
     return [left, right].filter(Boolean).join(" • ") || null;
   }
 
   if (isRepeatKey(tile.kpi_key)) {
-    const repeats = tile.context?.sample_short;
-    const tcs = tile.context?.sample_long;
+    const repeats = tile.context?.sample_short as number | null | undefined;
+    const tcs = tile.context?.sample_long as number | null | undefined;
     const left = repeats ? `${Math.round(repeats)} repeats` : null;
     const right = tcs ? `${Math.round(tcs)} TCs` : null;
     return [left, right].filter(Boolean).join(" • ") || null;
   }
 
   if (isSoiKey(tile.kpi_key)) {
-    const soi = tile.context?.sample_short;
-    const installs = tile.context?.sample_long;
+    const soi = tile.context?.sample_short as number | null | undefined;
+    const installs = tile.context?.sample_long as number | null | undefined;
     const left = soi ? `${Math.round(soi)} SOI` : null;
     const right = installs ? `${Math.round(installs)} installs` : null;
     return [left, right].filter(Boolean).join(" • ") || null;
   }
 
   if (isReworkKey(tile.kpi_key)) {
-    const rework = tile.context?.sample_short;
-    const appts = tile.context?.sample_long;
+    const rework = tile.context?.sample_short as number | null | undefined;
+    const appts = tile.context?.sample_long as number | null | undefined;
     const left = rework ? `${Math.round(rework)} rework` : null;
     const right = appts ? `${Math.round(appts)} appts` : null;
     return [left, right].filter(Boolean).join(" • ") || null;
   }
 
   if (isMetKey(tile.kpi_key)) {
-    const met = tile.context?.sample_short;
-    const appts = tile.context?.sample_long;
+    const met = tile.context?.sample_short as number | null | undefined;
+    const appts = tile.context?.sample_long as number | null | undefined;
     const left = met ? `${Math.round(met)} met` : null;
     const right = appts ? `${Math.round(appts)} appts` : null;
     return [left, right].filter(Boolean).join(" • ") || null;
@@ -258,7 +274,6 @@ function MetricCard(props: { tile: Tile; onOpen: () => void }) {
 export default function TechMetricsClient(props: {
   initialRange: RangeKey;
   tiles: Tile[];
-  activePresetKey: string | null;
   ftrDebug: FtrDebug;
   tnpsDebug?: TnpsDebug;
   toolUsageDebug?: ToolUsageDebug;
@@ -277,7 +292,13 @@ export default function TechMetricsClient(props: {
   const urlRangeRaw = String(searchParams.get("range") ?? props.initialRange ?? "FM").toUpperCase();
 
   const activeRangeFromUrl: RangeKey =
-    urlRangeRaw === "3FM" ? "3FM" : urlRangeRaw === "12FM" ? "12FM" : "FM";
+    urlRangeRaw === "PREVIOUS"
+      ? "PREVIOUS"
+      : urlRangeRaw === "3FM"
+        ? "3FM"
+        : urlRangeRaw === "12FM"
+          ? "12FM"
+          : "FM";
 
   const optimisticRange: RangeKey =
     isPending && pendingRange ? pendingRange : activeRangeFromUrl;
@@ -290,10 +311,7 @@ export default function TechMetricsClient(props: {
     });
   }
 
-  const tiles = useMemo(
-    () => mapTilesWithPreset(props.tiles, props.activePresetKey),
-    [props.tiles, props.activePresetKey]
-  );
+  const tiles = useMemo(() => props.tiles, [props.tiles]);
 
   const [openMetricKey, setOpenMetricKey] = useState<string | null>(null);
 
@@ -387,12 +405,18 @@ export default function TechMetricsClient(props: {
   return (
     <>
       <section className="rounded-2xl border bg-card p-3">
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           <RangeChip
             label="Current FM"
             active={optimisticRange === "FM"}
             pending={isPending && pendingRange === "FM"}
             onClick={() => onSelectRange("FM")}
+          />
+          <RangeChip
+            label="Previous FM"
+            active={optimisticRange === "PREVIOUS"}
+            pending={isPending && pendingRange === "PREVIOUS"}
+            onClick={() => onSelectRange("PREVIOUS")}
           />
           <RangeChip
             label="Last 3 FM"

@@ -8,9 +8,9 @@ import { Card } from "@/components/ui/Card";
 
 import BpViewKpiStrip from "@/features/bp-view/components/BpViewKpiStrip";
 import BpViewRiskStrip from "@/features/bp-view/components/BpViewRiskStrip";
-import BpWorkMixCard from "@/features/bp-view/components/BpWorkMixCard";
 import BpTechDrillDrawer from "@/features/bp-view/components/BpTechDrillDrawer";
 import BpViewRosterSurface from "@/features/bp-view/components/BpViewRosterSurface";
+import type { BpRangeKey, BpViewRosterRow } from "@/features/bp-view/lib/bpView.types";
 
 import CompanyManagerControlBar, {
   type CompanyManagerSegment,
@@ -34,8 +34,7 @@ function normalizeRange(value: string | null | undefined): RangeKey {
   return "FM";
 }
 
-function mapRangeForDrawer(range: RangeKey): "FM" | "3FM" | "12FM" {
-  if (range === "PREVIOUS") return "FM";
+function mapRangeForDrawer(range: RangeKey): BpRangeKey {
   return range;
 }
 
@@ -127,8 +126,12 @@ function filterRows(args: {
 
   if (leader) {
     out = out.filter((row) => {
-      const leaderName = String((row as any).leader_name ?? "").trim() || "Unassigned";
-      const leaderTitle = String((row as any).leader_title ?? "").trim();
+      const leaderName =
+        String((row as Record<string, unknown>).leader_name ?? "").trim() ||
+        "Unassigned";
+      const leaderTitle = String(
+        (row as Record<string, unknown>).leader_title ?? ""
+      ).trim();
       const leaderKey = `${leaderName}::${leaderTitle}`;
       return leaderKey === leader;
     });
@@ -327,15 +330,12 @@ export default function CompanyManagerPage(props: {
           </div>
         </section>
 
-        <BpViewKpiStrip items={payload.kpi_strip as any} />
+        <BpViewKpiStrip items={payload.kpi_strip as never[]} />
 
-        <BpViewRiskStrip items={payload.risk_strip as any} />
-
-        <Card className="p-4">
-          <BpWorkMixCard workMix={payload.work_mix as any} />
-        </Card>
+        <BpViewRiskStrip items={payload.risk_strip as never[]} />
 
         <CompanyManagerControlBar
+          workMix={payload.work_mix as never}
           viewMode={viewMode}
           onViewModeChange={(next) => {
             setViewMode(next);
@@ -442,7 +442,7 @@ export default function CompanyManagerPage(props: {
 
           <BpViewRosterSurface
             columns={payload.roster_columns}
-            rows={filteredRows as any}
+            rows={filteredRows as BpViewRosterRow[]}
             onSelectRow={(row) => setSelectedRow(row as CompanyManagerRosterRow)}
           />
         </Card>
@@ -450,7 +450,7 @@ export default function CompanyManagerPage(props: {
 
       <BpTechDrillDrawer
         open={!!selectedRow}
-        row={selectedRow as any}
+        row={selectedRow as BpViewRosterRow | null}
         range={mapRangeForDrawer(payload.header.range_label)}
         onClose={() => setSelectedRow(null)}
       />

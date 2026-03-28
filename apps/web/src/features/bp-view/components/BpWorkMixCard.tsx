@@ -7,23 +7,27 @@ function formatPct(value: number | null): string {
   return `${value.toFixed(1)}%`;
 }
 
-function MixStat(props: {
+function InlineDivider() {
+  return <span className="text-muted-foreground/50">|</span>;
+}
+
+function InlineStat(props: {
   label: string;
   value: number;
-  pct: number | null;
+  pct?: number | null;
 }) {
   return (
-    <div className="rounded-2xl border bg-muted/10 px-4 py-3">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-        {props.label}
-      </div>
-      <div className="mt-1 text-lg font-semibold leading-none">
-        {props.value}
-      </div>
-      <div className="mt-1 text-xs text-muted-foreground">
-        {formatPct(props.pct)}
-      </div>
-    </div>
+    <>
+      <span className="text-muted-foreground">{props.label}:</span>{" "}
+      <span className="font-medium">{props.value}</span>
+      {props.pct !== undefined ? (
+        <>
+          {" "}
+          <span className="text-muted-foreground">/</span>{" "}
+          <span className="text-muted-foreground">{formatPct(props.pct)}</span>
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -33,41 +37,33 @@ export default function BpWorkMixCard(props: {
   const { workMix } = props;
 
   return (
-    <section className="rounded-2xl border bg-card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold">Work Mix</div>
-          <div className="text-xs text-muted-foreground">
-            Range-scoped production mix
+    <section className="rounded-2xl border bg-muted/[0.04] px-4 py-3 xl:h-full">
+      <div className="flex flex-col gap-2 text-sm xl:justify-center">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="font-semibold">Work Mix</div>
+          <InlineDivider />
+          <div>
+            <InlineStat label="Total Jobs" value={workMix.total} />
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-muted/10 px-4 py-3 text-right">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Total
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div>
+            <InlineStat
+              label="Installs"
+              value={workMix.installs}
+              pct={workMix.install_pct}
+            />
           </div>
-          <div className="mt-1 text-xl font-semibold leading-none">
-            {workMix.total}
+          <InlineDivider />
+          <div>
+            <InlineStat label="TCs" value={workMix.tcs} pct={workMix.tc_pct} />
+          </div>
+          <InlineDivider />
+          <div>
+            <InlineStat label="SROs" value={workMix.sros} pct={workMix.sro_pct} />
           </div>
         </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <MixStat
-          label="Installs"
-          value={workMix.installs}
-          pct={workMix.install_pct}
-        />
-        <MixStat
-          label="TCs"
-          value={workMix.tcs}
-          pct={workMix.tc_pct}
-        />
-        <MixStat
-          label="SROs"
-          value={workMix.sros}
-          pct={workMix.sro_pct}
-        />
       </div>
     </section>
   );

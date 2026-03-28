@@ -1,10 +1,13 @@
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import type { BandKey } from "@/features/metrics/scorecard/lib/scorecard.types";
 
-import { bandLabel, formatValueDisplay, isoToday } from "@/features/bp-view/lib/bpViewMetricHelpers";
+import {
+  bandLabel,
+  formatValueDisplay,
+  isoToday,
+} from "@/features/bp-view/lib/bpViewMetricHelpers";
 import { buildBpRiskStrip } from "@/features/bp-view/lib/buildBpRiskStrip";
 import { buildBpRosterRows } from "@/features/bp-view/lib/buildBpRosterRows";
-import { sortBpRosterRows } from "@/features/bp-view/lib/sortBpRosterRows";
 import {
   buildAggregateMetricMap,
   computeAggregateMetricValue,
@@ -19,6 +22,7 @@ import {
   resolveAllBpKpis,
   type RangeKey,
 } from "@/features/bp-view/lib/bpViewResolverRegistry";
+import { sortWorkforceRows } from "@/shared/kpis/core/sortWorkforceRows";
 
 import type {
   CompanyManagerLeadershipRollupRow,
@@ -56,6 +60,17 @@ type AssignmentMeta = {
   leader_name: string;
   leader_title: string | null;
 };
+
+type MetricOrderItem = {
+  kpi_key: string;
+  label: string;
+};
+
+function sortKpis(config: KpiCfg[]) {
+  return [...config].sort(
+    (a, b) => a.sort - b.sort || a.label.localeCompare(b.label)
+  );
+}
 
 async function loadViewKpiConfig(
   admin: ReturnType<typeof supabaseAdmin>
@@ -114,8 +129,7 @@ async function loadViewKpiConfig(
     });
   }
 
-  out.sort((a, b) => a.sort - b.sort || a.label.localeCompare(b.label));
-  return out;
+  return sortKpis(out);
 }
 
 async function loadRubrics(
@@ -156,7 +170,10 @@ function pct(part: number, total: number): number | null {
   return (100 * part) / total;
 }
 
-function resolveOfficeLabel(assignment: Record<string, unknown>, orgLabelsById: Map<string, string>) {
+function resolveOfficeLabel(
+  assignment: Record<string, unknown>,
+  orgLabelsById: Map<string, string>
+) {
   const directOffice =
     assignment?.office_name ??
     assignment?.office ??
@@ -171,25 +188,38 @@ function resolveOfficeLabel(assignment: Record<string, unknown>, orgLabelsById: 
   }
 
   const pcOrgId = String(assignment?.pc_org_id ?? "").trim();
-  if (pcOrgId && orgLabelsById.has(pcOrgId)) return orgLabelsById.get(pcOrgId) ?? pcOrgId;
+  if (pcOrgId && orgLabelsById.has(pcOrgId)) {
+    return orgLabelsById.get(pcOrgId) ?? pcOrgId;
+  }
   return pcOrgId || "Unknown";
 }
 
-function buildAssignmentMeta(scope: Awaited<ReturnType<typeof resolveCompanyManagerScope>>) {
+function buildAssignmentMeta(
+  scope: Awaited<ReturnType<typeof resolveCompanyManagerScope>>
+) {
   const out = new Map<string, AssignmentMeta>();
 
-  for (const assignment of scope.scoped_assignments as Array<Record<string, unknown>>) {
+  for (const assignment of scope.scoped_assignments as Array<
+    Record<string, unknown>
+  >) {
     const techId = String(assignment.tech_id ?? "").trim();
     if (!techId) continue;
 
-    const leaderName = String(assignment.leader_name ?? "").trim() || "Unassigned";
-    const leaderTitle = assignment.leader_title == null ? null : String(assignment.leader_title).trim() || null;
+    const leaderName =
+      String(assignment.leader_name ?? "").trim() || "Unassigned";
+    const leaderTitle =
+      assignment.leader_title == null
+        ? null
+        : String(assignment.leader_title).trim() || null;
 
     out.set(techId, {
       tech_id: techId,
       office: resolveOfficeLabel(assignment, scope.org_labels_by_id),
       team_class: String(assignment.team_class ?? "BP") === "ITG" ? "ITG" : "BP",
-      contractor_name: assignment.contractor_name == null ? null : String(assignment.contractor_name).trim() || null,
+      contractor_name:
+        assignment.contractor_name == null
+          ? null
+          : String(assignment.contractor_name).trim() || null,
       leader_key: `${leaderName}::${leaderTitle ?? ""}`,
       leader_name: leaderName,
       leader_title: leaderTitle,
@@ -215,13 +245,16 @@ function buildKpiStripFromRaw(args: {
   rubricByKpi: Map<string, RubricRow[]>;
   techCount: number;
 }) {
-  return args.kpis.map((kpi) => {
+  const sortedKpis = sortKpis(args.kpis);
+
+  return sortedKpis.map((kpi) => {
     const value = computeAggregateMetricValue(kpi.kpi_key, args.rawRows);
-    const band_key = buildAggregateMetricMap({
-      rawRows: args.rawRows,
-      metricOrder: [{ kpi_key: kpi.kpi_key, label: kpi.label }],
-      rubricByKpi: args.rubricByKpi,
-    }).get(kpi.kpi_key)?.band ?? "NO_DATA";
+    const band_key =
+      buildAggregateMetricMap({
+        rawRows: args.rawRows,
+        metricOrder: [{ kpi_key: kpi.kpi_key, label: kpi.label }],
+        rubricByKpi: args.rubricByKpi,
+      }).get(kpi.kpi_key)?.band ?? "NO_DATA";
 
     return {
       kpi_key: kpi.kpi_key,
@@ -235,22 +268,54 @@ function buildKpiStripFromRaw(args: {
   });
 }
 
-function filterRosterRowsForScope(rows: CompanyManagerRosterRow[], scopeKey: ScopeKey, contractor?: string) {
-  if (scopeKey === "ITG") return rows.filter((row) => row.team_class === "ITG");
+function filterRosterRowsForScope(
+  rows: CompanyManagerRosterRow[],
+  scopeKey: ScopeKey,
+  contractor?: string
+) {
+  if (scopeKey === "ITG") {
+    return rows.filter((row) => row.team_class === "ITG");
+  }
   if (scopeKey === "BP") {
-    return rows.filter((row) => row.team_class === "BP" && (!contractor || row.contractor_name === contractor));
+    return rows.filter(
+      (row) =>
+        row.team_class === "BP" &&
+        (!contractor || row.contractor_name === contractor)
+    );
   }
   return rows;
 }
 
-function filterTechIdsForScope(techIds: string[], metaByTech: Map<string, AssignmentMeta>, scopeKey: ScopeKey, contractor?: string) {
+function filterTechIdsForScope(
+  techIds: string[],
+  metaByTech: Map<string, AssignmentMeta>,
+  scopeKey: ScopeKey,
+  contractor?: string
+) {
   return techIds.filter((techId) => {
     const meta = metaByTech.get(techId);
     if (!meta) return false;
     if (scopeKey === "ITG") return meta.team_class === "ITG";
-    if (scopeKey === "BP") return meta.team_class === "BP" && (!contractor || meta.contractor_name === contractor);
+    if (scopeKey === "BP") {
+      return meta.team_class === "BP" && (!contractor || meta.contractor_name === contractor);
+    }
     return true;
   });
+}
+
+function computePrimaryScore(
+  rawRows: RawMetricRow[],
+  metricOrder: MetricOrderItem[]
+) {
+  const primary = metricOrder.slice(0, 3);
+  if (!primary.length) return -1;
+
+  const values = primary
+    .map((metric) => computeAggregateMetricValue(metric.kpi_key, rawRows))
+    .filter((value): value is number => value != null && Number.isFinite(value));
+
+  if (!values.length) return -1;
+  return values.reduce((sum, value) => sum + value, 0);
 }
 
 function buildOfficeRollups(args: {
@@ -258,13 +323,24 @@ function buildOfficeRollups(args: {
   techIds: string[];
   rawRowsByTech: Map<string, RawMetricRow[]>;
   metaByTech: Map<string, AssignmentMeta>;
-  metricOrder: Array<{ kpi_key: string; label: string }>;
+  metricOrder: MetricOrderItem[];
   rubricByKpi: Map<string, RubricRow[]>;
   scopeKey: ScopeKey;
   contractor?: string;
 }): CompanyManagerOfficeRollupRow[] {
-  const rows = filterRosterRowsForScope(args.rosterRows, args.scopeKey, args.contractor);
-  const scopedTechIds = new Set(filterTechIdsForScope(args.techIds, args.metaByTech, args.scopeKey, args.contractor));
+  const rows = filterRosterRowsForScope(
+    args.rosterRows,
+    args.scopeKey,
+    args.contractor
+  );
+  const scopedTechIds = new Set(
+    filterTechIdsForScope(
+      args.techIds,
+      args.metaByTech,
+      args.scopeKey,
+      args.contractor
+    )
+  );
   const grouped = new Map<string, CompanyManagerRosterRow[]>();
 
   for (const row of rows) {
@@ -276,30 +352,55 @@ function buildOfficeRollups(args: {
     grouped.set(office, arr);
   }
 
-  const out: CompanyManagerOfficeRollupRow[] = [];
+  const temp: Array<{ score: number; row: CompanyManagerOfficeRollupRow }> = [];
 
   for (const [office, officeRows] of grouped.entries()) {
-    const officeTechIds = officeRows.map((row) => row.tech_id).filter((techId) => scopedTechIds.has(techId));
-    const rawRows = officeTechIds.flatMap((techId) => args.rawRowsByTech.get(techId) ?? []);
+    const officeTechIds = officeRows
+      .map((row) => row.tech_id)
+      .filter((techId) => scopedTechIds.has(techId));
+    const rawRows = officeTechIds.flatMap(
+      (techId) => args.rawRowsByTech.get(techId) ?? []
+    );
 
-    out.push({
+    const row: CompanyManagerOfficeRollupRow = {
       office,
       headcount: officeRows.length,
-      jobs: officeRows.reduce((sum, row) => sum + row.work_mix.total, 0),
-      installs: officeRows.reduce((sum, row) => sum + row.work_mix.installs, 0),
-      tcs: officeRows.reduce((sum, row) => sum + row.work_mix.tcs, 0),
-      sros: officeRows.reduce((sum, row) => sum + row.work_mix.sros, 0),
-      below_target_count: officeRows.reduce((sum, row) => sum + row.below_target_count, 0),
+      jobs: officeRows.reduce((sum, item) => sum + item.work_mix.total, 0),
+      installs: officeRows.reduce((sum, item) => sum + item.work_mix.installs, 0),
+      tcs: officeRows.reduce((sum, item) => sum + item.work_mix.tcs, 0),
+      sros: officeRows.reduce((sum, item) => sum + item.work_mix.sros, 0),
+      below_target_count: officeRows.reduce(
+        (sum, item) => sum + item.below_target_count,
+        0
+      ),
       metrics: buildAggregateMetricMap({
         rawRows,
         metricOrder: args.metricOrder,
         rubricByKpi: args.rubricByKpi,
       }),
       metric_order: args.metricOrder,
+    };
+
+    temp.push({
+      score: computePrimaryScore(rawRows, args.metricOrder),
+      row,
     });
   }
 
-  return out.sort((a, b) => a.office.localeCompare(b.office));
+  return temp
+    .sort((a, b) => {
+      const aHasJobs = a.row.jobs > 0 ? 1 : 0;
+      const bHasJobs = b.row.jobs > 0 ? 1 : 0;
+      if (aHasJobs !== bHasJobs) return bHasJobs - aHasJobs;
+
+      if (a.score !== b.score) return b.score - a.score;
+      if (a.row.jobs !== b.row.jobs) return b.row.jobs - a.row.jobs;
+      if (a.row.below_target_count !== b.row.below_target_count) {
+        return a.row.below_target_count - b.row.below_target_count;
+      }
+      return a.row.office.localeCompare(b.row.office);
+    })
+    .map((item) => item.row);
 }
 
 function buildLeadershipRollups(args: {
@@ -307,13 +408,24 @@ function buildLeadershipRollups(args: {
   techIds: string[];
   rawRowsByTech: Map<string, RawMetricRow[]>;
   metaByTech: Map<string, AssignmentMeta>;
-  metricOrder: Array<{ kpi_key: string; label: string }>;
+  metricOrder: MetricOrderItem[];
   rubricByKpi: Map<string, RubricRow[]>;
   scopeKey: ScopeKey;
   contractor?: string;
 }): CompanyManagerLeadershipRollupRow[] {
-  const rows = filterRosterRowsForScope(args.rosterRows, args.scopeKey, args.contractor);
-  const scopedTechIds = new Set(filterTechIdsForScope(args.techIds, args.metaByTech, args.scopeKey, args.contractor));
+  const rows = filterRosterRowsForScope(
+    args.rosterRows,
+    args.scopeKey,
+    args.contractor
+  );
+  const scopedTechIds = new Set(
+    filterTechIdsForScope(
+      args.techIds,
+      args.metaByTech,
+      args.scopeKey,
+      args.contractor
+    )
+  );
   const grouped = new Map<string, CompanyManagerRosterRow[]>();
 
   for (const row of rows) {
@@ -323,36 +435,66 @@ function buildLeadershipRollups(args: {
     grouped.set(leaderKey, arr);
   }
 
-  const out: CompanyManagerLeadershipRollupRow[] = [];
+  const temp: Array<{
+    score: number;
+    row: CompanyManagerLeadershipRollupRow;
+  }> = [];
 
   for (const [leaderKey, leaderRows] of grouped.entries()) {
     const sampleMeta = args.metaByTech.get(leaderRows[0]?.tech_id ?? "");
-    const leaderTechIds = leaderRows.map((row) => row.tech_id).filter((techId) => scopedTechIds.has(techId));
-    const rawRows = leaderTechIds.flatMap((techId) => args.rawRowsByTech.get(techId) ?? []);
+    const leaderTechIds = leaderRows
+      .map((row) => row.tech_id)
+      .filter((techId) => scopedTechIds.has(techId));
+    const rawRows = leaderTechIds.flatMap(
+      (techId) => args.rawRowsByTech.get(techId) ?? []
+    );
 
-    out.push({
+    const row: CompanyManagerLeadershipRollupRow = {
       leader_key: leaderKey,
       leader_name: sampleMeta?.leader_name ?? "Unassigned",
       leader_title: sampleMeta?.leader_title ?? null,
       headcount: leaderRows.length,
-      jobs: leaderRows.reduce((sum, row) => sum + row.work_mix.total, 0),
-      installs: leaderRows.reduce((sum, row) => sum + row.work_mix.installs, 0),
-      tcs: leaderRows.reduce((sum, row) => sum + row.work_mix.tcs, 0),
-      sros: leaderRows.reduce((sum, row) => sum + row.work_mix.sros, 0),
-      below_target_count: leaderRows.reduce((sum, row) => sum + row.below_target_count, 0),
+      jobs: leaderRows.reduce((sum, item) => sum + item.work_mix.total, 0),
+      installs: leaderRows.reduce((sum, item) => sum + item.work_mix.installs, 0),
+      tcs: leaderRows.reduce((sum, item) => sum + item.work_mix.tcs, 0),
+      sros: leaderRows.reduce((sum, item) => sum + item.work_mix.sros, 0),
+      below_target_count: leaderRows.reduce(
+        (sum, item) => sum + item.below_target_count,
+        0
+      ),
       metrics: buildAggregateMetricMap({
         rawRows,
         metricOrder: args.metricOrder,
         rubricByKpi: args.rubricByKpi,
       }),
       metric_order: args.metricOrder,
+    };
+
+    temp.push({
+      score: computePrimaryScore(rawRows, args.metricOrder),
+      row,
     });
   }
 
-  return out.sort((a, b) =>
-    a.leader_name.localeCompare(b.leader_name) ||
-    String(a.leader_title ?? "").localeCompare(String(b.leader_title ?? ""))
-  );
+  return temp
+    .sort((a, b) => {
+      const aHasJobs = a.row.jobs > 0 ? 1 : 0;
+      const bHasJobs = b.row.jobs > 0 ? 1 : 0;
+      if (aHasJobs !== bHasJobs) return bHasJobs - aHasJobs;
+
+      if (a.score !== b.score) return b.score - a.score;
+      if (a.row.jobs !== b.row.jobs) return b.row.jobs - a.row.jobs;
+      if (a.row.below_target_count !== b.row.below_target_count) {
+        return a.row.below_target_count - b.row.below_target_count;
+      }
+      return (
+        a.row.leader_name.localeCompare(b.row.leader_name) ||
+        String(a.row.leader_title ?? "").localeCompare(
+          String(b.row.leader_title ?? "")
+        )
+      );
+    })
+    .map((item) => item.row);
 }
 
 export async function getCompanyManagerViewPayload(
@@ -365,15 +507,17 @@ export async function getCompanyManagerViewPayload(
     loadViewKpiConfig(admin),
   ]);
 
+  const sortedKpis = sortKpis(p4pConfig);
+
   const rubricByKpi = await loadRubrics(
     admin,
-    p4pConfig.map((k) => k.kpi_key)
+    sortedKpis.map((kpi) => kpi.kpi_key)
   );
 
   const techIds = Array.from(
     new Set(
       scope.scoped_assignments
-        .map((r) => String(r.tech_id ?? ""))
+        .map((row) => String(row.tech_id ?? "").trim())
         .filter(Boolean)
     )
   );
@@ -381,12 +525,15 @@ export async function getCompanyManagerViewPayload(
   const pcOrgIds = Array.from(
     new Set(
       scope.scoped_assignments
-        .map((r) => String(r.pc_org_id ?? ""))
+        .map((row) => String(row.pc_org_id ?? "").trim())
         .filter(Boolean)
     )
   );
 
-  const fiscalEndDates = await resolveFiscalEndDatesForRange({ admin, range: args.range });
+  const fiscalEndDates = await resolveFiscalEndDatesForRange({
+    admin,
+    range: args.range,
+  });
 
   const [kpiOverrides, workMixByTech, rawMetricRows] = await Promise.all([
     resolveAllBpKpis({
@@ -410,22 +557,24 @@ export async function getCompanyManagerViewPayload(
     }),
   ]);
 
-  const rosterColumns = p4pConfig.map((k) => ({
-    kpi_key: k.kpi_key,
-    label: k.label,
+  const rosterColumns: MetricOrderItem[] = sortedKpis.map((kpi) => ({
+    kpi_key: kpi.kpi_key,
+    label: kpi.label,
   }));
 
-  const unsortedRosterRows = buildBpRosterRows({
+  const baseRows = buildBpRosterRows({
     scopedAssignments: scope.scoped_assignments,
     peopleById: scope.people_by_id,
-    kpis: p4pConfig,
+    kpis: sortedKpis,
     rubricByKpi,
     orgLabelsById: scope.org_labels_by_id,
     workMixByTech,
     kpiOverrides,
-  }).map((row) => {
+  });
+
+  const enrichedRows: CompanyManagerRosterRow[] = baseRows.map((row) => {
     const assignment = scope.scoped_assignments.find(
-      (a) => String(a.tech_id ?? "") === row.tech_id
+      (item) => String(item.tech_id ?? "").trim() === row.tech_id
     ) as Record<string, unknown> | undefined;
 
     return {
@@ -434,18 +583,18 @@ export async function getCompanyManagerViewPayload(
       contractor_name:
         assignment?.contractor_name == null
           ? null
-          : (String(assignment.contractor_name).trim() || null),
-    };
-  }) as CompanyManagerRosterRow[];
+          : String(assignment.contractor_name).trim() || null,
+    } as CompanyManagerRosterRow;
+  });
 
-  const roster_rows = sortBpRosterRows(
-    unsortedRosterRows,
+  const roster_rows = sortWorkforceRows(
+    enrichedRows,
     rosterColumns
   ) as CompanyManagerRosterRow[];
 
   const risk_strip = buildBpRiskStrip({
-    rosterRows: roster_rows as any,
-    kpis: p4pConfig,
+    rosterRows: roster_rows,
+    kpis: sortedKpis,
   });
 
   const rawRowsByTech = groupRawRowsByTech(rawMetricRows);
@@ -466,10 +615,19 @@ export async function getCompanyManagerViewPayload(
   const orgIds = Array.from(
     new Set(
       scope.scoped_assignments
-        .map((r) => String(r.pc_org_id ?? ""))
+        .map((row) => String(row.pc_org_id ?? "").trim())
         .filter(Boolean)
     )
   );
+
+  const bpContractors = Array.from(
+    new Set(
+      roster_rows
+        .filter((row) => row.team_class === "BP")
+        .map((row) => row.contractor_name)
+        .filter((value): value is string => Boolean(value))
+    )
+  ).sort((a, b) => a.localeCompare(b));
 
   return {
     header: {
@@ -488,7 +646,7 @@ export async function getCompanyManagerViewPayload(
 
     kpi_strip: buildKpiStripFromRaw({
       rawRows: rawMetricRows,
-      kpis: p4pConfig,
+      kpis: sortedKpis,
       rubricByKpi,
       techCount: techIds.length,
     }),
@@ -507,24 +665,90 @@ export async function getCompanyManagerViewPayload(
     roster_columns: rosterColumns,
     roster_rows,
     office_rollups: {
-      ALL: buildOfficeRollups({ rosterRows: roster_rows, techIds, rawRowsByTech, metaByTech, metricOrder: rosterColumns, rubricByKpi, scopeKey: "ALL" }),
-      ITG: buildOfficeRollups({ rosterRows: roster_rows, techIds, rawRowsByTech, metaByTech, metricOrder: rosterColumns, rubricByKpi, scopeKey: "ITG" }),
-      BP: buildOfficeRollups({ rosterRows: roster_rows, techIds, rawRowsByTech, metaByTech, metricOrder: rosterColumns, rubricByKpi, scopeKey: "BP" }),
+      ALL: buildOfficeRollups({
+        rosterRows: roster_rows,
+        techIds,
+        rawRowsByTech,
+        metaByTech,
+        metricOrder: rosterColumns,
+        rubricByKpi,
+        scopeKey: "ALL",
+      }),
+      ITG: buildOfficeRollups({
+        rosterRows: roster_rows,
+        techIds,
+        rawRowsByTech,
+        metaByTech,
+        metricOrder: rosterColumns,
+        rubricByKpi,
+        scopeKey: "ITG",
+      }),
+      BP: buildOfficeRollups({
+        rosterRows: roster_rows,
+        techIds,
+        rawRowsByTech,
+        metaByTech,
+        metricOrder: rosterColumns,
+        rubricByKpi,
+        scopeKey: "BP",
+      }),
       BP_BY_CONTRACTOR: Object.fromEntries(
-        Array.from(new Set(roster_rows.filter((row) => row.team_class === "BP").map((row) => row.contractor_name).filter(Boolean))).map((contractor) => [
+        bpContractors.map((contractor) => [
           contractor,
-          buildOfficeRollups({ rosterRows: roster_rows, techIds, rawRowsByTech, metaByTech, metricOrder: rosterColumns, rubricByKpi, scopeKey: "BP", contractor: contractor ?? undefined }),
+          buildOfficeRollups({
+            rosterRows: roster_rows,
+            techIds,
+            rawRowsByTech,
+            metaByTech,
+            metricOrder: rosterColumns,
+            rubricByKpi,
+            scopeKey: "BP",
+            contractor,
+          }),
         ])
       ),
     },
     leadership_rollups: {
-      ALL: buildLeadershipRollups({ rosterRows: roster_rows, techIds, rawRowsByTech, metaByTech, metricOrder: rosterColumns, rubricByKpi, scopeKey: "ALL" }),
-      ITG: buildLeadershipRollups({ rosterRows: roster_rows, techIds, rawRowsByTech, metaByTech, metricOrder: rosterColumns, rubricByKpi, scopeKey: "ITG" }),
-      BP: buildLeadershipRollups({ rosterRows: roster_rows, techIds, rawRowsByTech, metaByTech, metricOrder: rosterColumns, rubricByKpi, scopeKey: "BP" }),
+      ALL: buildLeadershipRollups({
+        rosterRows: roster_rows,
+        techIds,
+        rawRowsByTech,
+        metaByTech,
+        metricOrder: rosterColumns,
+        rubricByKpi,
+        scopeKey: "ALL",
+      }),
+      ITG: buildLeadershipRollups({
+        rosterRows: roster_rows,
+        techIds,
+        rawRowsByTech,
+        metaByTech,
+        metricOrder: rosterColumns,
+        rubricByKpi,
+        scopeKey: "ITG",
+      }),
+      BP: buildLeadershipRollups({
+        rosterRows: roster_rows,
+        techIds,
+        rawRowsByTech,
+        metaByTech,
+        metricOrder: rosterColumns,
+        rubricByKpi,
+        scopeKey: "BP",
+      }),
       BP_BY_CONTRACTOR: Object.fromEntries(
-        Array.from(new Set(roster_rows.filter((row) => row.team_class === "BP").map((row) => row.contractor_name).filter(Boolean))).map((contractor) => [
+        bpContractors.map((contractor) => [
           contractor,
-          buildLeadershipRollups({ rosterRows: roster_rows, techIds, rawRowsByTech, metaByTech, metricOrder: rosterColumns, rubricByKpi, scopeKey: "BP", contractor: contractor ?? undefined }),
+          buildLeadershipRollups({
+            rosterRows: roster_rows,
+            techIds,
+            rawRowsByTech,
+            metaByTech,
+            metricOrder: rosterColumns,
+            rubricByKpi,
+            scopeKey: "BP",
+            contractor,
+          }),
         ])
       ),
     },

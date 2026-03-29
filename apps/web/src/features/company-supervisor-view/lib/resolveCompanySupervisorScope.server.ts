@@ -26,6 +26,13 @@ export type CompanySupervisorScopePersonRow = {
 
 export type CompanySupervisorScopeRole = "Company Supervisor";
 
+export type CompanySupervisorBpSupervisorGroup = {
+  assignment_id: string;
+  person_id: string | null;
+  label: string;
+  tech_ids: string[];
+};
+
 export type CompanySupervisorScopeResult = {
   selected_pc_org_id: string;
   role_label: CompanySupervisorScopeRole;
@@ -34,6 +41,7 @@ export type CompanySupervisorScopeResult = {
   scoped_assignments: CompanySupervisorScopeAssignmentRow[];
   people_by_id: Map<string, CompanySupervisorScopePersonRow>;
   org_labels_by_id: Map<string, string>;
+  bp_supervisor_groups: CompanySupervisorBpSupervisorGroup[];
 };
 
 type LeadershipEdgeRow = {
@@ -262,6 +270,7 @@ export async function resolveCompanySupervisorScope(): Promise<CompanySupervisor
       scoped_assignments: [],
       people_by_id: new Map<string, CompanySupervisorScopePersonRow>(),
       org_labels_by_id: await loadOrgLabels(admin, [selected_pc_org_id]),
+      bp_supervisor_groups: [],
     };
   }
 
@@ -366,6 +375,39 @@ export async function resolveCompanySupervisorScope(): Promise<CompanySupervisor
     }),
   ]);
 
+  const bp_supervisor_groups: CompanySupervisorBpSupervisorGroup[] =
+    directBpLeadershipAssignments
+      .map((assignment) => {
+        const assignmentId = String(assignment.assignment_id ?? "").trim();
+        if (!assignmentId) return null;
+
+        const descendants = collectDescendantAssignmentIds({
+          seedIds: [assignmentId],
+          childrenByParent,
+        });
+
+        const techIds = Array.from(descendants)
+          .map((id) => assignmentsById.get(id))
+          .filter((row): row is CompanySupervisorScopeAssignmentRow => !!row)
+          .map((row) => String(row.tech_id ?? "").trim())
+          .filter(Boolean);
+
+        const uniqueTechIds = Array.from(new Set(techIds));
+        const person = people_by_id.get(String(assignment.person_id ?? ""));
+        const label =
+          String(person?.full_name ?? "").trim() ||
+          String(assignment.position_title ?? "").trim() ||
+          "BP Supervisor";
+
+        return {
+          assignment_id: assignmentId,
+          person_id: assignment.person_id ? String(assignment.person_id) : null,
+          label,
+          tech_ids: uniqueTechIds,
+        } satisfies CompanySupervisorBpSupervisorGroup;
+      })
+      .filter((group): group is CompanySupervisorBpSupervisorGroup => !!group);
+
   const org_labels_by_id = await loadOrgLabels(admin, [selected_pc_org_id]);
 
   return {
@@ -376,5 +418,6 @@ export async function resolveCompanySupervisorScope(): Promise<CompanySupervisor
     scoped_assignments,
     people_by_id,
     org_labels_by_id,
+    bp_supervisor_groups,
   };
 }

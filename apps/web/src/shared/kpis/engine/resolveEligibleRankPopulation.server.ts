@@ -1,4 +1,6 @@
 import { supabaseServer } from "@/shared/data/supabase/server";
+import { resolveFiscalSelection } from "@/shared/kpis/core/rowSelection";
+import type { MetricsRangeKey, RawMetricRow } from "@/shared/kpis/core/types";
 import type { RankInputRow } from "@/shared/kpis/contracts/rankTypes";
 
 type ReportClassType = "P4P" | "SMART" | "TECH";
@@ -6,7 +8,9 @@ type ReportClassType = "P4P" | "SMART" | "TECH";
 type Args = {
   pc_org_ids: string[];
   class_type: ReportClassType;
+  range: MetricsRangeKey;
   batch_id?: string | null;
+  team_key_by_person?: Map<string, string>;
 };
 
 type ActivePopulationRow = {
@@ -17,9 +21,13 @@ type ActivePopulationRow = {
   pc_org_id: string | null;
   co_code: string | null;
   metric_date: string | null;
+  fiscal_end_date: string | null;
+  batch_id: string | null;
   created_at: string | null;
   raw_metrics_json: unknown;
 };
+
+type RankCandidateRow = ActivePopulationRow & RawMetricRow;
 
 type PcOrgAdminRow = {
   pc_org_id: string | null;
@@ -72,8 +80,8 @@ function compareIsoDesc(a: string | null, b: string | null) {
 }
 
 function choosePreferredRow(
-  current: ActivePopulationRow,
-  candidate: ActivePopulationRow
+  current: RankCandidateRow,
+  candidate: RankCandidateRow
 ) {
   const metricDateCompare = compareIsoDesc(
     current.metric_date,
@@ -91,18 +99,49 @@ function choosePreferredRow(
     return createdAtCompare > 0 ? current : candidate;
   }
 
+  const currentBatch = String(current.batch_id ?? "");
+  const candidateBatch = String(candidate.batch_id ?? "");
+  const batchCompare = candidateBatch.localeCompare(currentBatch);
+  if (batchCompare !== 0) {
+    return batchCompare > 0 ? candidate : current;
+  }
+
   const currentTech = String(current.tech_id ?? "");
   const candidateTech = String(candidate.tech_id ?? "");
   return currentTech.localeCompare(candidateTech) <= 0 ? current : candidate;
 }
 
+function toRankCandidateRow(row: ActivePopulationRow): RankCandidateRow | null {
+  const metric_date = toTrimmedString(row.metric_date);
+  const fiscal_end_date = toTrimmedString(row.fiscal_end_date);
+  const batch_id = toTrimmedString(row.batch_id);
+  const inserted_at = toTrimmedString(row.created_at);
+
+  if (!metric_date || !fiscal_end_date || !batch_id || !inserted_at) {
+    return null;
+  }
+
+  return {
+    ...row,
+    metric_date,
+    fiscal_end_date,
+    batch_id,
+    inserted_at,
+    raw:
+      typeof row.raw_metrics_json === "object" && row.raw_metrics_json !== null
+        ? (row.raw_metrics_json as Record<string, unknown>)
+        : {},
+  };
+}
+
 /**
- * Current enforced rules:
+ * Enforced rules:
  * 1) unique person_id
- * 2) open assignment only (inherited from current active population view)
+ * 2) open assignment only (inherited from v_metrics_active_population)
  * 3) positive Total FTR/Contact Jobs
  * 4) class container filter
- * 5) latest row wins inside selected context
+ * 5) selected range must be applied before final person-level row resolution
+ * 6) team key uses snapshot value first, then supplied live fallback map
  */
 export async function resolveEligibleRankPopulation(
   args: Args
@@ -130,6 +169,8 @@ export async function resolveEligibleRankPopulation(
       pc_org_id,
       co_code,
       metric_date,
+      fiscal_end_date,
+      batch_id,
       created_at,
       raw_metrics_json
     `
@@ -201,7 +242,7 @@ export async function resolveEligibleRankPopulation(
     divisionIdByCode.set(divisionCode, divisionId);
   }
 
-  const bestRowByPersonId = new Map<string, ActivePopulationRow>();
+  const candidatesByPersonId = new Map<string, RankCandidateRow[]>();
 
   for (const row of (populationRows ?? []) as ActivePopulationRow[]) {
     const personId = toTrimmedString(row.person_id);
@@ -216,13 +257,26 @@ export async function resolveEligibleRankPopulation(
     const ftrContactJobs = extractFtrContactJobs(row.raw_metrics_json);
     if (ftrContactJobs == null || ftrContactJobs <= 0) continue;
 
-    const existing = bestRowByPersonId.get(personId);
-    if (!existing) {
-      bestRowByPersonId.set(personId, row);
-      continue;
+    const candidate = toRankCandidateRow(row);
+    if (!candidate) continue;
+
+    const arr = candidatesByPersonId.get(personId) ?? [];
+    arr.push(candidate);
+    candidatesByPersonId.set(personId, arr);
+  }
+
+  const bestRowByPersonId = new Map<string, RankCandidateRow>();
+
+  for (const [personId, rows] of candidatesByPersonId.entries()) {
+    const { selectedFinalRows } = resolveFiscalSelection(rows, args.range);
+    if (!selectedFinalRows.length) continue;
+
+    let best = selectedFinalRows[0].row as RankCandidateRow;
+    for (let i = 1; i < selectedFinalRows.length; i += 1) {
+      best = choosePreferredRow(best, selectedFinalRows[i].row as RankCandidateRow);
     }
 
-    bestRowByPersonId.set(personId, choosePreferredRow(existing, row));
+    bestRowByPersonId.set(personId, best);
   }
 
   const out: RankInputRow[] = [];
@@ -235,16 +289,21 @@ export async function resolveEligibleRankPopulation(
 
     if (!personId || !techId || !pcOrgId) continue;
 
+    const teamKey =
+      toTrimmedString(row.direct_reports_to_person_id) ??
+      args.team_key_by_person?.get(personId) ??
+      null;
+
     out.push({
       person_id: personId,
       tech_id: techId,
       composite_score: parseNumber(row.composite_score),
-      team_key: toTrimmedString(row.direct_reports_to_person_id),
+      team_key: teamKey,
       region_key: regionByPcOrg.get(pcOrgId) ?? null,
       division_key: coCode ? divisionIdByCode.get(coCode) ?? null : null,
       tiebreak_value: null,
       tiebreak_direction: "HIGHER_BETTER",
-      fallback_value: null,
+      fallback_value: parseNumber(row.composite_score),
     });
   }
 

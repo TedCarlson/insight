@@ -184,6 +184,7 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
     getRankContextByTech({
       pc_org_ids: pcOrgIds,
       class_type,
+      range,
     }),
   ]);
 

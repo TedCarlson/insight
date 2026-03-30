@@ -299,12 +299,11 @@ export async function getHomePayload(): Promise<HomePayload> {
   ]);
 
   const boot = (bootRaw ?? {}) as BootShape;
-  const hasLinkedPerson = Boolean(boot.ok && boot.person_id);
+  const privilegedRole = resolvePrivilegedRole(boot);
+  const hasLinkedPerson = Boolean(boot.ok && (boot.person_id || privilegedRole));
 
   const selectedPcOrgId = scope.ok ? scope.selected_pc_org_id : null;
   const hasSelectedOrg = Boolean(selectedPcOrgId);
-
-  const privilegedRole = resolvePrivilegedRole(boot);
 
   if (!hasLinkedPerson) {
     const role = privilegedRole ?? (hasSelectedOrg ? "UNKNOWN" : "UNSCOPED");
@@ -324,19 +323,37 @@ export async function getHomePayload(): Promise<HomePayload> {
     };
   }
 
+  if (!boot.person_id) {
+    const role = privilegedRole ?? (hasSelectedOrg ? "UNKNOWN" : "UNSCOPED");
+
+    const orgLabel = selectedPcOrgId
+      ? await loadOrgLabel(selectedPcOrgId)
+      : null;
+
+    return {
+      full_name: boot.full_name ?? null,
+      role,
+      org_label: orgLabel,
+      selected_pc_org_id: selectedPcOrgId,
+      destinations: buildDestinations(role, hasSelectedOrg),
+      has_linked_person: Boolean(privilegedRole),
+      has_selected_org: hasSelectedOrg,
+    };
+  }
+
   const admin = supabaseAdmin();
 
   const personPromise = admin
     .from("person")
     .select("full_name")
-    .eq("person_id", boot.person_id as string)
+    .eq("person_id", boot.person_id)
     .maybeSingle();
 
   const assignmentsPromise = selectedPcOrgId
     ? admin
         .from("assignment_admin_v")
         .select("position_title,active")
-        .eq("person_id", boot.person_id as string)
+        .eq("person_id", boot.person_id)
         .eq("pc_org_id", selectedPcOrgId)
         .eq("active", true)
     : Promise.resolve({

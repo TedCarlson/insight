@@ -1,29 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { getHomePayload } from "@/features/home/lib/getHomePayload.server";
-
-function resolveLandingHref(role: Awaited<ReturnType<typeof getHomePayload>>["role"]) {
-  if (role === "APP_OWNER" || role === "ADMIN") return "/home";
-  if (role === "BP_OWNER" || role === "BP_LEAD" || role === "BP_SUPERVISOR") {
-    return "/bp/view";
-  }
-  if (role === "COMPANY_MANAGER") return "/company-manager";
-  if (role === "ITG_SUPERVISOR") return "/company-supervisor";
-  if (role === "TECH") return "/tech";
-  return "/home";
-}
+import { supabaseServer } from "@/shared/data/supabase/server";
 
 export default async function Page() {
-  const payload = await getHomePayload();
+  const supabase = await supabaseServer();
+  const { data, error } = await supabase.auth.getUser();
 
-  const shouldRedirect =
-    payload.role === "APP_OWNER" ||
-    payload.role === "ADMIN" ||
-    payload.has_linked_person;
-
-  if (shouldRedirect) {
-    redirect(resolveLandingHref(payload.role));
+  if (!error && data?.user) {
+    redirect("/home");
   }
 
   return (

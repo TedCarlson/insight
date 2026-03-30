@@ -28,9 +28,20 @@ const CONSOLE_PERMISSIONS = [
   "permissions_manage",
 ];
 
+export function isElevated(pass: AccessPass | null | undefined) {
+  if (!pass) return false;
+
+  return (
+    pass.is_owner === true ||
+    pass.is_admin === true ||
+    pass.is_app_owner === true
+  );
+}
+
 export function hasCapability(pass: AccessPass, cap: string) {
   if (pass?.is_owner) return true;
   if (pass?.is_admin) return true;
+  if (pass?.is_app_owner) return true;
   if (!pass?.permissions) return false;
 
   return pass.permissions.includes(cap);

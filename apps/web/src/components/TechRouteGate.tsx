@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/state/session";
 import { useOrg } from "@/state/org";
 import { useAccessPass } from "@/state/access";
-import { isTechExperienceUser } from "@/shared/access/access";
+import { isElevated, isTechExperienceUser } from "@/shared/access/access";
 
 function isAllowedTechPath(pathname: string) {
   return (
@@ -27,13 +27,15 @@ export default function TechRouteGate({ children }: { children: React.ReactNode 
   const { accessPass } = useAccessPass();
 
   const waitingOnAccess = !!selectedOrgId && !accessPass;
+  const isElevatedUser = useMemo(() => isElevated(accessPass), [accessPass]);
   const isTechUser = useMemo(() => isTechExperienceUser(accessPass), [accessPass]);
 
   const shouldRedirect =
     ready &&
     signedIn &&
-    selectedOrgId &&
+    !!selectedOrgId &&
     !waitingOnAccess &&
+    !isElevatedUser &&
     isTechUser &&
     !isAllowedTechPath(pathname);
 

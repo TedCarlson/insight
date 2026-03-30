@@ -10,6 +10,13 @@ type BootstrapResult = {
   selected_pc_org_id: string | null;
   created: boolean;
   hydrated: boolean;
+
+  // 🔥 ADD THESE
+  full_name: string | null;
+  is_owner: boolean;
+  is_admin: boolean;
+  is_app_owner: boolean;
+
   notes?: string[];
 };
 
@@ -22,20 +29,36 @@ function normalizeEmail(v: unknown): string | null {
   return s ? s.toLowerCase() : null;
 }
 
-/**
- * Ensures the authenticated user has a user_profile row.
- *
- * Behavior:
- * - inserts a minimal profile if missing
- * - hydrates person_id / selected_pc_org_id from auth metadata when present
- * - falls back to exact email match against existing person records when person_id is still blank
- *
- * This runs with service-role permissions but ONLY for the current session's user id.
- */
+function asBoolean(v: unknown): boolean {
+  return v === true;
+}
+
 export async function bootstrapProfileServer(): Promise<BootstrapResult> {
   const supabase = await supabaseServer();
   const { data: userData, error: userErr } = await supabase.auth.getUser();
   const user = userData?.user ?? null;
+
+  const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
+  const appMeta = (user?.app_metadata ?? {}) as Record<string, unknown>;
+
+  const fullName =
+    asNonEmptyString(meta.full_name) ??
+    asNonEmptyString(meta.name) ??
+    asNonEmptyString(user?.email?.split("@")[0]) ??
+    null;
+
+  const isAppOwner =
+    asBoolean(appMeta.is_app_owner) ||
+    asBoolean(meta.is_app_owner);
+
+  const isOwner =
+    isAppOwner ||
+    asBoolean(appMeta.is_owner) ||
+    asBoolean(meta.is_owner);
+
+  const isAdmin =
+    asBoolean(appMeta.is_admin) ||
+    asBoolean(meta.is_admin);
 
   if (!user || userErr) {
     return {
@@ -46,6 +69,10 @@ export async function bootstrapProfileServer(): Promise<BootstrapResult> {
       selected_pc_org_id: null,
       created: false,
       hydrated: false,
+      full_name: null,
+      is_owner: false,
+      is_admin: false,
+      is_app_owner: false,
       notes: ["unauthorized"],
     };
   }
@@ -72,6 +99,10 @@ export async function bootstrapProfileServer(): Promise<BootstrapResult> {
       selected_pc_org_id: null,
       created: false,
       hydrated: false,
+      full_name: fullName,
+      is_owner: isOwner,
+      is_admin: isAdmin,
+      is_app_owner: isAppOwner,
       notes: ["profile_select_failed", existing.error.message],
     };
   }
@@ -100,6 +131,10 @@ export async function bootstrapProfileServer(): Promise<BootstrapResult> {
         selected_pc_org_id: null,
         created: false,
         hydrated: false,
+        full_name: fullName,
+        is_owner: isOwner,
+        is_admin: isAdmin,
+        is_app_owner: isAppOwner,
         notes: ["profile_insert_failed", ins.error.message],
       };
     }
@@ -107,7 +142,7 @@ export async function bootstrapProfileServer(): Promise<BootstrapResult> {
     created = true;
   }
 
-  // 3) Re-read after potential insert
+  // 3) Re-read
   const after = await admin
     .from("user_profile" as any)
     .select("auth_user_id, status, person_id, selected_pc_org_id")
@@ -123,49 +158,41 @@ export async function bootstrapProfileServer(): Promise<BootstrapResult> {
       selected_pc_org_id: null,
       created,
       hydrated: false,
+      full_name: fullName,
+      is_owner: isOwner,
+      is_admin: isAdmin,
+      is_app_owner: isAppOwner,
       notes: ["profile_reread_failed", after.error?.message ?? "no_row"],
     };
   }
 
   const profile = after.data as any;
 
-  // 4) Hydrate from auth metadata first
-  const meta = (user.user_metadata ?? {}) as any;
   const metaPersonId = asNonEmptyString(meta.person_id);
   const metaPcOrgId =
-    asNonEmptyString(meta.pc_org_id) ?? asNonEmptyString(meta.selected_pc_org_id);
+    asNonEmptyString(meta.pc_org_id) ??
+    asNonEmptyString(meta.selected_pc_org_id);
   const metaAssignmentId = asNonEmptyString(meta.assignment_id);
 
   let fallbackPersonId: string | null = null;
   let fallbackPcOrgId: string | null = null;
 
-  // 5) Fallback: exact email match to person if person_id is still blank
   if (!profile.person_id && authEmail) {
     const personMatch = await admin
       .from("person" as any)
       .select("id, email")
       .eq("email", authEmail);
 
-    if (personMatch.error) {
-      notes.push("person_email_match_failed", personMatch.error.message);
-    } else {
+    if (!personMatch.error) {
       const rows = Array.isArray(personMatch.data) ? personMatch.data : [];
-
       if (rows.length === 1) {
         fallbackPersonId = asNonEmptyString(rows[0]?.id);
-        if (fallbackPersonId) {
-          notes.push("person_linked_by_email");
-        }
-      } else if (rows.length > 1) {
-        notes.push("person_email_match_ambiguous");
-      } else {
-        notes.push("person_email_match_none");
       }
     }
   }
 
-  // 6) If we found a fallback person, try to derive org context
-  const resolvedPersonId = profile.person_id ?? metaPersonId ?? fallbackPersonId;
+  const resolvedPersonId =
+    profile.person_id ?? metaPersonId ?? fallbackPersonId;
 
   if (!profile.selected_pc_org_id && !metaPcOrgId && resolvedPersonId) {
     const membership = await admin
@@ -174,31 +201,26 @@ export async function bootstrapProfileServer(): Promise<BootstrapResult> {
       .eq("person_id", resolvedPersonId)
       .limit(1);
 
-    if (membership.error) {
-      notes.push("person_pc_org_lookup_failed", membership.error.message);
-    } else {
-      const row = Array.isArray(membership.data) ? membership.data[0] : null;
+    if (!membership.error) {
+      const row = Array.isArray(membership.data)
+        ? membership.data[0]
+        : null;
       fallbackPcOrgId = asNonEmptyString(row?.pc_org_id);
-      if (fallbackPcOrgId) {
-        notes.push("pc_org_derived_from_person");
-      }
     }
   }
 
-  // 7) Build patch without overwriting existing linkage
   const patch: Record<string, any> = { updated_at: nowIso };
 
   if (!profile.person_id) {
-    const chosenPersonId = metaPersonId ?? fallbackPersonId;
-    if (chosenPersonId) patch.person_id = chosenPersonId;
+    const chosen = metaPersonId ?? fallbackPersonId;
+    if (chosen) patch.person_id = chosen;
   }
 
   if (!profile.selected_pc_org_id) {
-    const chosenPcOrgId = metaPcOrgId ?? fallbackPcOrgId;
-    if (chosenPcOrgId) patch.selected_pc_org_id = chosenPcOrgId;
+    const chosen = metaPcOrgId ?? fallbackPcOrgId;
+    if (chosen) patch.selected_pc_org_id = chosen;
   }
 
-  // Activate invited users once linkage context is present.
   if (
     profile.status !== "active" &&
     (metaAssignmentId || metaPersonId || fallbackPersonId)
@@ -206,22 +228,18 @@ export async function bootstrapProfileServer(): Promise<BootstrapResult> {
     patch.status = "active";
   }
 
-  const hasMeaningfulPatch = Object.keys(patch).some((k) => k !== "updated_at");
+  const hasMeaningfulPatch = Object.keys(patch).some(
+    (k) => k !== "updated_at"
+  );
 
   if (hasMeaningfulPatch) {
-    const upd = await admin
+    await admin
       .from("user_profile" as any)
       .update(patch)
       .eq("auth_user_id", user.id);
-
-    if (upd.error) {
-      notes.push("profile_update_failed", upd.error.message);
-    } else {
-      hydrated = true;
-    }
+    hydrated = true;
   }
 
-  // 8) Final read
   const final = await admin
     .from("user_profile" as any)
     .select("auth_user_id, status, person_id, selected_pc_org_id")
@@ -238,6 +256,10 @@ export async function bootstrapProfileServer(): Promise<BootstrapResult> {
     selected_pc_org_id: fp?.selected_pc_org_id ?? null,
     created,
     hydrated,
+    full_name: fullName,
+    is_owner: isOwner,
+    is_admin: isAdmin,
+    is_app_owner: isAppOwner,
     notes,
   };
 }

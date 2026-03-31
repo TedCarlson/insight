@@ -53,6 +53,13 @@ export type RankInputRow = {
 
 export type RankResolverConfig = {
   scopes?: RankScope[];
+
+  /**
+   * Direction for the primary composite/rank score.
+   * Use HIGHER_BETTER for traditional weighted scores.
+   * Use LOWER_BETTER for penalty-style scores.
+   */
+  score_direction?: RankDirection;
 };
 
 export type RankContextByPerson = Map<string, RankContext>;

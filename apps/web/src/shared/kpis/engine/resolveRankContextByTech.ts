@@ -42,7 +42,9 @@ function compareStableKey(a: RankInputRow, b: RankInputRow) {
 
 function sortBucket(rows: RankInputRow[]) {
   return [...rows].sort((a, b) => {
-    const compositeCompare = compareNullableNumbersDesc(
+    // TEMPORARY: DB composite_score is currently behaving like a penalty score,
+    // so LOWER composite_score ranks better.
+    const compositeCompare = compareNullableNumbersAsc(
       a.composite_score,
       b.composite_score
     );

@@ -1,9 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Card } from "@/components/ui/Card";
-import PopoverPanel from "@/components/ui/PopoverPanel";
 import OverlayPanel from "@/components/ui/OverlayPanel";
 import SurfaceHelpOverlay from "@/components/ui/SurfaceHelpOverlay";
 
@@ -14,8 +13,20 @@ import type {
 import type { WorkMixSummary } from "@/shared/kpis/engine/buildWorkMixSummary";
 import type { ParityRow } from "@/shared/kpis/engine/buildParityRows";
 
+import type {
+  InspectionMetricCell,
+  WorkforceInspectionPayload,
+} from "@/shared/kpis/contracts/inspectionTypes";
+import type { KpiBandKey, MetricsRangeKey } from "@/shared/kpis/core/types";
+
 import CompanySupervisorWorkMixCard from "./CompanySupervisorWorkMixCard";
 import CompanySupervisorParityCard from "./CompanySupervisorParityCard";
+import CompanySupervisorTechDrillDrawer from "./CompanySupervisorTechDrillDrawer";
+
+import WorkforceHeaderCell from "@/shared/ui/workforce/table/WorkforceHeaderCell";
+import WorkforceIdentityCell from "@/shared/ui/workforce/table/WorkforceIdentityCell";
+import WorkforceMetricButtonCell from "@/shared/ui/workforce/table/WorkforceMetricButtonCell";
+import WorkforceJobsCell from "@/shared/ui/workforce/table/WorkforceJobsCell";
 
 type RankSeat = {
   rank: number;
@@ -54,33 +65,54 @@ type Props = {
   rubricByKpi?: Map<string, WorkforceRubricRow[]>;
   work_mix: WorkMixSummary;
   parityRows: ParityRow[];
+  active_range?: MetricsRangeKey;
 };
 
-function signalBarClass(bandKey: string | null | undefined) {
-  if (bandKey === "EXCEEDS") return "bg-[var(--to-success)]";
-  if (bandKey === "MEETS") return "bg-[var(--to-primary)]";
-  if (bandKey === "NEEDS_IMPROVEMENT") return "bg-[var(--to-warning)]";
-  if (bandKey === "MISSES") return "bg-[var(--to-danger)]";
-  return "bg-transparent";
+type SelectedMetricTarget = {
+  row: CompanySupervisorRosterRow;
+  column: RosterColumn;
+  metric: WorkforceMetricCell;
+};
+
+function formatRankSeat(label: string, seat: RankSeat | null | undefined) {
+  return seat ? `${label} #${seat.rank}/${seat.population}` : `${label} —`;
 }
 
-function formatPct(part: number, total: number) {
-  if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0) {
-    return "—";
-  }
-  return `${((100 * part) / total).toFixed(1)}%`;
+function resolveMetricNumericValue(metric: WorkforceMetricCell): number | null {
+  const candidate =
+    (metric as { value?: unknown }).value ??
+    (metric as { value_numeric?: unknown }).value_numeric ??
+    (metric as { raw_value?: unknown }).raw_value ??
+    null;
+
+  return typeof candidate === "number" && Number.isFinite(candidate)
+    ? candidate
+    : null;
 }
 
-function formatRubricValue(value: number | null) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return Math.abs(value) >= 10 ? value.toFixed(1) : value.toFixed(2);
+function resolveMetricDisplayValue(metric: WorkforceMetricCell): string | null {
+  const display = (metric as { value_display?: unknown }).value_display;
+  return typeof display === "string" && display.trim() ? display : null;
 }
 
-function displayHeaderLabel(label: string) {
-  if (label === "Tool Usage %") return "Tool Usage %";
-  if (label === "Pure Pass %") return "Pure Pass %";
-  if (label === "48hr Contact") return "48hr Contact";
-  return label;
+function resolveMetricBandKey(metric: WorkforceMetricCell): KpiBandKey {
+  const band = (metric as { band_key?: unknown }).band_key;
+
+  if (band === "EXCEEDS") return "EXCEEDS";
+  if (band === "MEETS") return "MEETS";
+  if (band === "NEEDS_IMPROVEMENT") return "NEEDS_IMPROVEMENT";
+  if (band === "MISSES") return "MISSES";
+  return "NO_DATA";
+}
+
+function toInspectionMetricCell(metric: WorkforceMetricCell): InspectionMetricCell {
+  return {
+    kpi_key: metric.kpi_key,
+    label: metric.label,
+    value: resolveMetricNumericValue(metric),
+    value_display: resolveMetricDisplayValue(metric),
+    band_key: resolveMetricBandKey(metric),
+  };
 }
 
 function HeaderTrigger(props: {
@@ -104,199 +136,13 @@ function HeaderTrigger(props: {
   );
 }
 
-function MetricCell({ metric }: { metric?: WorkforceMetricCell }) {
-  return (
-    <div className="flex justify-center">
-      <div className="relative flex h-8 min-w-[66px] items-center justify-center rounded-lg border bg-card px-2 text-[11px] font-medium text-foreground">
-        <span
-          className={[
-            "absolute left-0 top-0 h-[3px] w-full rounded-t-lg",
-            signalBarClass(metric?.band_key),
-          ].join(" ")}
-        />
-        {metric?.value_display ?? "—"}
-      </div>
-    </div>
-  );
-}
-
-function RubricPopover(props: {
-  label: string;
-  rubric: WorkforceRubricRow[];
-  onClose: () => void;
-}) {
-  return (
-    <PopoverPanel onClose={props.onClose} align="center" widthClass="w-56">
-      <div className="mb-2 text-xs font-semibold">{props.label}</div>
-
-      {props.rubric.map((row) => (
-        <div
-          key={row.band_key}
-          className="flex items-center justify-between gap-3 py-1 text-[10px]"
-        >
-          <span>{row.band_key}</span>
-          <span>
-            {formatRubricValue(row.min_value)} –{" "}
-            {formatRubricValue(row.max_value)}
-          </span>
-        </div>
-      ))}
-    </PopoverPanel>
-  );
-}
-
-function WorkMixPopover(props: {
-  row: CompanySupervisorRosterRow;
-  onClose: () => void;
-}) {
-  const total = props.row.work_mix.total;
-
-  return (
-    <PopoverPanel onClose={props.onClose} align="right" widthClass="w-56">
-      <div className="mb-2 text-xs font-semibold">Work Mix</div>
-
-      <div className="space-y-1.5 text-[11px]">
-        <div className="flex items-center justify-between">
-          <span>Total Jobs</span>
-          <span>{total}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>Installs</span>
-          <span>
-            {props.row.work_mix.installs} ·{" "}
-            {formatPct(props.row.work_mix.installs, total)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>TCs</span>
-          <span>
-            {props.row.work_mix.tcs} · {formatPct(props.row.work_mix.tcs, total)}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>SROs</span>
-          <span>
-            {props.row.work_mix.sros} ·{" "}
-            {formatPct(props.row.work_mix.sros, total)}
-          </span>
-        </div>
-      </div>
-    </PopoverPanel>
-  );
-}
-
-function HeaderCell(props: {
-  column: RosterColumn;
-  rubric?: WorkforceRubricRow[];
-  activeKey: string | null;
-  setActiveKey: (value: string | null) => void;
-  sectionStart?: boolean;
-}) {
-  const isOpen = props.activeKey === props.column.kpi_key;
-
-  return (
-    <th
-      className={[
-        "relative px-3 py-3 text-center align-bottom text-[10px] font-medium text-[color-mix(in_oklab,var(--to-primary)_70%,black)]",
-        props.sectionStart ? "border-l border-[var(--to-border)]" : "",
-      ].join(" ")}
-    >
-      <HeaderTrigger
-        compact
-        label={displayHeaderLabel(props.column.label)}
-        onClick={() =>
-          props.setActiveKey(isOpen ? null : props.column.kpi_key)
-        }
-      />
-
-      {isOpen && props.rubric && props.rubric.length > 0 ? (
-        <RubricPopover
-          label={props.column.label}
-          rubric={props.rubric}
-          onClose={() => props.setActiveKey(null)}
-        />
-      ) : null}
-    </th>
-  );
-}
-
-function regionPodiumClass(rank: number | null | undefined) {
-  if (rank === 1) {
-    return "border-[#d4af37] bg-[color-mix(in_oklab,#d4af37_16%,white)] text-[#8a6a00]";
-  }
-  if (rank === 2) {
-    return "border-[#aeb7c2] bg-[color-mix(in_oklab,#aeb7c2_18%,white)] text-[#556270]";
-  }
-  if (rank === 3) {
-    return "border-[#b87333] bg-[color-mix(in_oklab,#b87333_16%,white)] text-[#7a4a1d]";
-  }
-  return "border-[var(--to-border)] bg-transparent text-muted-foreground";
-}
-
-function IdentityBlock(props: { row: CompanySupervisorRosterRow }) {
-  const region = props.row.rank_context?.region ?? null;
-  const team = props.row.rank_context?.team ?? null;
-
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="text-sm font-semibold leading-tight">
-        {props.row.full_name}
-      </div>
-
-      <div className="flex items-center gap-3 text-[10px] leading-tight">
-        <span
-          className={[
-            "inline-flex items-center rounded-md border px-1.5 py-[2px]",
-            regionPodiumClass(region?.rank),
-          ].join(" ")}
-          title={
-            region
-              ? `Region rank ${region.rank} of ${region.population}`
-              : "Region rank unavailable"
-          }
-        >
-          Region {region ? `#${region.rank}/${region.population}` : "—"}
-        </span>
-
-        <span className="text-muted-foreground">
-          Team {team ? `#${team.rank}/${team.population}` : "—"}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function JobsCell(props: {
-  row: CompanySupervisorRosterRow;
-  isOpen: boolean;
-  onToggle: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <td className="relative border-l border-[var(--to-border)] px-2 py-2 align-middle">
-      <div className="flex justify-center">
-        <button
-          type="button"
-          onClick={props.onToggle}
-          className="flex h-8 min-w-[54px] items-center justify-center rounded-xl border border-[var(--to-border)] bg-card px-2.5 text-[11px] font-medium transition hover:bg-muted/20"
-        >
-          {props.row.work_mix.total}
-        </button>
-      </div>
-
-      {props.isOpen ? (
-        <WorkMixPopover row={props.row} onClose={props.onClose} />
-      ) : null}
-    </td>
-  );
-}
-
 export default function CompanySupervisorRosterTable({
   columns,
   rows,
   rubricByKpi,
   work_mix,
   parityRows,
+  active_range,
 }: Props) {
   const [activeKpiKey, setActiveKpiKey] = useState<string | null>(null);
   const [activeWorkMixTechId, setActiveWorkMixTechId] = useState<string | null>(
@@ -305,25 +151,94 @@ export default function CompanySupervisorRosterTable({
   const [activePanel, setActivePanel] = useState<
     "work_mix" | "parity" | "help" | null
   >(null);
+  const [selectedMetric, setSelectedMetric] =
+    useState<SelectedMetricTarget | null>(null);
 
   const rubricMap = rubricByKpi ?? new Map<string, WorkforceRubricRow[]>();
+  const resolvedRange = active_range ?? ("fm" as MetricsRangeKey);
 
   function closeAllOverlays() {
     setActiveKpiKey(null);
     setActiveWorkMixTechId(null);
     setActivePanel(null);
+    setSelectedMetric(null);
   }
 
   function toggleWorkMix(techId: string) {
     setActiveKpiKey(null);
     setActivePanel(null);
+    setSelectedMetric(null);
     setActiveWorkMixTechId((current) => (current === techId ? null : techId));
   }
 
   function togglePanel(panel: "work_mix" | "parity" | "help") {
     setActiveKpiKey(null);
     setActiveWorkMixTechId(null);
+    setSelectedMetric(null);
     setActivePanel((current) => (current === panel ? null : panel));
+  }
+
+  function openMetricInspection(
+    row: CompanySupervisorRosterRow,
+    column: RosterColumn,
+    metric: WorkforceMetricCell
+  ) {
+    setActiveKpiKey(null);
+    setActiveWorkMixTechId(null);
+    setActivePanel(null);
+    setSelectedMetric({ row, column, metric });
+  }
+
+  const activeDrillMetrics = useMemo<InspectionMetricCell[]>(() => {
+    if (!selectedMetric) return [];
+    return selectedMetric.row.metrics.map(toInspectionMetricCell);
+  }, [selectedMetric]);
+
+  async function loadInspectionPayload(
+    kpiKey: string
+  ): Promise<WorkforceInspectionPayload | null> {
+    if (!selectedMetric) return null;
+
+    const row = selectedMetric.row;
+    const metric =
+      row.metrics.find((entry) => entry.kpi_key === kpiKey) ?? selectedMetric.metric;
+    const column =
+      columns.find((entry) => entry.kpi_key === kpiKey) ?? selectedMetric.column;
+
+    const params = new URLSearchParams({
+      person_id: row.person_id,
+      tech_id: row.tech_id,
+      full_name: row.full_name,
+      context: row.team_class,
+      kpi_key: column.kpi_key,
+      title: column.label,
+      value_display: resolveMetricDisplayValue(metric) ?? "",
+      band_key: resolveMetricBandKey(metric),
+      range: resolvedRange,
+    });
+
+    const numericValue = resolveMetricNumericValue(metric);
+    if (numericValue != null) {
+      params.set("value", String(numericValue));
+    }
+
+    if (row.contractor_name) {
+      params.set("contractor_name", row.contractor_name);
+    }
+
+    const res = await fetch(`/api/metrics/inspection?${params.toString()}`, {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    const json = (await res.json().catch(() => null)) as
+      | { ok: true; payload: WorkforceInspectionPayload }
+      | { ok: false; error?: string }
+      | null;
+
+    if (!res.ok || !json || !json.ok) return null;
+
+    return json.payload;
   }
 
   return (
@@ -355,7 +270,7 @@ export default function CompanySupervisorRosterTable({
                 </th>
 
                 {columns.map((column, index) => (
-                  <HeaderCell
+                  <WorkforceHeaderCell
                     key={column.kpi_key}
                     column={column}
                     rubric={rubricMap.get(column.kpi_key)}
@@ -363,6 +278,7 @@ export default function CompanySupervisorRosterTable({
                     setActiveKey={(value) => {
                       setActiveWorkMixTechId(null);
                       setActivePanel(null);
+                      setSelectedMetric(null);
                       setActiveKpiKey(value);
                     }}
                     sectionStart={index === 0}
@@ -395,27 +311,36 @@ export default function CompanySupervisorRosterTable({
                   ].join(" ")}
                 >
                   <td className="w-[300px] px-4 py-4 align-middle">
-                    <IdentityBlock row={row} />
+                    <WorkforceIdentityCell row={row} />
                   </td>
 
-                  {columns.map((column, index) => (
-                    <td
-                      key={column.kpi_key}
-                      className={[
-                        "px-2 py-3 align-middle",
-                        index === 0 ? "border-l border-[var(--to-border)]" : "",
-                        index === 3 ? "border-l border-[var(--to-border)]" : "",
-                      ].join(" ")}
-                    >
-                      <MetricCell
-                        metric={row.metrics.find(
-                          (metric) => metric.kpi_key === column.kpi_key
-                        )}
-                      />
-                    </td>
-                  ))}
+                  {columns.map((column, index) => {
+                    const metric = row.metrics.find(
+                      (entry) => entry.kpi_key === column.kpi_key
+                    );
 
-                  <JobsCell
+                    return (
+                      <td
+                        key={column.kpi_key}
+                        className={[
+                          "px-2 py-3 align-middle",
+                          index === 0 ? "border-l border-[var(--to-border)]" : "",
+                          index === 3 ? "border-l border-[var(--to-border)]" : "",
+                        ].join(" ")}
+                      >
+                        <WorkforceMetricButtonCell
+                          metric={metric}
+                          onClick={
+                            metric
+                              ? () => openMetricInspection(row, column, metric)
+                              : undefined
+                          }
+                        />
+                      </td>
+                    );
+                  })}
+
+                  <WorkforceJobsCell
                     row={row}
                     isOpen={activeWorkMixTechId === row.tech_id}
                     onToggle={() => toggleWorkMix(row.tech_id)}
@@ -475,7 +400,24 @@ export default function CompanySupervisorRosterTable({
               body:
                 "Select Parity to compare contractor and company grouping performance using the same signal language as the main table.",
             },
+            {
+              title: "Drilldown",
+              body:
+                "Select any KPI value in the table to open the tech inspection drawer for that metric. This shared drawer foundation is now the standing path for deeper metric inspection.",
+            },
           ]}
+        />
+      ) : null}
+
+      {selectedMetric ? (
+        <CompanySupervisorTechDrillDrawer
+          open={!!selectedMetric}
+          onClose={() => setSelectedMetric(null)}
+          name={selectedMetric.row.full_name}
+          context={selectedMetric.row.team_class}
+          metrics={activeDrillMetrics}
+          selectedKpi={selectedMetric.column.kpi_key}
+          loadPayload={loadInspectionPayload}
         />
       ) : null}
     </>

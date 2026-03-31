@@ -4,6 +4,7 @@ import CompanySupervisorRiskStrip from "../components/CompanySupervisorRiskStrip
 import CompanySupervisorRosterTable from "../components/CompanySupervisorRosterTable";
 import { getCompanySupervisorViewPayload } from "../lib/getCompanySupervisorViewPayload.server";
 import type { RangeKey } from "@/shared/kpis/engine/resolveKpiOverrides";
+import type { MetricsRangeKey } from "@/shared/kpis/core/types";
 
 type Props = {
   range: RangeKey;
@@ -25,6 +26,7 @@ export default async function CompanySupervisorPageShell(props: Props) {
         rubricByKpi={payload.rubricByKpi}
         work_mix={payload.work_mix}
         parityRows={payload.parityRows}
+        active_range={props.range as MetricsRangeKey}
       />
     </div>
   );

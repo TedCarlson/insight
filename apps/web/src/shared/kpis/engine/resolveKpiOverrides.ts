@@ -1,3 +1,5 @@
+// path: src/shared/kpis/engine/resolveKpiOverrides.ts
+
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import { resolveFiscalSelection } from "@/shared/kpis/core/rowSelection";
 import { aggregateRatio } from "@/shared/kpis/core/aggregateRatio";
@@ -357,6 +359,13 @@ function computeTnpsRate(rows: MetricFact[]): number | null {
   ).tnps_score;
 }
 
+function shiftTodayByMonths(monthsBack: number): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setMonth(d.getMonth() - monthsBack);
+  return d.toISOString().slice(0, 10);
+}
+
 function resolveCompositeValue(
   rows: CompositeRow[],
   range: RangeKey
@@ -383,6 +392,14 @@ function resolveCompositeValue(
   return selectedValues[0] ?? null;
 }
 
+function resolveRangeStartDate(range: RangeKey): string {
+  if (range === "FM") return shiftTodayByMonths(0);
+  if (range === "PREVIOUS") return shiftTodayByMonths(2);
+  if (range === "3FM") return shiftTodayByMonths(3);
+  if (range === "12FM") return shiftTodayByMonths(11);
+  return "2000-01-01";
+}
+
 export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> {
   const admin = args.admin ?? supabaseAdmin();
   const { techIds, pcOrgIds, range, class_type } = args;
@@ -393,6 +410,8 @@ export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> 
     return overrides;
   }
 
+  const startDate = resolveRangeStartDate(range);
+
   const factQuery = admin
     .from("metrics_tech_fact_day")
     .select(
@@ -400,6 +419,7 @@ export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> 
     )
     .in("pc_org_id", pcOrgIds)
     .in("tech_id", techIds)
+    .gte("fiscal_end_date", startDate)
     .order("fiscal_end_date", { ascending: false })
     .order("metric_date", { ascending: false })
     .order("inserted_at", { ascending: false })
@@ -416,12 +436,13 @@ export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> 
         .in("tech_id", techIds)
         .eq("class_type", class_type)
         .eq("is_outlier", false)
+        .gte("fiscal_end_date", startDate)
         .order("fiscal_end_date", { ascending: false })
         .order("metric_date", { ascending: false })
         .order("created_at", { ascending: false })
         .order("batch_id", { ascending: false })
         .limit(10000)
-    : Promise.resolve({ data: [], error: null } as any);
+    : Promise.resolve({ data: [], error: null } as const);
 
   const [{ data, error }, { data: compositeData, error: compositeError }] =
     await Promise.all([factQuery, compositeQuery]);
@@ -501,3 +522,5 @@ export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> 
 
   return overrides;
 }
+
+// path: src/shared/kpis/engine/resolveKpiOverrides.ts

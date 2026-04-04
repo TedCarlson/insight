@@ -13,15 +13,30 @@ type KpiOverrideRecord = Record<string, KpiOverrideMap>;
 type Params = {
   scopedAssignments: any[];
   peopleById: Map<string, any>;
-  kpis: WorkforceKpiConfig[];
+  kpis: (WorkforceKpiConfig & {
+    direction?: string | null;
+    sort_order?: number | null;
+  })[];
   rubricByKpi: Map<string, WorkforceRubricRow[]>;
   orgLabelsById: Map<string, string>;
   workMixByTech: Map<string, WorkforceWorkMix>;
   kpiOverrides?: KpiOverrideRecord | Map<string, KpiOverrideMap>;
 };
 
-function formatValue(value: number | null): string | null {
+type RankedMetricEntry = {
+  row: WorkforceRow;
+  metric: WorkforceMetricCell;
+  direction?: string | null;
+};
+
+function formatValue(value: number | null, kpiKey?: string): string | null {
   if (value == null || !Number.isFinite(value)) return null;
+
+  const normalized = String(kpiKey ?? "").trim().toLowerCase();
+  if (normalized.includes("tnps")) {
+    return value.toFixed(2);
+  }
+
   if (Math.abs(value) >= 10) return value.toFixed(1);
   return value.toFixed(2);
 }
@@ -193,6 +208,131 @@ function resolveOfficeLabel(args: {
   return pcOrgId || "Unknown";
 }
 
+function normalizeDirection(direction: string | null | undefined) {
+  const upper = String(direction ?? "").trim().toUpperCase();
+
+  if (
+    upper === "LOWER" ||
+    upper === "LOWER_BETTER" ||
+    upper === "ASC" ||
+    upper === "ASCENDING"
+  ) {
+    return "LOWER" as const;
+  }
+
+  return "HIGHER" as const;
+}
+
+function compareValuesForDirection(args: {
+  a: number | null;
+  b: number | null;
+  direction?: string | null;
+}) {
+  const normalizedDirection = normalizeDirection(args.direction);
+
+  const aValue =
+    args.a == null || !Number.isFinite(args.a)
+      ? normalizedDirection === "LOWER"
+        ? Number.POSITIVE_INFINITY
+        : Number.NEGATIVE_INFINITY
+      : args.a;
+
+  const bValue =
+    args.b == null || !Number.isFinite(args.b)
+      ? normalizedDirection === "LOWER"
+        ? Number.POSITIVE_INFINITY
+        : Number.NEGATIVE_INFINITY
+      : args.b;
+
+  if (normalizedDirection === "LOWER") {
+    return aValue - bValue;
+  }
+
+  return bValue - aValue;
+}
+
+function assignDenseMetricRanks(
+  rows: WorkforceRow[],
+  kpis: (WorkforceKpiConfig & { direction?: string | null; sort_order?: number | null })[]
+) {
+  const orderedKpis = [...kpis].sort((a, b) => {
+    const aSort = a.sort_order ?? Number.POSITIVE_INFINITY;
+    const bSort = b.sort_order ?? Number.POSITIVE_INFINITY;
+    if (aSort !== bSort) return aSort - bSort;
+    return a.label.localeCompare(b.label);
+  });
+
+  for (const kpi of orderedKpis) {
+    const ranked: RankedMetricEntry[] = rows
+      .map((row) => ({
+        row,
+        metric:
+          row.metrics.find((metric) => metric.kpi_key === kpi.kpi_key) ??
+          ({
+            kpi_key: kpi.kpi_key,
+            label: kpi.label,
+            value: null,
+            value_display: null,
+            band_key: "NO_DATA" as BandKey,
+            delta_value: null,
+            delta_display: null,
+            rank_value: null,
+            rank_display: null,
+            rank_delta_value: null,
+            rank_delta_display: null,
+            score_value: null,
+            score_weight: null,
+            score_contribution: null,
+          } as WorkforceMetricCell),
+        direction: kpi.direction,
+      }))
+      .filter((entry) =>
+        rowHasMetric(entry.row, kpi.kpi_key)
+      )
+      .sort((a, b) => {
+        const byValue = compareValuesForDirection({
+          a: a.metric.value,
+          b: b.metric.value,
+          direction: kpi.direction,
+        });
+
+        if (byValue !== 0) return byValue;
+        return String(a.row.tech_id ?? "").localeCompare(String(b.row.tech_id ?? ""));
+      });
+
+    let previousValue: number | null = null;
+    let hasPrevious = false;
+    let currentRank = 0;
+
+    ranked.forEach((entry, index) => {
+      const nextValue = entry.metric.value ?? null;
+      const sameAsPrevious =
+        hasPrevious &&
+        previousValue != null &&
+        nextValue != null &&
+        previousValue === nextValue;
+
+      if (!sameAsPrevious) {
+        currentRank = index + 1;
+      }
+
+      entry.metric.rank_value = currentRank;
+      entry.metric.rank_display = `#${currentRank}`;
+      entry.metric.rank_delta_value = null;
+      entry.metric.rank_delta_display = null;
+
+      previousValue = nextValue;
+      hasPrevious = true;
+    });
+  }
+
+  return rows;
+}
+
+function rowHasMetric(row: WorkforceRow, kpiKey: string) {
+  return !!row.metrics.find((metric) => metric.kpi_key === kpiKey);
+}
+
 export function buildWorkforceRows(params: Params): WorkforceRow[] {
   const {
     scopedAssignments,
@@ -233,7 +373,7 @@ export function buildWorkforceRows(params: Params): WorkforceRow[] {
         kpi_key: kpi.kpi_key,
         label: kpi.label,
         value,
-        value_display: formatValue(value),
+        value_display: formatValue(value, kpi.kpi_key),
         band_key: band,
         delta_value: null,
         delta_display: null,
@@ -269,22 +409,6 @@ export function buildWorkforceRows(params: Params): WorkforceRow[] {
       kpiOverrides,
     });
 
-    rows.sort((a, b) => {
-      const aScore = a.composite_score ?? -Infinity;
-      const bScore = b.composite_score ?? -Infinity;
-
-      // Higher is better
-      if (bScore !== aScore) return bScore - aScore;
-
-      // Tiebreaker: total jobs (if present)
-      const aJobs = a.work_mix?.total ?? 0;
-      const bJobs = b.work_mix?.total ?? 0;
-      if (bJobs !== aJobs) return bJobs - aJobs;
-
-      // Final stable fallback
-      return a.tech_id.localeCompare(b.tech_id);
-    });
-
     rows.push({
       person_id: personId,
       tech_id: techId,
@@ -308,5 +432,5 @@ export function buildWorkforceRows(params: Params): WorkforceRow[] {
     });
   }
 
-  return rows;
+  return assignDenseMetricRanks(rows, kpis);
 }

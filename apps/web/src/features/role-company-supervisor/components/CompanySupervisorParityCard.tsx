@@ -39,6 +39,8 @@ function MetricCell(props: {
   bandKey: string | null | undefined;
   rankDisplay?: string | null | undefined;
 }) {
+  const showRank = !!props.value && !!props.rankDisplay;
+
   return (
     <div className="flex justify-center">
       <div className="relative flex min-h-[42px] min-w-[78px] flex-col items-center justify-center rounded-lg border bg-card px-2 py-1 text-[11px] font-medium text-foreground">
@@ -49,25 +51,26 @@ function MetricCell(props: {
           ].join(" ")}
         />
         <div>{props.value ?? "—"}</div>
-        <div className="mt-0.5 text-[9px] leading-none text-muted-foreground">
-          {props.rankDisplay ?? "—"}
-        </div>
+        {showRank ? (
+          <div className="mt-0.5 text-[9px] leading-none text-muted-foreground">
+            {props.rankDisplay}
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function RankPill(props: { value?: string | null }) {
+function CompositePill(props: { value?: string | null }) {
   return (
-    <div className="inline-flex min-w-[38px] items-center justify-center rounded-full border bg-muted/20 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+    <div className="inline-flex min-w-[48px] items-center justify-center rounded-full border bg-muted/20 px-2 py-0.5 text-[11px] font-semibold text-foreground">
       {props.value ?? "—"}
     </div>
   );
 }
 
-function ModeButton(props: {
+function ToggleButton(props: {
   label: string;
-  active?: boolean;
   disabled?: boolean;
   onClick?: () => void;
 }) {
@@ -78,10 +81,8 @@ function ModeButton(props: {
       onClick={props.onClick}
       className={[
         "rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition",
-        props.active
-          ? "border-[var(--to-primary)] bg-[color-mix(in_oklab,var(--to-primary)_10%,white)] text-[var(--to-primary)]"
-          : "bg-background text-muted-foreground hover:bg-muted/30",
-        props.disabled ? "cursor-not-allowed opacity-50 hover:bg-background" : "",
+        "border-[var(--to-primary)] bg-[color-mix(in_oklab,var(--to-primary)_10%,white)] text-[var(--to-primary)]",
+        props.disabled ? "cursor-not-allowed opacity-50" : "hover:bg-[color-mix(in_oklab,var(--to-primary)_14%,white)]",
       ].join(" ")}
     >
       {props.label}
@@ -106,6 +107,9 @@ export default function CompanySupervisorParityCard({
 
   const allColumns = activeRows[0]?.metrics ?? [];
 
+  const toggleLabel =
+    mode === "summary" ? "Show Detail" : "Show Summary";
+
   return (
     <Card className="p-4">
       <div className="mb-4 rounded-xl border bg-[color-mix(in_oklab,var(--to-primary)_6%,white)] px-4 py-2">
@@ -115,17 +119,14 @@ export default function CompanySupervisorParityCard({
           </div>
 
           <div className="flex items-center gap-2">
-            <ModeButton
-              label="Summary"
-              active={mode === "summary"}
-              onClick={() => setMode("summary")}
-            />
-            <ModeButton
-              label="Detail"
-              active={mode === "detail"}
+            <ToggleButton
+              label={toggleLabel}
               disabled={!hasDetailRows}
               onClick={() => {
-                if (hasDetailRows) setMode("detail");
+                if (!hasDetailRows) return;
+                setMode((current) =>
+                  current === "summary" ? "detail" : "summary"
+                );
               }}
             />
           </div>
@@ -172,7 +173,7 @@ export default function CompanySupervisorParityCard({
               >
                 <td className="w-[240px] px-4 py-3 align-middle">
                   <div className="flex items-center gap-3">
-                    <RankPill value={row.rank_display} />
+                    <CompositePill value={row.rank_display} />
 
                     <div>
                       <div className="text-sm font-semibold leading-tight">

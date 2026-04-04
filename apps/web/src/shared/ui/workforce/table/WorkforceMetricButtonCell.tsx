@@ -1,4 +1,11 @@
-import type { WorkforceMetricButtonCellProps } from "./workforceTable.types";
+"use client";
+
+import type { WorkforceMetricCell } from "@/shared/kpis/engine/workforceTypes";
+
+type Props = {
+  metric?: WorkforceMetricCell | null;
+  onClick?: () => void;
+};
 
 function signalBarClass(bandKey: string | null | undefined) {
   if (bandKey === "EXCEEDS") return "bg-[var(--to-success)]";
@@ -11,22 +18,36 @@ function signalBarClass(bandKey: string | null | undefined) {
 export default function WorkforceMetricButtonCell({
   metric,
   onClick,
-}: WorkforceMetricButtonCellProps) {
+}: Props) {
+  const value = metric?.value_display ?? "—";
+  const rank = metric?.rank_display ?? null;
+  const bandKey = metric?.band_key ?? "NO_DATA";
+  const disabled = !metric || !onClick;
+
   return (
-    <div className="flex justify-center">
-      <button
-        type="button"
-        onClick={onClick}
-        className="relative flex h-8 min-w-[66px] items-center justify-center rounded-lg border bg-card px-2 text-[11px] font-medium text-foreground transition hover:bg-muted/20"
-      >
-        <span
-          className={[
-            "absolute left-0 top-0 h-[3px] w-full rounded-t-lg",
-            signalBarClass(metric?.band_key),
-          ].join(" ")}
-        />
-        {metric?.value_display ?? "—"}
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "relative flex min-h-[42px] min-w-[78px] flex-col items-center justify-center rounded-lg border bg-card px-2 py-1 text-[11px] font-medium text-foreground transition",
+        disabled ? "cursor-default" : "hover:bg-muted/20",
+      ].join(" ")}
+    >
+      <span
+        className={[
+          "absolute left-0 top-0 h-[3px] w-full rounded-t-lg",
+          signalBarClass(bandKey),
+        ].join(" ")}
+      />
+
+      <div>{value}</div>
+
+      {rank ? (
+        <div className="mt-0.5 text-[9px] leading-none text-muted-foreground">
+          {rank}
+        </div>
+      ) : null}
+    </button>
   );
 }

@@ -8,17 +8,14 @@ import type {
   RawMetricPayload,
 } from "@/shared/kpis/contracts/kpiTypes";
 import { resolveRankContextByTech } from "@/shared/kpis/engine/resolveRankContextByTech";
-import { aggregateResolvedValues } from "@/shared/kpis/math/aggregateResolvedValues";
-import { resolveRawValue } from "@/shared/kpis/math/resolveRawValue";
+import { aggregateMetricFactsForKpi } from "@/shared/kpis/engine/aggregateMetricFactsForKpi";
 
 export type ParityGroupType = "COMPANY" | "CONTRACTOR";
-
-export type ParityMetricCell = WorkforceMetricCell;
 
 export type ParityRow = {
   label: string;
   group_type: ParityGroupType;
-  metrics: ParityMetricCell[];
+  metrics: WorkforceMetricCell[];
   hc: number;
   rank_value: number | null;
   rank_display: string | null;
@@ -34,10 +31,15 @@ type KpiDefinition = {
 
 type RosterRowLike = {
   tech_id?: string | null;
+  full_name?: string | null;
+  composite_score?: number | null;
+  composite_display?: string | null;
   team_class?: string | null;
   contractor_name?: string | null;
   metrics: WorkforceMetricCell[];
 };
+
+type ParityMode = "summary" | "detail";
 
 type Params = {
   definitions: KpiDefinition[];
@@ -45,6 +47,7 @@ type Params = {
   rubricByKpi?: Map<string, WorkforceRubricRow[]>;
   metricFactsByTech?: Map<string, unknown[]>;
   rank_population?: RankInputRow[];
+  mode?: ParityMode;
 };
 
 type GroupBucket = {
@@ -56,7 +59,7 @@ type GroupBucket = {
 
 type RankedMetricEntry = {
   row: ParityRow;
-  cell: ParityMetricCell;
+  cell: WorkforceMetricCell;
   definition: KpiDefinition;
 };
 
@@ -65,36 +68,76 @@ function toMaybeString(value: unknown) {
   return out || null;
 }
 
-function normalizeGroupLabel(row: RosterRowLike) {
+function resolveGroupType(row: RosterRowLike): ParityGroupType {
   const contractor = toMaybeString(row.contractor_name);
-  if (contractor) {
-    return {
-      label: contractor,
-      group_type: "CONTRACTOR" as const,
-    };
+  const teamClass = String(row.team_class ?? "").trim().toUpperCase();
+
+  if (teamClass === "BP" || contractor) {
+    return "CONTRACTOR";
   }
 
-  const teamClass = String(row.team_class ?? "").trim().toUpperCase();
-  if (teamClass === "BP") {
+  return "COMPANY";
+}
+
+function normalizeSummaryGroupLabel(row: RosterRowLike) {
+  const group_type = resolveGroupType(row);
+
+  if (group_type === "CONTRACTOR") {
     return {
       label: "Contractor",
-      group_type: "CONTRACTOR" as const,
+      group_type,
     };
   }
 
   return {
     label: "In-House",
-    group_type: "COMPANY" as const,
+    group_type,
   };
+}
+
+function resolveDetailLabel(row: RosterRowLike) {
+  const fullName = toMaybeString(row.full_name);
+  const techId = toMaybeString(row.tech_id);
+
+  if (fullName) return fullName;
+  if (techId) return techId;
+  return "Unknown";
+}
+
+function resolveDetailRankValue(row: RosterRowLike) {
+  const composite =
+    typeof row.composite_score === "number" && Number.isFinite(row.composite_score)
+      ? row.composite_score
+      : null;
+
+  return composite;
+}
+
+function resolveDetailRankDisplay(row: RosterRowLike) {
+  if (
+    typeof row.composite_display === "string" &&
+    row.composite_display.trim()
+  ) {
+    return row.composite_display;
+  }
+
+  const composite = resolveDetailRankValue(row);
+  return composite != null ? composite.toFixed(2) : null;
 }
 
 function toParityStableKey(label: string, group_type: ParityGroupType) {
   return `${group_type}::${label}`;
 }
 
-function formatValue(value: number | null) {
+function formatValue(value: number | null, kpiKey: string) {
   if (value == null || !Number.isFinite(value)) return null;
-  return value.toFixed(2);
+
+  const normalized = String(kpiKey).trim().toLowerCase();
+  if (normalized.includes("tnps")) {
+    return value.toFixed(2);
+  }
+
+  return value.toFixed(1);
 }
 
 function resolveBandKey(
@@ -183,33 +226,47 @@ function computeMetricFromFacts(
 ): number | null {
   if (!facts.length) return null;
 
-  const def = toKpiDefinitionLike(definition);
-
-  if (facts.length === 1) {
-    return resolveRawValue({
-      def,
-      raw: facts[0],
-    });
-  }
-
-  return aggregateResolvedValues({
-    def,
+  return aggregateMetricFactsForKpi({
+    def: toKpiDefinitionLike(definition),
     rows: facts,
   });
+}
+
+function computeComposite(
+  metrics: WorkforceMetricCell[],
+  definitions: KpiDefinition[]
+): number | null {
+  let weightedTotal = 0;
+  let weightSum = 0;
+
+  for (const def of definitions) {
+    const metric = metrics.find((m) => m.kpi_key === def.kpi_key);
+    const value = metric?.value;
+    const weight = def.weight;
+
+    if (value == null || !Number.isFinite(value)) continue;
+    if (weight == null || !Number.isFinite(weight) || weight <= 0) continue;
+
+    weightedTotal += value * weight;
+    weightSum += weight;
+  }
+
+  if (weightSum <= 0) return null;
+  return weightedTotal / weightSum;
 }
 
 function buildParityMetricCell(args: {
   definition: KpiDefinition;
   facts: RawMetricPayload[];
   rubric?: WorkforceRubricRow[];
-}): ParityMetricCell {
+}): WorkforceMetricCell {
   const value = computeMetricFromFacts(args.facts, args.definition);
 
   return {
     kpi_key: args.definition.kpi_key,
     label: args.definition.label,
     value,
-    value_display: formatValue(value),
+    value_display: formatValue(value, args.definition.kpi_key),
     band_key: resolveBandKey(value, args.rubric),
     delta_value: null,
     delta_display: null,
@@ -218,8 +275,14 @@ function buildParityMetricCell(args: {
     rank_delta_value: null,
     rank_delta_display: null,
     score_value: null,
-    score_weight: null,
-    score_contribution: null,
+    score_weight: args.definition.weight ?? null,
+    score_contribution:
+      value != null &&
+      Number.isFinite(value) &&
+      args.definition.weight != null &&
+      Number.isFinite(args.definition.weight)
+        ? value * args.definition.weight
+        : null,
   };
 }
 
@@ -312,17 +375,70 @@ function applyOverallRanks(rows: ParityRow[], rankPopulation?: RankInputRow[]) {
   return sorted;
 }
 
-export function buildParityRows({
-  definitions,
-  roster_rows,
-  rubricByKpi,
-  metricFactsByTech,
-  rank_population,
-}: Params): ParityRow[] {
+function buildDetailParityRows(args: Params): ParityRow[] {
+  const { roster_rows, definitions } = args;
+  const orderedDefinitions = normalizeDefinitions(definitions);
+
+  const out: ParityRow[] = roster_rows.map((row) => {
+    const metrics = orderedDefinitions.map((definition) => {
+      const existing =
+        row.metrics.find((metric) => metric.kpi_key === definition.kpi_key) ??
+        null;
+
+      if (existing) return { ...existing };
+
+      return {
+        kpi_key: definition.kpi_key,
+        label: definition.label,
+        value: null,
+        value_display: null,
+        band_key: "NO_DATA" as const,
+        delta_value: null,
+        delta_display: null,
+        rank_value: null,
+        rank_display: null,
+        rank_delta_value: null,
+        rank_delta_display: null,
+        score_value: null,
+        score_weight: definition.weight ?? null,
+        score_contribution: null,
+      } satisfies WorkforceMetricCell;
+    });
+
+    return {
+      label: resolveDetailLabel(row),
+      group_type: resolveGroupType(row),
+      metrics,
+      hc: 1,
+      rank_value: resolveDetailRankValue(row),
+      rank_display: resolveDetailRankDisplay(row),
+    };
+  });
+
+  assignMetricRanks(out, orderedDefinitions);
+
+  return [...out].sort((a, b) => {
+    const av = a.rank_value ?? Number.NEGATIVE_INFINITY;
+    const bv = b.rank_value ?? Number.NEGATIVE_INFINITY;
+
+    if (bv !== av) return bv - av;
+    return a.label.localeCompare(b.label);
+  });
+}
+
+function buildSummaryParityRows(args: Params): ParityRow[] {
+  const {
+    definitions,
+    roster_rows,
+    rubricByKpi,
+    metricFactsByTech,
+    rank_population,
+  } = args;
+
   const grouped = new Map<string, GroupBucket>();
 
   for (const row of roster_rows) {
-    const group = normalizeGroupLabel(row);
+    const group = normalizeSummaryGroupLabel(row);
     const key = toParityStableKey(group.label, group.group_type);
 
     const techId = toMaybeString(row.tech_id);
@@ -350,23 +466,48 @@ export function buildParityRows({
   const out: ParityRow[] = [];
 
   for (const group of grouped.values()) {
+    const metrics = orderedDefinitions.map((definition) =>
+      buildParityMetricCell({
+        definition,
+        facts: group.facts,
+        rubric: rubricByKpi?.get(definition.kpi_key),
+      })
+    );
+
+    const composite = computeComposite(metrics, orderedDefinitions);
+
     out.push({
       label: group.label,
       group_type: group.group_type,
       hc: group.rows.length,
-      rank_value: null,
-      rank_display: null,
-      metrics: orderedDefinitions.map((definition) =>
-        buildParityMetricCell({
-          definition,
-          facts: group.facts,
-          rubric: rubricByKpi?.get(definition.kpi_key),
-        })
-      ),
+      rank_value: composite,
+      rank_display: composite != null ? composite.toFixed(2) : null,
+      metrics,
     });
   }
 
   assignMetricRanks(out, orderedDefinitions);
 
+  if (out.some((row) => row.rank_value != null)) {
+    return [...out].sort((a, b) => {
+      const av = a.rank_value ?? Number.NEGATIVE_INFINITY;
+      const bv = b.rank_value ?? Number.NEGATIVE_INFINITY;
+      if (bv !== av) return bv - av;
+      return a.label.localeCompare(b.label);
+    });
+  }
+
   return applyOverallRanks(out, rank_population);
 }
+
+export function buildParityRows(params: Params): ParityRow[] {
+  const mode = params.mode ?? "summary";
+
+  if (mode === "detail") {
+    return buildDetailParityRows(params);
+  }
+
+  return buildSummaryParityRows(params);
+}
+
+// path: src/shared/kpis/engine/buildParityRows.ts

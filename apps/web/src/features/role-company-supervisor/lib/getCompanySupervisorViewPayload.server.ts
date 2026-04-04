@@ -88,29 +88,6 @@ function toMaybeString(value: unknown) {
   return out || null;
 }
 
-function compareRosterRowsByRank(
-  a: CompanySupervisorRosterRow,
-  b: CompanySupervisorRosterRow
-) {
-  const aRegion = a.rank_context?.region?.rank ?? Number.POSITIVE_INFINITY;
-  const bRegion = b.rank_context?.region?.rank ?? Number.POSITIVE_INFINITY;
-
-  if (aRegion !== bRegion) return aRegion - bRegion;
-
-  const aTeam = a.rank_context?.team?.rank ?? Number.POSITIVE_INFINITY;
-  const bTeam = b.rank_context?.team?.rank ?? Number.POSITIVE_INFINITY;
-
-  if (aTeam !== bTeam) return aTeam - bTeam;
-
-  const aName = toMaybeString((a as { full_name?: unknown }).full_name) ?? "";
-  const bName = toMaybeString((b as { full_name?: unknown }).full_name) ?? "";
-
-  const nameCompare = aName.localeCompare(bName);
-  if (nameCompare !== 0) return nameCompare;
-
-  return String(a.tech_id ?? "").localeCompare(String(b.tech_id ?? ""));
-}
-
 export async function getCompanySupervisorViewPayload(args: Args = {}) {
   const admin = supabaseAdmin();
   const range: RangeKey = args.range ?? "FM";
@@ -145,7 +122,9 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
   );
 
   const selectedPcOrgId =
-    pcOrgIds[0] ?? (toMaybeString((scope as { selected_pc_org_id?: unknown }).selected_pc_org_id) || null);
+    pcOrgIds[0] ??
+    (toMaybeString((scope as { selected_pc_org_id?: unknown }).selected_pc_org_id) ||
+      null);
 
   const [
     kpiOverrides,
@@ -199,10 +178,10 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
 
   const resolvedRegionLike = resolvedRegion as
     | {
-      region_name?: string | null;
-      division_name?: string | null;
-      pc_org_name?: string | null;
-    }
+        region_name?: string | null;
+        division_name?: string | null;
+        pc_org_name?: string | null;
+      }
     | null
     | undefined;
 
@@ -210,8 +189,8 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
     toMaybeString(
       (scope as { rep_full_name?: string | null; full_name?: string | null })
         .rep_full_name ??
-      (scope as { rep_full_name?: string | null; full_name?: string | null })
-        .full_name
+        (scope as { rep_full_name?: string | null; full_name?: string | null })
+          .full_name
     ) ?? null;
 
   const division_label = toMaybeString(resolvedRegionLike?.division_name);
@@ -231,6 +210,8 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
     kpis: config.map((k) => ({
       kpi_key: k.kpi_key,
       label: k.label,
+      direction: k.direction ?? null,
+      sort_order: k.sort_order ?? null,
     })),
     rubricByKpi,
     orgLabelsById: scope.org_labels_by_id,
@@ -297,13 +278,13 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
 
     const aTiebreak =
       typeof a.rank_context?.team?.rank === "number" &&
-        Number.isFinite(a.rank_context.team.rank)
+      Number.isFinite(a.rank_context.team.rank)
         ? a.rank_context.team.rank
         : null;
 
     const bTiebreak =
       typeof b.rank_context?.team?.rank === "number" &&
-        Number.isFinite(b.rank_context.team.rank)
+      Number.isFinite(b.rank_context.team.rank)
         ? b.rank_context.team.rank
         : null;
 
@@ -325,13 +306,13 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
 
     const aRisk =
       typeof a.below_target_count === "number" &&
-        Number.isFinite(a.below_target_count)
+      Number.isFinite(a.below_target_count)
         ? a.below_target_count
         : Number.POSITIVE_INFINITY;
 
     const bRisk =
       typeof b.below_target_count === "number" &&
-        Number.isFinite(b.below_target_count)
+      Number.isFinite(b.below_target_count)
         ? b.below_target_count
         : Number.POSITIVE_INFINITY;
 
@@ -370,6 +351,16 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
     rubricByKpi,
     metricFactsByTech,
     rank_population: parityRankPopulation,
+    mode: "summary",
+  });
+
+  const parityDetailRows = buildParityRows({
+    definitions: config,
+    roster_rows,
+    rubricByKpi,
+    metricFactsByTech,
+    rank_population: parityRankPopulation,
+    mode: "detail",
   });
 
   return {
@@ -390,6 +381,7 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
     risk_strip,
     work_mix,
     parityRows,
+    parityDetailRows,
     roster_rows,
   };
 }

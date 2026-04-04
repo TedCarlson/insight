@@ -1,3 +1,5 @@
+// path: src/shared/kpis/engine/resolveEligibleRankPopulation.server.ts
+
 import { supabaseServer } from "@/shared/data/supabase/server";
 import { resolveFiscalSelection } from "@/shared/kpis/core/rowSelection";
 import type { MetricsRangeKey, RawMetricRow } from "@/shared/kpis/core/types";
@@ -17,7 +19,7 @@ type Args = {
   allowed_person_ids?: string[];
 };
 
-type PopulationRow = {
+type PopulationSeedRow = {
   tech_id: string | null;
   person_id: string | null;
   composite_score: number | null;
@@ -28,10 +30,18 @@ type PopulationRow = {
   fiscal_end_date: string | null;
   batch_id: string | null;
   created_at: string | null;
+};
+
+type PopulationDetailRow = {
+  person_id: string | null;
+  tech_id: string | null;
+  metric_date: string | null;
+  fiscal_end_date: string | null;
+  batch_id: string | null;
   metrics_json: unknown;
 };
 
-type RankCandidateRow = PopulationRow & RawMetricRow;
+type RankCandidateRow = PopulationSeedRow & RawMetricRow;
 
 type PcOrgAdminRow = {
   pc_org_id: string | null;
@@ -189,7 +199,7 @@ function choosePreferredRow(
   return currentTech.localeCompare(candidateTech) <= 0 ? current : candidate;
 }
 
-function toRankCandidateRow(row: PopulationRow): RankCandidateRow | null {
+function toRankCandidateRow(row: PopulationSeedRow): RankCandidateRow | null {
   const metric_date = toTrimmedString(row.metric_date);
   const fiscal_end_date = toTrimmedString(row.fiscal_end_date);
   const batch_id = toTrimmedString(row.batch_id);
@@ -205,8 +215,39 @@ function toRankCandidateRow(row: PopulationRow): RankCandidateRow | null {
     fiscal_end_date,
     batch_id,
     inserted_at,
-    raw: extractRecord(row.metrics_json),
+    raw: {},
   };
+}
+
+function buildDetailKey(args: {
+  person_id: string | null;
+  tech_id: string | null;
+  metric_date: string | null;
+  fiscal_end_date: string | null;
+  batch_id: string | null;
+}) {
+  return [
+    toTrimmedString(args.person_id) ?? "",
+    toTrimmedString(args.tech_id) ?? "",
+    toTrimmedString(args.metric_date) ?? "",
+    toTrimmedString(args.fiscal_end_date) ?? "",
+    toTrimmedString(args.batch_id) ?? "",
+  ].join("::");
+}
+
+function shiftTodayByMonths(monthsBack: number): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setMonth(d.getMonth() - monthsBack);
+  return d.toISOString().slice(0, 10);
+}
+
+function resolveRangeStartDate(range: MetricsRangeKey): string {
+  if (range === "FM") return shiftTodayByMonths(0);
+  if (range === "PREVIOUS") return shiftTodayByMonths(2);
+  if (range === "3FM") return shiftTodayByMonths(3);
+  if (range === "12FM") return shiftTodayByMonths(11);
+  return "2000-01-01";
 }
 
 export async function resolveEligibleRankPopulation(
@@ -226,14 +267,18 @@ export async function resolveEligibleRankPopulation(
 
   const allowedPersonIds =
     args.allowed_person_ids && args.allowed_person_ids.length
-      ? new Set(
-          args.allowed_person_ids
-            .map((value) => String(value ?? "").trim())
-            .filter(Boolean)
+      ? Array.from(
+          new Set(
+            args.allowed_person_ids
+              .map((value) => String(value ?? "").trim())
+              .filter(Boolean)
+          )
         )
       : null;
 
-  let populationQuery = supabase
+  const startDate = resolveRangeStartDate(args.range);
+
+  let populationSeedQuery = supabase
     .from("ui_master_metric_v2")
     .select(
       `
@@ -246,26 +291,30 @@ export async function resolveEligibleRankPopulation(
       metric_date,
       fiscal_end_date,
       batch_id,
-      created_at,
-      metrics_json
+      created_at
     `
     )
     .in("pc_org_id", pcOrgIds)
     .eq("class_type", args.class_type)
-    .eq("is_outlier", false);
+    .eq("is_outlier", false)
+    .gte("fiscal_end_date", startDate);
 
   if (args.batch_id) {
-    populationQuery = populationQuery.eq("batch_id", args.batch_id);
+    populationSeedQuery = populationSeedQuery.eq("batch_id", args.batch_id);
+  }
+
+  if (allowedPersonIds?.length) {
+    populationSeedQuery = populationSeedQuery.in("person_id", allowedPersonIds);
   }
 
   const [
-    { data: populationRows, error: populationError },
+    { data: populationSeedRows, error: populationSeedError },
     { data: pcOrgRows, error: pcOrgError },
     { data: divisionRows, error: divisionError },
     { data: classConfigRows, error: classConfigError },
     { data: kpiDefRows, error: kpiDefError },
   ] = await Promise.all([
-    populationQuery,
+    populationSeedQuery.limit(5000),
     supabase
       .from("pc_org_admin_v")
       .select("pc_org_id,region_id")
@@ -283,9 +332,9 @@ export async function resolveEligibleRankPopulation(
       .select("kpi_key,label,customer_label,raw_label_identifier,direction"),
   ]);
 
-  if (populationError) {
+  if (populationSeedError) {
     throw new Error(
-      `resolveEligibleRankPopulation failed loading ui_master_metric_v2: ${populationError.message}`
+      `resolveEligibleRankPopulation failed loading ui_master_metric_v2 seed: ${populationSeedError.message}`
     );
   }
 
@@ -354,13 +403,12 @@ export async function resolveEligibleRankPopulation(
 
   const candidatesByPersonId = new Map<string, RankCandidateRow[]>();
 
-  for (const row of (populationRows ?? []) as PopulationRow[]) {
+  for (const row of (populationSeedRows ?? []) as PopulationSeedRow[]) {
     const personId = toTrimmedString(row.person_id);
     const techId = toTrimmedString(row.tech_id);
     const pcOrgId = toTrimmedString(row.pc_org_id);
 
     if (!personId || !techId || !pcOrgId) continue;
-    if (allowedPersonIds && !allowedPersonIds.has(personId)) continue;
 
     const compositeScore = parseNumber(row.composite_score);
     if (compositeScore == null) continue;
@@ -387,6 +435,48 @@ export async function resolveEligibleRankPopulation(
     bestRowByPersonId.set(personId, best);
   }
 
+  if (!bestRowByPersonId.size) {
+    return [];
+  }
+
+  const selectedPersonIds = Array.from(bestRowByPersonId.keys());
+
+  let populationDetailQuery = supabase
+    .from("ui_master_metric_v2")
+    .select("person_id,tech_id,metric_date,fiscal_end_date,batch_id,metrics_json")
+    .in("pc_org_id", pcOrgIds)
+    .eq("class_type", args.class_type)
+    .eq("is_outlier", false)
+    .gte("fiscal_end_date", startDate)
+    .in("person_id", selectedPersonIds);
+
+  if (args.batch_id) {
+    populationDetailQuery = populationDetailQuery.eq("batch_id", args.batch_id);
+  }
+
+  const { data: populationDetailRows, error: populationDetailError } =
+    await populationDetailQuery.limit(5000);
+
+  if (populationDetailError) {
+    throw new Error(
+      `resolveEligibleRankPopulation failed loading ui_master_metric_v2 detail: ${populationDetailError.message}`
+    );
+  }
+
+  const detailByKey = new Map<string, PopulationDetailRow>();
+  for (const row of (populationDetailRows ?? []) as PopulationDetailRow[]) {
+    detailByKey.set(
+      buildDetailKey({
+        person_id: row.person_id,
+        tech_id: row.tech_id,
+        metric_date: row.metric_date,
+        fiscal_end_date: row.fiscal_end_date,
+        batch_id: row.batch_id,
+      }),
+      row
+    );
+  }
+
   const out: RankInputRow[] = [];
 
   for (const row of bestRowByPersonId.values()) {
@@ -402,6 +492,19 @@ export async function resolveEligibleRankPopulation(
       args.team_key_by_person?.get(personId) ??
       null;
 
+    const detail =
+      detailByKey.get(
+        buildDetailKey({
+          person_id: row.person_id,
+          tech_id: row.tech_id,
+          metric_date: row.metric_date,
+          fiscal_end_date: row.fiscal_end_date,
+          batch_id: row.batch_id,
+        })
+      ) ?? null;
+
+    const metricsJson = detail?.metrics_json ?? null;
+
     out.push({
       person_id: personId,
       tech_id: techId,
@@ -409,10 +512,10 @@ export async function resolveEligibleRankPopulation(
       team_key: teamKey,
       region_key: regionByPcOrg.get(pcOrgId) ?? null,
       division_key: coCode ? divisionIdByCode.get(coCode) ?? null : null,
-      tiebreak_value: extractMetricValue(row.metrics_json, tiebreakerDef),
+      tiebreak_value: extractMetricValue(metricsJson, tiebreakerDef),
       tiebreak_direction: tiebreakerDirection,
-      total_jobs: extractTotalJobs(row.metrics_json),
-      risk_flags: extractRiskFlags(row.metrics_json),
+      total_jobs: extractTotalJobs(metricsJson),
+      risk_flags: extractRiskFlags(metricsJson),
     });
   }
 

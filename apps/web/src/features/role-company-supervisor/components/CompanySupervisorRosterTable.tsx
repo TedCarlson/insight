@@ -27,6 +27,7 @@ import WorkforceHeaderCell from "@/shared/ui/workforce/table/WorkforceHeaderCell
 import WorkforceIdentityCell from "@/shared/ui/workforce/table/WorkforceIdentityCell";
 import WorkforceMetricButtonCell from "@/shared/ui/workforce/table/WorkforceMetricButtonCell";
 import WorkforceJobsCell from "@/shared/ui/workforce/table/WorkforceJobsCell";
+import { sortWorkforceRowsBySelection } from "@/shared/kpis/core/sortWorkforceRowsBySelection";
 
 type RankSeat = {
   rank: number;
@@ -61,12 +62,25 @@ type RosterColumn = {
   label: string;
 };
 
+type SortKey =
+  | "composite"
+  | "tnps_score"
+  | "ftr_rate"
+  | "tool_usage_rate"
+  | "pht_pure_pass_rate"
+  | "contact_48hr_rate"
+  | "repeat_rate"
+  | "rework_rate"
+  | "soi_rate"
+  | "met_rate";
+
 type Props = {
   columns: RosterColumn[];
   rows: CompanySupervisorRosterRow[];
   rubricByKpi?: Map<string, WorkforceRubricRow[]>;
   work_mix: WorkMixSummary;
   parityRows: ParityRow[];
+  parityDetailRows?: ParityRow[];
   active_range?: MetricsRangeKey;
 };
 
@@ -76,9 +90,18 @@ type SelectedMetricTarget = {
   metric: WorkforceMetricCell;
 };
 
-function formatRankSeat(label: string, seat: RankSeat | null | undefined) {
-  return seat ? `${label} #${seat.rank}/${seat.population}` : `${label} —`;
-}
+const SORT_OPTIONS: Array<{ value: SortKey; label: string }> = [
+  { value: "composite", label: "Composite" },
+  { value: "tnps_score", label: "tNPS" },
+  { value: "ftr_rate", label: "FTR %" },
+  { value: "tool_usage_rate", label: "Tool Usage %" },
+  { value: "pht_pure_pass_rate", label: "Pure Pass %" },
+  { value: "contact_48hr_rate", label: "48hr Contact" },
+  { value: "repeat_rate", label: "Repeat %" },
+  { value: "rework_rate", label: "Rework %" },
+  { value: "soi_rate", label: "SOI %" },
+  { value: "met_rate", label: "Met %" },
+];
 
 function resolveMetricNumericValue(metric: WorkforceMetricCell): number | null {
   const candidate =
@@ -118,11 +141,17 @@ function toInspectionMetricCell(metric: WorkforceMetricCell): InspectionMetricCe
 }
 
 function formatCompositeDisplay(row: CompanySupervisorRosterRow) {
-  if (typeof row.composite_display === "string" && row.composite_display.trim()) {
+  if (
+    typeof row.composite_display === "string" &&
+    row.composite_display.trim()
+  ) {
     return row.composite_display;
   }
 
-  if (typeof row.composite_score === "number" && Number.isFinite(row.composite_score)) {
+  if (
+    typeof row.composite_score === "number" &&
+    Number.isFinite(row.composite_score)
+  ) {
     return row.composite_score.toFixed(2);
   }
 
@@ -156,6 +185,7 @@ export default function CompanySupervisorRosterTable({
   rubricByKpi,
   work_mix,
   parityRows,
+  parityDetailRows,
   active_range,
 }: Props) {
   const [activeKpiKey, setActiveKpiKey] = useState<string | null>(null);
@@ -167,9 +197,17 @@ export default function CompanySupervisorRosterTable({
   >(null);
   const [selectedMetric, setSelectedMetric] =
     useState<SelectedMetricTarget | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("composite");
 
   const rubricMap = rubricByKpi ?? new Map<string, WorkforceRubricRow[]>();
   const resolvedRange = active_range ?? ("fm" as MetricsRangeKey);
+
+  const sortedRows = useMemo(() => {
+    return sortWorkforceRowsBySelection({
+      rows,
+      sortKey,
+    });
+  }, [rows, sortKey]);
 
   function closeAllOverlays() {
     setActiveKpiKey(null);
@@ -215,9 +253,11 @@ export default function CompanySupervisorRosterTable({
 
     const row = selectedMetric.row;
     const metric =
-      row.metrics.find((entry) => entry.kpi_key === kpiKey) ?? selectedMetric.metric;
+      row.metrics.find((entry) => entry.kpi_key === kpiKey) ??
+      selectedMetric.metric;
     const column =
-      columns.find((entry) => entry.kpi_key === kpiKey) ?? selectedMetric.column;
+      columns.find((entry) => entry.kpi_key === kpiKey) ??
+      selectedMetric.column;
 
     const params = new URLSearchParams({
       person_id: row.person_id,
@@ -259,8 +299,22 @@ export default function CompanySupervisorRosterTable({
     <>
       <Card className="p-4">
         <div className="mb-4 flex items-center justify-between rounded-2xl border bg-[color-mix(in_oklab,var(--to-primary)_8%,white)] px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-[color-mix(in_oklab,var(--to-primary)_72%,black)]">
-            Team Performance
+          <div className="flex items-center gap-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-[color-mix(in_oklab,var(--to-primary)_72%,black)]">
+              Team Performance
+            </div>
+
+            <select
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              className="h-8 rounded-lg border border-[var(--to-border)] bg-background px-2 text-[11px] font-medium text-foreground"
+            >
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="flex items-center gap-4">
@@ -318,7 +372,7 @@ export default function CompanySupervisorRosterTable({
             </thead>
 
             <tbody>
-              {rows.map((row, index) => (
+              {sortedRows.map((row, index) => (
                 <tr
                   key={row.tech_id}
                   className={[
@@ -387,7 +441,10 @@ export default function CompanySupervisorRosterTable({
 
       {activePanel === "parity" ? (
         <OverlayPanel title="Parity" onClose={closeAllOverlays}>
-          <CompanySupervisorParityCard rows={parityRows} />
+          <CompanySupervisorParityCard
+            rows={parityRows}
+            detailRows={parityDetailRows}
+          />
         </OverlayPanel>
       ) : null}
 
@@ -445,3 +502,5 @@ export default function CompanySupervisorRosterTable({
     </>
   );
 }
+
+// path: src/features/role-company-supervisor/components/CompanySupervisorRosterTable.tsx

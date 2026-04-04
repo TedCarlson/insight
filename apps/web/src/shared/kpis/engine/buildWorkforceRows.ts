@@ -26,6 +26,11 @@ function formatValue(value: number | null): string | null {
   return value.toFixed(2);
 }
 
+function formatComposite(value: number | null): string | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return value.toFixed(2);
+}
+
 function resolveBand(
   value: number | null,
   rubric?: WorkforceRubricRow[]
@@ -105,6 +110,11 @@ function getKpiAliases(kpiKey: string): string[] {
 
     met: ["met", "met_rate"],
     met_rate: ["met_rate", "met"],
+
+    composite: ["composite", "composite_score", "weighted_score", "ws"],
+    composite_score: ["composite_score", "composite", "weighted_score", "ws"],
+    weighted_score: ["weighted_score", "composite_score", "composite", "ws"],
+    ws: ["ws", "weighted_score", "composite_score", "composite"],
   };
 
   return aliasMap[key] ?? [key];
@@ -253,6 +263,28 @@ export function buildWorkforceRows(params: Params): WorkforceRow[] {
       total: 0,
     };
 
+    const composite_score = resolveMetricValue({
+      techId,
+      kpiKey: "composite_score",
+      kpiOverrides,
+    });
+
+    rows.sort((a, b) => {
+      const aScore = a.composite_score ?? -Infinity;
+      const bScore = b.composite_score ?? -Infinity;
+
+      // Higher is better
+      if (bScore !== aScore) return bScore - aScore;
+
+      // Tiebreaker: total jobs (if present)
+      const aJobs = a.work_mix?.total ?? 0;
+      const bJobs = b.work_mix?.total ?? 0;
+      if (bJobs !== aJobs) return bJobs - aJobs;
+
+      // Final stable fallback
+      return a.tech_id.localeCompare(b.tech_id);
+    });
+
     rows.push({
       person_id: personId,
       tech_id: techId,
@@ -267,6 +299,8 @@ export function buildWorkforceRows(params: Params): WorkforceRow[] {
         "contractor_name" in assignment
           ? (assignment.contractor_name ?? null)
           : null,
+      composite_score,
+      composite_display: formatComposite(composite_score),
       rank: null,
       metrics,
       below_target_count: belowTargetCount,

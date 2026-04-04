@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Card } from "@/components/ui/Card";
 import type { HomePayload } from "../lib/getHomePayload.server";
-import type { WidgetPayload } from "../lib/getWidgetPayload.server";
+type WidgetPayload = any;
 
 import { BroadcastComposerCard } from "./widgets/BroadcastComposerCard";
 import {
@@ -103,7 +103,8 @@ export default function ITGSupervisorHomeWorkspace(props: {
   const orgLabel = payload.org_label ?? "No org selected";
   const [showBroadcastDetail, setShowBroadcastDetail] = useState(false);
 
-  const supervisorRows: SupervisorPulseRow[] = widgetPayload.supervisorPulse.rows;
+  const supervisorRows: SupervisorPulseRow[] =
+    widgetPayload?.supervisorPulse?.rows ?? [];
 
   const rosterColumns = [
     { kpi_key: "tnps", label: "tNPS" },
@@ -162,7 +163,15 @@ export default function ITGSupervisorHomeWorkspace(props: {
       <BroadcastDetailOverlay
         open={showBroadcastDetail}
         onClose={() => setShowBroadcastDetail(false)}
-        reach={widgetPayload.broadcast.reach}
+        reach={
+          widgetPayload?.broadcast?.reach ?? {
+            reachChip: null,
+            activeBroadcast: "—",
+            audience: "—",
+            seen: "—",
+            unread: "—",
+          }
+        }
       />
     </>
   );

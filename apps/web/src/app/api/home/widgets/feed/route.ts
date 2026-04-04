@@ -16,10 +16,7 @@ export async function GET() {
 
     const selectedPcOrgId = scope.ok ? scope.selected_pc_org_id : null;
 
-    const items = await getFeedWidgetPayload({
-      role: home.role,
-      selectedPcOrgId,
-    });
+    const items = await getFeedWidgetPayload();
 
     return NextResponse.json({ items });
   } catch {

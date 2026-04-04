@@ -3,7 +3,13 @@ import type {
   WorkforceRubricRow,
 } from "@/shared/kpis/engine/workforceTypes";
 import type { RankInputRow } from "@/shared/kpis/contracts/rankTypes";
+import type {
+  KpiDefinitionLike,
+  RawMetricPayload,
+} from "@/shared/kpis/contracts/kpiTypes";
 import { resolveRankContextByTech } from "@/shared/kpis/engine/resolveRankContextByTech";
+import { aggregateResolvedValues } from "@/shared/kpis/math/aggregateResolvedValues";
+import { resolveRawValue } from "@/shared/kpis/math/resolveRawValue";
 
 export type ParityGroupType = "COMPANY" | "CONTRACTOR";
 
@@ -27,6 +33,7 @@ type KpiDefinition = {
 };
 
 type RosterRowLike = {
+  tech_id?: string | null;
   team_class?: string | null;
   contractor_name?: string | null;
   metrics: WorkforceMetricCell[];
@@ -44,6 +51,7 @@ type GroupBucket = {
   label: string;
   group_type: ParityGroupType;
   rows: RosterRowLike[];
+  facts: RawMetricPayload[];
 };
 
 type RankedMetricEntry = {
@@ -52,11 +60,24 @@ type RankedMetricEntry = {
   definition: KpiDefinition;
 };
 
+function toMaybeString(value: unknown) {
+  const out = String(value ?? "").trim();
+  return out || null;
+}
+
 function normalizeGroupLabel(row: RosterRowLike) {
-  const contractor = String(row.contractor_name ?? "").trim();
+  const contractor = toMaybeString(row.contractor_name);
   if (contractor) {
     return {
       label: contractor,
+      group_type: "CONTRACTOR" as const,
+    };
+  }
+
+  const teamClass = String(row.team_class ?? "").trim().toUpperCase();
+  if (teamClass === "BP") {
+    return {
+      label: "Contractor",
       group_type: "CONTRACTOR" as const,
     };
   }
@@ -69,11 +90,6 @@ function normalizeGroupLabel(row: RosterRowLike) {
 
 function toParityStableKey(label: string, group_type: ParityGroupType) {
   return `${group_type}::${label}`;
-}
-
-function average(values: number[]) {
-  if (!values.length) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function formatValue(value: number | null) {
@@ -152,27 +168,49 @@ function compareValuesForDirection(args: {
   return bValue - aValue;
 }
 
+function toKpiDefinitionLike(definition: KpiDefinition): KpiDefinitionLike {
+  return {
+    kpi_key: definition.kpi_key,
+    label: definition.label,
+    customer_label: definition.label,
+    raw_label_identifier: definition.label,
+  };
+}
+
+function computeMetricFromFacts(
+  facts: RawMetricPayload[],
+  definition: KpiDefinition
+): number | null {
+  if (!facts.length) return null;
+
+  const def = toKpiDefinitionLike(definition);
+
+  if (facts.length === 1) {
+    return resolveRawValue({
+      def,
+      raw: facts[0],
+    });
+  }
+
+  return aggregateResolvedValues({
+    def,
+    rows: facts,
+  });
+}
+
 function buildParityMetricCell(args: {
   definition: KpiDefinition;
-  rows: RosterRowLike[];
+  facts: RawMetricPayload[];
   rubric?: WorkforceRubricRow[];
 }): ParityMetricCell {
-  const values = args.rows
-    .map((row) =>
-      row.metrics.find((metric) => metric.kpi_key === args.definition.kpi_key)
-    )
-    .map((metric) => metric?.value)
-    .filter((value): value is number => value != null && Number.isFinite(value));
-
-  const avg = average(values);
-  const band_key = resolveBandKey(avg, args.rubric);
+  const value = computeMetricFromFacts(args.facts, args.definition);
 
   return {
     kpi_key: args.definition.kpi_key,
     label: args.definition.label,
-    value: avg,
-    value_display: formatValue(avg),
-    band_key,
+    value,
+    value_display: formatValue(value),
+    band_key: resolveBandKey(value, args.rubric),
     delta_value: null,
     delta_display: null,
     rank_value: null,
@@ -207,10 +245,7 @@ function assignMetricRanks(rows: ParityRow[], definitions: KpiDefinition[]) {
         cell: row.metrics.find((metric) => metric.kpi_key === definition.kpi_key),
         definition,
       }))
-      .filter(
-        (entry): entry is RankedMetricEntry =>
-          !!entry.cell
-      )
+      .filter((entry): entry is RankedMetricEntry => !!entry.cell)
       .sort(compareMetricEntries);
 
     let previousValue: number | null = null;
@@ -281,6 +316,7 @@ export function buildParityRows({
   definitions,
   roster_rows,
   rubricByKpi,
+  metricFactsByTech,
   rank_population,
 }: Params): ParityRow[] {
   const grouped = new Map<string, GroupBucket>();
@@ -289,9 +325,15 @@ export function buildParityRows({
     const group = normalizeGroupLabel(row);
     const key = toParityStableKey(group.label, group.group_type);
 
+    const techId = toMaybeString(row.tech_id);
+    const facts = techId
+      ? ((metricFactsByTech?.get(techId) ?? []) as RawMetricPayload[])
+      : [];
+
     const existing = grouped.get(key);
     if (existing) {
       existing.rows.push(row);
+      existing.facts.push(...facts);
       continue;
     }
 
@@ -299,6 +341,7 @@ export function buildParityRows({
       label: group.label,
       group_type: group.group_type,
       rows: [row],
+      facts: [...facts],
     });
   }
 
@@ -316,7 +359,7 @@ export function buildParityRows({
       metrics: orderedDefinitions.map((definition) =>
         buildParityMetricCell({
           definition,
-          rows: group.rows,
+          facts: group.facts,
           rubric: rubricByKpi?.get(definition.kpi_key),
         })
       ),

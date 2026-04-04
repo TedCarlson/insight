@@ -17,49 +17,27 @@ export type RankInputRow = {
   person_id: string;
   tech_id: string;
 
-  /**
-   * Primary ordering value.
-   * This is the authoritative weighted/composite score
-   * for the active range context.
-   */
+  // 1️⃣ PRIMARY
   composite_score: number | null;
 
-  /**
-   * Scope keys used to partition populations.
-   */
+  // scope keys
   team_key: string | null;
   region_key: string | null;
   division_key: string | null;
 
-  /**
-   * Admin-configured tiebreaker KPI value.
-   * This comes from metrics admin configuration.
-   */
+  // 2️⃣ ADMIN TIEBREAKER
   tiebreak_value: number | null;
-
-  /**
-   * Direction for the configured tiebreaker KPI.
-   * HIGHER_BETTER means larger value wins.
-   * LOWER_BETTER means smaller value wins.
-   */
   tiebreak_direction: RankDirection | null;
 
-  /**
-   * Default fallback tiebreaker if the configured
-   * tiebreak value is still tied or unavailable.
-   */
-  fallback_value: number | null;
+  // 3️⃣ JOBS
+  total_jobs: number | null;
+
+  // 4️⃣ RISK
+  risk_flags: number | null;
 };
 
 export type RankResolverConfig = {
   scopes?: RankScope[];
-
-  /**
-   * Direction for the primary composite/rank score.
-   * Use HIGHER_BETTER for traditional weighted scores.
-   * Use LOWER_BETTER for penalty-style scores.
-   */
-  score_direction?: RankDirection;
 };
 
 export type RankContextByPerson = Map<string, RankContext>;

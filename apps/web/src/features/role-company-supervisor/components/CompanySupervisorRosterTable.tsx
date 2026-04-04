@@ -39,6 +39,8 @@ type CompanySupervisorRosterRow = {
   full_name: string;
   contractor_name?: string | null;
   team_class: string;
+  composite_score?: number | null;
+  composite_display?: string | null;
   rank_context?: {
     team: RankSeat | null;
     region: RankSeat | null;
@@ -113,6 +115,18 @@ function toInspectionMetricCell(metric: WorkforceMetricCell): InspectionMetricCe
     value_display: resolveMetricDisplayValue(metric),
     band_key: resolveMetricBandKey(metric),
   };
+}
+
+function formatCompositeDisplay(row: CompanySupervisorRosterRow) {
+  if (typeof row.composite_display === "string" && row.composite_display.trim()) {
+    return row.composite_display;
+  }
+
+  if (typeof row.composite_score === "number" && Number.isFinite(row.composite_score)) {
+    return row.composite_score.toFixed(2);
+  }
+
+  return "—";
 }
 
 function HeaderTrigger(props: {
@@ -269,6 +283,10 @@ export default function CompanySupervisorRosterTable({
                   Tech
                 </th>
 
+                <th className="border-l border-[var(--to-border)] px-3 py-4 text-center text-[11px] font-medium text-[color-mix(in_oklab,var(--to-primary)_72%,black)]">
+                  Composite
+                </th>
+
                 {columns.map((column, index) => (
                   <WorkforceHeaderCell
                     key={column.kpi_key}
@@ -312,6 +330,10 @@ export default function CompanySupervisorRosterTable({
                 >
                   <td className="w-[300px] px-4 py-4 align-middle">
                     <WorkforceIdentityCell row={row} />
+                  </td>
+
+                  <td className="border-l border-[var(--to-border)] px-3 py-4 text-center text-sm font-semibold align-middle">
+                    {formatCompositeDisplay(row)}
                   </td>
 
                   {columns.map((column, index) => {
@@ -378,7 +400,7 @@ export default function CompanySupervisorRosterTable({
             {
               title: "Scan",
               body:
-                "Read left to right by tech. KPI color carries the signal first, value second. Segment breaks separate primary KPIs, additional KPIs, and operational columns.",
+                "Read left to right by tech. Composite shows the primary weighted score driving rank. KPI color carries the signal first, value second.",
             },
             {
               title: "Rank",

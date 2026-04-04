@@ -22,14 +22,13 @@ import { resolveWorkMixByTech } from "@/shared/kpis/engine/resolveWorkMixByTech"
 import {
   resolveKpiOverrides,
   type RangeKey,
+  type ReportClassType,
 } from "@/shared/kpis/engine/resolveKpiOverrides";
 import { resolveRegionForPcOrg } from "@/shared/org/resolveRegionForPcOrg.server";
 import { loadParityRankPopulation } from "@/shared/kpis/sources/loadParityRankPopulation.server";
 
 import { buildCompanySupervisorKpiStripPayload } from "./buildCompanySupervisorKpiStripPayload";
-import { resolveCompanySupervisorScope } from "@/features/company-supervisor-view/lib/resolveCompanySupervisorScope.server";
-
-type ReportClassType = "P4P" | "SMART" | "TECH";
+import { resolveCompanySupervisorScope } from "./resolveCompanySupervisorScope.server";
 
 type CompanySupervisorRosterRow = WorkforceRow & {
   team_class: string;
@@ -120,7 +119,7 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
   const scope = await resolveCompanySupervisorScope();
 
   const config = await loadKpiConfig({
-    class_type: "TECH",
+    class_type,
   });
 
   const loadedRubricByKpi = await loadKpiRubric({
@@ -146,7 +145,7 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
   );
 
   const selectedPcOrgId =
-    pcOrgIds[0] ?? (toMaybeString(scope.selected_pc_org_id) || null);
+    pcOrgIds[0] ?? (toMaybeString((scope as { selected_pc_org_id?: unknown }).selected_pc_org_id) || null);
 
   const [
     kpiOverrides,
@@ -162,6 +161,7 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
       techIds,
       pcOrgIds,
       range,
+      class_type,
     }),
     resolveWorkMixByTech({
       admin,
@@ -199,10 +199,10 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
 
   const resolvedRegionLike = resolvedRegion as
     | {
-        region_name?: string | null;
-        division_name?: string | null;
-        pc_org_name?: string | null;
-      }
+      region_name?: string | null;
+      division_name?: string | null;
+      pc_org_name?: string | null;
+    }
     | null
     | undefined;
 
@@ -210,8 +210,8 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
     toMaybeString(
       (scope as { rep_full_name?: string | null; full_name?: string | null })
         .rep_full_name ??
-        (scope as { rep_full_name?: string | null; full_name?: string | null })
-          .full_name
+      (scope as { rep_full_name?: string | null; full_name?: string | null })
+        .full_name
     ) ?? null;
 
   const division_label = toMaybeString(resolvedRegionLike?.division_name);
@@ -282,7 +282,63 @@ export async function getCompanySupervisorViewPayload(args: Args = {}) {
     }
   );
 
-  const roster_rows = [...roster_rows_unsorted].sort(compareRosterRowsByRank);
+  const roster_rows = [...roster_rows_unsorted].sort((a, b) => {
+    const aComposite =
+      typeof a.composite_score === "number" && Number.isFinite(a.composite_score)
+        ? a.composite_score
+        : Number.NEGATIVE_INFINITY;
+
+    const bComposite =
+      typeof b.composite_score === "number" && Number.isFinite(b.composite_score)
+        ? b.composite_score
+        : Number.NEGATIVE_INFINITY;
+
+    if (bComposite !== aComposite) return bComposite - aComposite;
+
+    const aTiebreak =
+      typeof a.rank_context?.team?.rank === "number" &&
+        Number.isFinite(a.rank_context.team.rank)
+        ? a.rank_context.team.rank
+        : null;
+
+    const bTiebreak =
+      typeof b.rank_context?.team?.rank === "number" &&
+        Number.isFinite(b.rank_context.team.rank)
+        ? b.rank_context.team.rank
+        : null;
+
+    if (aTiebreak != null && bTiebreak != null && aTiebreak !== bTiebreak) {
+      return aTiebreak - bTiebreak;
+    }
+
+    const aJobs =
+      typeof a.work_mix?.total === "number" && Number.isFinite(a.work_mix.total)
+        ? a.work_mix.total
+        : 0;
+
+    const bJobs =
+      typeof b.work_mix?.total === "number" && Number.isFinite(b.work_mix.total)
+        ? b.work_mix.total
+        : 0;
+
+    if (bJobs !== aJobs) return bJobs - aJobs;
+
+    const aRisk =
+      typeof a.below_target_count === "number" &&
+        Number.isFinite(a.below_target_count)
+        ? a.below_target_count
+        : Number.POSITIVE_INFINITY;
+
+    const bRisk =
+      typeof b.below_target_count === "number" &&
+        Number.isFinite(b.below_target_count)
+        ? b.below_target_count
+        : Number.POSITIVE_INFINITY;
+
+    if (aRisk !== bRisk) return aRisk - bRisk;
+
+    return 0;
+  });
 
   const supervisorFacts = roster_rows.flatMap(
     (row) => metricFactsByTech.get(row.tech_id) ?? []

@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
 import type {
   ParityGroupType,
@@ -8,7 +9,10 @@ import type {
 
 type Props = {
   rows: ParityRow[];
+  detailRows?: ParityRow[];
 };
+
+type ParityMode = "summary" | "detail";
 
 function signalBarClass(bandKey: string | null | undefined) {
   if (bandKey === "EXCEEDS") return "bg-[var(--to-success)]";
@@ -61,14 +65,70 @@ function RankPill(props: { value?: string | null }) {
   );
 }
 
-export default function CompanySupervisorParityCard({ rows }: Props) {
-  const allColumns = rows[0]?.metrics ?? [];
+function ModeButton(props: {
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className={[
+        "rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition",
+        props.active
+          ? "border-[var(--to-primary)] bg-[color-mix(in_oklab,var(--to-primary)_10%,white)] text-[var(--to-primary)]"
+          : "bg-background text-muted-foreground hover:bg-muted/30",
+        props.disabled ? "cursor-not-allowed opacity-50 hover:bg-background" : "",
+      ].join(" ")}
+    >
+      {props.label}
+    </button>
+  );
+}
+
+export default function CompanySupervisorParityCard({
+  rows,
+  detailRows,
+}: Props) {
+  const [mode, setMode] = useState<ParityMode>("summary");
+
+  const hasDetailRows = Array.isArray(detailRows) && detailRows.length > 0;
+
+  const activeRows = useMemo(() => {
+    if (mode === "detail" && hasDetailRows) {
+      return detailRows!;
+    }
+    return rows;
+  }, [mode, hasDetailRows, detailRows, rows]);
+
+  const allColumns = activeRows[0]?.metrics ?? [];
 
   return (
     <Card className="p-4">
       <div className="mb-4 rounded-xl border bg-[color-mix(in_oklab,var(--to-primary)_6%,white)] px-4 py-2">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--to-primary)]">
-          Parity
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--to-primary)]">
+            Parity
+          </div>
+
+          <div className="flex items-center gap-2">
+            <ModeButton
+              label="Summary"
+              active={mode === "summary"}
+              onClick={() => setMode("summary")}
+            />
+            <ModeButton
+              label="Detail"
+              active={mode === "detail"}
+              disabled={!hasDetailRows}
+              onClick={() => {
+                if (hasDetailRows) setMode("detail");
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -100,9 +160,9 @@ export default function CompanySupervisorParityCard({ rows }: Props) {
           </thead>
 
           <tbody>
-            {rows.map((row, rowIndex) => (
+            {activeRows.map((row, rowIndex) => (
               <tr
-                key={`${row.group_type}-${row.label}`}
+                key={`${mode}-${row.group_type}-${row.label}`}
                 className={[
                   "border-b last:border-b-0",
                   rowIndex > 0 && rowIndex % 4 === 0
@@ -132,7 +192,7 @@ export default function CompanySupervisorParityCard({ rows }: Props) {
 
                   return (
                     <td
-                      key={`${row.group_type}-${row.label}-${column.kpi_key}`}
+                      key={`${mode}-${row.group_type}-${row.label}-${column.kpi_key}`}
                       className={[
                         "px-1 py-2 align-middle",
                         index === 0 ? "border-l border-[var(--to-border)]" : "",
@@ -153,6 +213,17 @@ export default function CompanySupervisorParityCard({ rows }: Props) {
                 </td>
               </tr>
             ))}
+
+            {!activeRows.length ? (
+              <tr>
+                <td
+                  colSpan={allColumns.length + 2}
+                  className="px-4 py-8 text-center text-sm text-muted-foreground"
+                >
+                  No parity rows available.
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

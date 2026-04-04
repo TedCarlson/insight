@@ -13,14 +13,9 @@ export default async function HomePageShell() {
   const isCompanyManager = payload.role === "COMPANY_MANAGER";
   const usesWorkspace = isItgSupervisor || isCompanyManager;
 
-  const widgetPayload = usesWorkspace
-    ? await getWidgetPayload({
-        role: payload.role,
-        selectedPcOrgId: payload.has_selected_org
-          ? payload.selected_pc_org_id ?? null
-          : null,
-      })
-    : null;
+  const widgetPayload = payload
+  ? await getWidgetPayload()
+  : null;
 
   return (
     <div className="space-y-4">

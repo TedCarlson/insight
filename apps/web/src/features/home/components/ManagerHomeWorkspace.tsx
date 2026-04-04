@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Card } from "@/components/ui/Card";
 import type { HomePayload } from "../lib/getHomePayload.server";
-import type { WidgetPayload } from "../lib/getWidgetPayload.server";
+type WidgetPayload = any;
 
 import { BroadcastComposerCard } from "./widgets/BroadcastComposerCard";
 import {
@@ -107,27 +107,29 @@ export default function ManagerHomeWorkspace(props: {
   const orgPulseMetrics: [OrgPulseMetric, OrgPulseMetric, OrgPulseMetric] = [
     {
       title: "tNPS",
-      value: widgetPayload.pulse.org.tnps.display,
-      note: widgetPayload.pulse.org.tnps.note,
+      value: widgetPayload?.pulse?.org?.tnps?.display ?? "—",
+      note: widgetPayload?.pulse?.org?.tnps?.note ?? "",
     },
     {
       title: "FTR",
-      value: widgetPayload.pulse.org.ftr.display,
-      note: widgetPayload.pulse.org.ftr.note,
+      value: widgetPayload?.pulse?.org?.ftr?.display ?? "—",
+      note: widgetPayload?.pulse?.org?.ftr?.note ?? "",
     },
     {
       title: "Tool Usage",
-      value: widgetPayload.pulse.org.toolUsage.display,
-      note: widgetPayload.pulse.org.toolUsage.note,
+      value: widgetPayload?.pulse?.org?.toolUsage?.display ?? "—",
+      note: widgetPayload?.pulse?.org?.toolUsage?.note ?? "",
     },
   ];
 
-  const officePulseItems: OfficePulseItem[] = widgetPayload.pulse.offices;
+  const officePulseItems: OfficePulseItem[] =
+    widgetPayload?.pulse?.offices ?? [];
 
-  const uploadItems: UploadStatusItem[] = widgetPayload.uploads.items;
+  const uploadItems: UploadStatusItem[] =
+    widgetPayload?.uploads?.items ?? [];
 
   const feed = useActivityFeedWidget({
-    initialItems: widgetPayload.feed.items as ActivityFeedItem[],
+    initialItems: (widgetPayload?.feed?.items ?? []) as ActivityFeedItem[],
     pollMs: 300_000,
   });
 
@@ -175,7 +177,15 @@ export default function ManagerHomeWorkspace(props: {
       <BroadcastDetailOverlay
         open={showBroadcastDetail}
         onClose={() => setShowBroadcastDetail(false)}
-        reach={widgetPayload.broadcast.reach}
+        reach={
+          widgetPayload?.broadcast?.reach ?? {
+            reachChip: null,
+            activeBroadcast: "—",
+            audience: "—",
+            seen: "—",
+            unread: "—",
+          }
+        }
       />
     </>
   );

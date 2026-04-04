@@ -9,13 +9,15 @@ type Args = {
   batch_id?: string | null;
 };
 
-type ActivePopulationRow = {
+type PopulationRow = {
   tech_id: string | null;
   person_id: string | null;
   composite_score: number | null;
   direct_reports_to_person_id: string | null;
   pc_org_id: string | null;
   co_code: string | null;
+  total_jobs: number | null;
+  risk_flags: number | null;
 };
 
 type PcOrgAdminRow = {
@@ -26,12 +28,16 @@ type PcOrgAdminRow = {
 type DivisionAdminRow = {
   division_id: string | null;
   division_code: string | null;
-  division_name: string | null;
 };
 
 function toMaybeString(value: unknown) {
   const out = String(value ?? "").trim();
   return out || null;
+}
+
+function toMaybeNumber(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 export async function loadRankPopulation(
@@ -50,7 +56,7 @@ export async function loadRankPopulation(
   if (!pcOrgIds.length) return [];
 
   let populationQuery = supabase
-    .from("v_metrics_active_population")
+    .from("ui_master_metric_v2")
     .select(
       `
       tech_id,
@@ -61,7 +67,8 @@ export async function loadRankPopulation(
       co_code,
       is_outlier,
       batch_id,
-      class_type
+      class_type,
+      metrics_json
     `
     )
     .in("pc_org_id", pcOrgIds)
@@ -73,7 +80,7 @@ export async function loadRankPopulation(
   }
 
   const [
-    { data: populationRows, error: populationError },
+    { data: populationRowsRaw, error: populationError },
     { data: pcOrgRows, error: pcOrgError },
     { data: divisionRows, error: divisionError },
   ] = await Promise.all([
@@ -92,15 +99,14 @@ export async function loadRankPopulation(
       .select(
         `
         division_id,
-        division_code,
-        division_name
+        division_code
       `
       ),
   ]);
 
   if (populationError) {
     throw new Error(
-      `loadRankPopulation failed loading v_metrics_active_population: ${populationError.message}`
+      `loadRankPopulation failed loading ui_master_metric_v2: ${populationError.message}`
     );
   }
 
@@ -132,9 +138,43 @@ export async function loadRankPopulation(
     divisionIdByCode.set(divisionCode, divisionId);
   }
 
+  const populationRows: PopulationRow[] = ((populationRowsRaw ?? []) as any[]).map(
+    (row) => {
+      const metricsJson =
+        row?.metrics_json && typeof row.metrics_json === "object"
+          ? row.metrics_json
+          : {};
+
+      const totalJobs =
+        toMaybeNumber(metricsJson.total_jobs) ??
+        toMaybeNumber(metricsJson["Total Jobs"]) ??
+        toMaybeNumber(metricsJson.total_jobs_num) ??
+        null;
+
+      const riskFlags =
+        toMaybeNumber(metricsJson.risk_flags) ??
+        toMaybeNumber(metricsJson.below_target_count) ??
+        toMaybeNumber(metricsJson.risk_count) ??
+        0;
+
+      return {
+        tech_id: toMaybeString(row?.tech_id),
+        person_id: toMaybeString(row?.person_id),
+        composite_score: toMaybeNumber(row?.composite_score),
+        direct_reports_to_person_id: toMaybeString(
+          row?.direct_reports_to_person_id
+        ),
+        pc_org_id: toMaybeString(row?.pc_org_id),
+        co_code: toMaybeString(row?.co_code),
+        total_jobs: totalJobs,
+        risk_flags: riskFlags,
+      };
+    }
+  );
+
   const out: RankInputRow[] = [];
 
-  for (const row of (populationRows ?? []) as ActivePopulationRow[]) {
+  for (const row of populationRows) {
     const techId = toMaybeString(row.tech_id);
     const personId = toMaybeString(row.person_id);
     const pcOrgId = toMaybeString(row.pc_org_id);
@@ -145,17 +185,14 @@ export async function loadRankPopulation(
     out.push({
       person_id: personId,
       tech_id: techId,
-      composite_score:
-        typeof row.composite_score === "number" &&
-        Number.isFinite(row.composite_score)
-          ? row.composite_score
-          : null,
+      composite_score: row.composite_score,
       team_key: toMaybeString(row.direct_reports_to_person_id),
       region_key: regionByPcOrg.get(pcOrgId) ?? null,
       division_key: coCode ? divisionIdByCode.get(coCode) ?? null : null,
       tiebreak_value: null,
       tiebreak_direction: "HIGHER_BETTER",
-      fallback_value: null,
+      total_jobs: row.total_jobs,
+      risk_flags: row.risk_flags ?? 0,
     });
   }
 

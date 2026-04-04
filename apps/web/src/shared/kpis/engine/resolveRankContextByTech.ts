@@ -1,81 +1,77 @@
 import type {
-  RankContext,
   RankContextByPerson,
-  RankDirection,
   RankInputRow,
   RankResolverConfig,
   RankScope,
   RankSeat,
 } from "@/shared/kpis/contracts/rankTypes";
 
-function compareNullableNumbersDesc(a: number | null, b: number | null) {
-  const av = a == null || !Number.isFinite(a) ? -Infinity : a;
-  const bv = b == null || !Number.isFinite(b) ? -Infinity : b;
+function numDesc(a: number | null, b: number | null) {
+  const av = a ?? -Infinity;
+  const bv = b ?? -Infinity;
   return bv - av;
 }
 
-function compareNullableNumbersAsc(a: number | null, b: number | null) {
-  const av = a == null || !Number.isFinite(a) ? Infinity : a;
-  const bv = b == null || !Number.isFinite(b) ? Infinity : b;
+function numAsc(a: number | null, b: number | null) {
+  const av = a ?? Infinity;
+  const bv = b ?? Infinity;
   return av - bv;
 }
 
-function compareTiebreakValue(
-  a: RankInputRow,
-  b: RankInputRow,
-  direction: RankDirection | null
-) {
-  if (direction === "LOWER_BETTER") {
-    return compareNullableNumbersAsc(a.tiebreak_value, b.tiebreak_value);
-  }
+function compareRows(a: RankInputRow, b: RankInputRow) {
+  const c1 = numDesc(a.composite_score, b.composite_score);
+  if (c1 !== 0) return c1;
 
-  return compareNullableNumbersDesc(a.tiebreak_value, b.tiebreak_value);
-}
+  const direction =
+    a.tiebreak_direction ?? b.tiebreak_direction ?? "HIGHER_BETTER";
 
-function compareFallbackValue(a: RankInputRow, b: RankInputRow) {
-  return compareNullableNumbersDesc(a.fallback_value, b.fallback_value);
-}
+  const c2 =
+    direction === "LOWER_BETTER"
+      ? numAsc(a.tiebreak_value, b.tiebreak_value)
+      : numDesc(a.tiebreak_value, b.tiebreak_value);
 
-function compareStableKey(a: RankInputRow, b: RankInputRow) {
-  return a.person_id.localeCompare(b.person_id);
-}
+  if (c2 !== 0) return c2;
 
-function sortBucket(rows: RankInputRow[]) {
-  return [...rows].sort((a, b) => {
-    // TEMPORARY: DB composite_score is currently behaving like a penalty score,
-    // so LOWER composite_score ranks better.
-    const compositeCompare = compareNullableNumbersAsc(
-      a.composite_score,
-      b.composite_score
-    );
-    if (compositeCompare !== 0) return compositeCompare;
+  const c3 = numDesc(a.total_jobs, b.total_jobs);
+  if (c3 !== 0) return c3;
 
-    const tiebreakDirection: RankDirection | null =
-      a.tiebreak_direction ?? b.tiebreak_direction ?? "HIGHER_BETTER";
+  const c4 = numAsc(a.risk_flags, b.risk_flags);
+  if (c4 !== 0) return c4;
 
-    const tiebreakCompare = compareTiebreakValue(a, b, tiebreakDirection);
-    if (tiebreakCompare !== 0) return tiebreakCompare;
-
-    const fallbackCompare = compareFallbackValue(a, b);
-    if (fallbackCompare !== 0) return fallbackCompare;
-
-    return compareStableKey(a, b);
-  });
+  // true tie
+  return 0;
 }
 
 function rankBucket(rows: RankInputRow[]) {
-  const ranked = new Map<string, RankSeat>();
-  const sorted = sortBucket(rows);
-  const population = sorted.length;
+  const sorted = [...rows].sort((a, b) => {
+    const cmp = compareRows(a, b);
+    if (cmp !== 0) return cmp;
 
-  sorted.forEach((row, index) => {
-    ranked.set(row.person_id, {
-      rank: index + 1,
-      population,
-    });
+    // stable display only; does NOT affect assigned rank
+    return a.person_id.localeCompare(b.person_id);
   });
 
-  return ranked;
+  const out = new Map<string, RankSeat>();
+
+  let previousRow: RankInputRow | null = null;
+  let currentRank = 0;
+
+  sorted.forEach((row, i) => {
+    if (previousRow == null) {
+      currentRank = 1;
+    } else if (compareRows(previousRow, row) !== 0) {
+      currentRank = i + 1;
+    }
+
+    out.set(row.person_id, {
+      rank: currentRank,
+      population: sorted.length,
+    });
+
+    previousRow = row;
+  });
+
+  return out;
 }
 
 function getScopeKey(row: RankInputRow, scope: RankScope) {
@@ -84,28 +80,21 @@ function getScopeKey(row: RankInputRow, scope: RankScope) {
   return row.division_key;
 }
 
-function buildScopeBuckets(rows: RankInputRow[], scope: RankScope) {
+function buildScopeRanks(rows: RankInputRow[], scope: RankScope) {
   const buckets = new Map<string, RankInputRow[]>();
 
   for (const row of rows) {
-    if (row.composite_score == null || !Number.isFinite(row.composite_score)) {
-      continue;
-    }
+    if (row.composite_score == null) continue;
 
-    const scopeKey = getScopeKey(row, scope);
-    if (!scopeKey) continue;
+    const key = getScopeKey(row, scope);
+    if (!key) continue;
 
-    const bucket = buckets.get(scopeKey) ?? [];
-    bucket.push(row);
-    buckets.set(scopeKey, bucket);
+    const arr = buckets.get(key) ?? [];
+    arr.push(row);
+    buckets.set(key, arr);
   }
 
-  return buckets;
-}
-
-function resolveScopeRanks(rows: RankInputRow[], scope: RankScope) {
   const result = new Map<string, RankSeat>();
-  const buckets = buildScopeBuckets(rows, scope);
 
   for (const bucket of buckets.values()) {
     const ranked = rankBucket(bucket);
@@ -123,25 +112,21 @@ export function resolveRankContextByTech(
 ): RankContextByPerson {
   const scopes: RankScope[] = config.scopes ?? ["team", "region", "division"];
 
-  const teamRanks = scopes.includes("team")
-    ? resolveScopeRanks(rows, "team")
-    : new Map<string, RankSeat>();
+  const team = scopes.includes("team") ? buildScopeRanks(rows, "team") : new Map();
+  const region = scopes.includes("region")
+    ? buildScopeRanks(rows, "region")
+    : new Map();
+  const division = scopes.includes("division")
+    ? buildScopeRanks(rows, "division")
+    : new Map();
 
-  const regionRanks = scopes.includes("region")
-    ? resolveScopeRanks(rows, "region")
-    : new Map<string, RankSeat>();
-
-  const divisionRanks = scopes.includes("division")
-    ? resolveScopeRanks(rows, "division")
-    : new Map<string, RankSeat>();
-
-  const out: RankContextByPerson = new Map<string, RankContext>();
+  const out: RankContextByPerson = new Map();
 
   for (const row of rows) {
     out.set(row.person_id, {
-      team: teamRanks.get(row.person_id) ?? null,
-      region: regionRanks.get(row.person_id) ?? null,
-      division: divisionRanks.get(row.person_id) ?? null,
+      team: team.get(row.person_id) ?? null,
+      region: region.get(row.person_id) ?? null,
+      division: division.get(row.person_id) ?? null,
     });
   }
 

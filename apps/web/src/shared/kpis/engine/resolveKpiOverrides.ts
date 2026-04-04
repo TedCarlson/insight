@@ -12,12 +12,54 @@ type MetricFact = Record<string, unknown>;
 
 export type RangeKey = MetricsRangeKey;
 export type KpiOverrideMaps = Record<string, Map<string, number | null>>;
+export type ReportClassType = "P4P" | "SMART" | "TECH";
 
 type Args = {
   admin?: ReturnType<typeof supabaseAdmin>;
   techIds: string[];
   pcOrgIds: string[];
   range: RangeKey;
+  class_type?: ReportClassType;
+};
+
+type FactViewRow = {
+  tech_id: string | null;
+  metric_date: string | null;
+  fiscal_end_date: string | null;
+  batch_id: string | null;
+  inserted_at: string | null;
+  tnps_score: number | string | null;
+  ftr_rate: number | string | null;
+  tool_usage_rate: number | string | null;
+  contact_48hr_rate: number | string | null;
+  pht_pure_pass_rate: number | string | null;
+  met_rate: number | string | null;
+  soi_rate: number | string | null;
+  repeat_rate: number | string | null;
+  rework_rate: number | string | null;
+  tnps_surveys: number | string | null;
+  tnps_promoters: number | string | null;
+  tnps_detractors: number | string | null;
+  total_jobs: number | string | null;
+  total_appts: number | string | null;
+  total_met_appts: number | string | null;
+  total_ftr_contact_jobs: number | string | null;
+  ftr_fail_jobs: number | string | null;
+  tu_eligible_jobs: number | string | null;
+  tu_compliant_jobs: number | string | null;
+  contact_48hr_orders: number | string | null;
+  repeat_count: number | string | null;
+  rework_count: number | string | null;
+};
+
+type CompositeRow = {
+  tech_id: string | null;
+  class_type: string | null;
+  metric_date: string | null;
+  fiscal_end_date: string | null;
+  batch_id: string | null;
+  created_at: string | null;
+  composite_score: number | string | null;
 };
 
 function emptyOverrides(): KpiOverrideMaps {
@@ -51,7 +93,18 @@ function emptyOverrides(): KpiOverrideMaps {
 
     met: make(),
     met_rate: make(),
+
+    composite: make(),
+    composite_score: make(),
+    weighted_score: make(),
+    ws: make(),
   };
+}
+
+function toNum(value: unknown): number | null {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function pickNum(obj: Record<string, unknown>, keys: string[]): number | null {
@@ -64,23 +117,6 @@ function pickNum(obj: Record<string, unknown>, keys: string[]): number | null {
   }
 
   return null;
-}
-
-function parseRaw(raw: unknown): Record<string, unknown> {
-  if (!raw) return {};
-
-  if (typeof raw === "string") {
-    try {
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object"
-        ? (parsed as Record<string, unknown>)
-        : {};
-    } catch {
-      return {};
-    }
-  }
-
-  return typeof raw === "object" ? (raw as Record<string, unknown>) : {};
 }
 
 function groupRowsByTech(rows: TechMetricRow[]) {
@@ -98,6 +134,86 @@ function groupRowsByTech(rows: TechMetricRow[]) {
   return map;
 }
 
+function groupCompositeRowsByTech(rows: CompositeRow[]) {
+  const map = new Map<string, CompositeRow[]>();
+
+  for (const row of rows) {
+    const techId = String(row.tech_id ?? "").trim();
+    if (!techId) continue;
+
+    const arr = map.get(techId) ?? [];
+    arr.push(row);
+    map.set(techId, arr);
+  }
+
+  return map;
+}
+
+function factViewRowToTechMetricRow(row: FactViewRow): TechMetricRow {
+  const raw: Record<string, unknown> = {
+    tnps_score: toNum(row.tnps_score),
+    ftr_rate: toNum(row.ftr_rate),
+    tool_usage_rate: toNum(row.tool_usage_rate),
+    contact_48hr_rate: toNum(row.contact_48hr_rate),
+    pht_pure_pass_rate: toNum(row.pht_pure_pass_rate),
+    met_rate: toNum(row.met_rate),
+    soi_rate: toNum(row.soi_rate),
+    repeat_rate: toNum(row.repeat_rate),
+    rework_rate: toNum(row.rework_rate),
+
+    tnps_surveys: toNum(row.tnps_surveys),
+    tnps_promoters: toNum(row.tnps_promoters),
+    tnps_detractors: toNum(row.tnps_detractors),
+    total_jobs: toNum(row.total_jobs),
+    total_appts: toNum(row.total_appts),
+    total_met_appts: toNum(row.total_met_appts),
+    total_ftr_contact_jobs: toNum(row.total_ftr_contact_jobs),
+    ftr_fail_jobs: toNum(row.ftr_fail_jobs),
+    tu_eligible_jobs: toNum(row.tu_eligible_jobs),
+    tu_compliant_jobs: toNum(row.tu_compliant_jobs),
+    contact_48hr_orders: toNum(row.contact_48hr_orders),
+    repeat_count: toNum(row.repeat_count),
+    rework_count: toNum(row.rework_count),
+
+    Promoters: toNum(row.tnps_promoters),
+    Detractors: toNum(row.tnps_detractors),
+    "tNPS Surveys": toNum(row.tnps_surveys),
+
+    "Total FTR/Contact Jobs": toNum(row.total_ftr_contact_jobs),
+    FTRFailJobs: toNum(row.ftr_fail_jobs),
+
+    TUEligibleJobs: toNum(row.tu_eligible_jobs),
+    TUResult: toNum(row.tu_compliant_jobs),
+
+    "48Hr Contact Orders": toNum(row.contact_48hr_orders),
+
+    "Repeat Count": toNum(row.repeat_count),
+    "Rework Count": toNum(row.rework_count),
+
+    TotalAppts: toNum(row.total_appts),
+    TotalMetAppts: toNum(row.total_met_appts),
+
+    "tNPS Rate": toNum(row.tnps_score),
+    "FTR%": toNum(row.ftr_rate),
+    ToolUsage: toNum(row.tool_usage_rate),
+    "48Hr Contact Rate%": toNum(row.contact_48hr_rate),
+    "PHT Pure Pass%": toNum(row.pht_pure_pass_rate),
+    MetRate: toNum(row.met_rate),
+    "SOI Rate%": toNum(row.soi_rate),
+    "Repeat Rate%": toNum(row.repeat_rate),
+    "Rework Rate%": toNum(row.rework_rate),
+  };
+
+  return {
+    tech_id: String(row.tech_id ?? "").trim(),
+    metric_date: String(row.metric_date ?? "").slice(0, 10),
+    fiscal_end_date: String(row.fiscal_end_date ?? "").slice(0, 10),
+    batch_id: String(row.batch_id ?? ""),
+    inserted_at: String(row.inserted_at ?? ""),
+    raw,
+  };
+}
+
 function computeFtrRate(rows: MetricFact[]): number | null {
   const agg = aggregateRatio({
     rows,
@@ -110,11 +226,7 @@ function computeFtrRate(rows: MetricFact[]): number | null {
         ]) ?? 0;
 
       const fails =
-        pickNum(row, [
-          "FTRFailJobs",
-          "ftr_fail_jobs",
-          "FTR Fail Jobs",
-        ]) ?? 0;
+        pickNum(row, ["FTRFailJobs", "ftr_fail_jobs", "FTR Fail Jobs"]) ?? 0;
 
       return Math.max(0, contact - fails);
     },
@@ -142,27 +254,43 @@ function computeToolUsageRate(rows: MetricFact[]): number | null {
   const agg = aggregateRatio({
     rows,
     getNumerator: (row) =>
-      pickNum(row, ["TUResult", "tu_result", "TU Result", "tu_compliant_jobs"]) ?? 0,
+      pickNum(row, [
+        "TUResult",
+        "tu_result",
+        "TU Result",
+        "tu_compliant_jobs",
+      ]) ?? 0,
     getDenominator: (row) =>
-      pickNum(row, ["TUEligibleJobs", "tu_eligible_jobs", "TU Eligible Jobs"]) ?? 0,
+      pickNum(row, [
+        "TUEligibleJobs",
+        "tu_eligible_jobs",
+        "TU Eligible Jobs",
+      ]) ?? 0,
   });
 
   return agg.denominator > 0 ? agg.value : null;
+}
+
+function averageDirectRate(rows: MetricFact[], keys: string[]): number | null {
+  const values = rows
+    .map((row) => pickNum(row, keys))
+    .filter((value): value is number => value != null);
+
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function computePurePassRate(rows: MetricFact[]): number | null {
-  const agg = aggregateRatio({
-    rows,
-    getNumerator: (row) =>
-      pickNum(row, ["PHT Pure Pass", "pht_pure_pass", "PHT_Pure_Pass"]) ?? 0,
-    getDenominator: (row) =>
-      pickNum(row, ["PHT Jobs", "pht_jobs", "PHT_Jobs"]) ?? 0,
-  });
-
-  return agg.denominator > 0 ? agg.value : null;
+  return averageDirectRate(rows, ["pht_pure_pass_rate", "PHT Pure Pass%"]);
 }
 
 function compute48HrRate(rows: MetricFact[]): number | null {
+  const direct = averageDirectRate(rows, [
+    "contact_48hr_rate",
+    "48Hr Contact Rate%",
+  ]);
+  if (direct != null) return direct;
+
   const agg = aggregateRatio({
     rows,
     getNumerator: (row) =>
@@ -183,46 +311,26 @@ function compute48HrRate(rows: MetricFact[]): number | null {
 }
 
 function computeRepeatRate(rows: MetricFact[]): number | null {
-  const agg = aggregateRatio({
-    rows,
-    getNumerator: (row) =>
-      pickNum(row, ["Repeat Count", "repeat_count", "RepeatCount"]) ?? 0,
-    getDenominator: (row) =>
-      pickNum(row, ["TCs", "tcs", "tc_count"]) ?? 0,
-  });
-
-  return agg.denominator > 0 ? agg.value : null;
+  return averageDirectRate(rows, ["repeat_rate", "Repeat Rate%"]);
 }
 
 function computeReworkRate(rows: MetricFact[]): number | null {
-  const agg = aggregateRatio({
-    rows,
-    getNumerator: (row) =>
-      pickNum(row, ["Rework Count", "rework_count", "ReworkCount"]) ?? 0,
-    getDenominator: (row) =>
-      pickNum(row, ["TotalAppts", "Total Appts", "total_appts"]) ?? 0,
-  });
-
-  return agg.denominator > 0 ? agg.value : null;
+  return averageDirectRate(rows, ["rework_rate", "Rework Rate%"]);
 }
 
 function computeSoiRate(rows: MetricFact[]): number | null {
-  const agg = aggregateRatio({
-    rows,
-    getNumerator: (row) =>
-      pickNum(row, ["SOI Count", "soi_count", "SOICount"]) ?? 0,
-    getDenominator: (row) =>
-      pickNum(row, ["Installs", "installs", "install_count"]) ?? 0,
-  });
-
-  return agg.denominator > 0 ? agg.value : null;
+  return averageDirectRate(rows, ["soi_rate", "SOI Rate%"]);
 }
 
 function computeMetRate(rows: MetricFact[]): number | null {
+  const direct = averageDirectRate(rows, ["met_rate", "MetRate"]);
+  if (direct != null) return direct;
+
   const agg = aggregateRatio({
     rows,
     getNumerator: (row) =>
-      pickNum(row, ["TotalMetAppts", "Total Met Appts", "total_met_appts"]) ?? 0,
+      pickNum(row, ["TotalMetAppts", "Total Met Appts", "total_met_appts"]) ??
+      0,
     getDenominator: (row) =>
       pickNum(row, ["TotalAppts", "Total Appts", "total_appts"]) ?? 0,
   });
@@ -231,19 +339,53 @@ function computeMetRate(rows: MetricFact[]): number | null {
 }
 
 function computeTnpsRate(rows: MetricFact[]): number | null {
+  const direct = averageDirectRate(rows, ["tnps_score", "tNPS Rate"]);
+  if (direct != null) return direct;
+
   return aggregateTnps(
     rows.map((row) => ({
       tnps_surveys:
-        pickNum(row, ["tNPS Surveys", "tnps_surveys", "tNPS_Surveys", "Surveys"]) ?? 0,
+        pickNum(row, [
+          "tNPS Surveys",
+          "tnps_surveys",
+          "tNPS_Surveys",
+          "Surveys",
+        ]) ?? 0,
       tnps_promoters: pickNum(row, ["Promoters", "tnps_promoters"]) ?? 0,
       tnps_detractors: pickNum(row, ["Detractors", "tnps_detractors"]) ?? 0,
     }))
   ).tnps_score;
 }
 
+function resolveCompositeValue(
+  rows: CompositeRow[],
+  range: RangeKey
+): number | null {
+  if (!rows.length) return null;
+
+  const normalizedRows: RawMetricRow[] = rows.map((row) => ({
+    metric_date: String(row.metric_date ?? "").slice(0, 10),
+    fiscal_end_date: String(row.fiscal_end_date ?? "").slice(0, 10),
+    batch_id: String(row.batch_id ?? ""),
+    inserted_at: String(row.created_at ?? ""),
+    raw: {
+      composite_score: toNum(row.composite_score),
+    },
+  }));
+
+  const { selectedFinalRows } = resolveFiscalSelection(normalizedRows, range);
+  const selectedValues = selectedFinalRows
+    .map((item) => toNum(item.row.raw?.composite_score))
+    .filter((value): value is number => value != null);
+
+  if (!selectedValues.length) return null;
+
+  return selectedValues[0] ?? null;
+}
+
 export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> {
   const admin = args.admin ?? supabaseAdmin();
-  const { techIds, pcOrgIds, range } = args;
+  const { techIds, pcOrgIds, range, class_type } = args;
 
   const overrides = emptyOverrides();
 
@@ -251,9 +393,11 @@ export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> 
     return overrides;
   }
 
-  const { data, error } = await admin
-    .from("metrics_raw_row")
-    .select("pc_org_id,tech_id,metric_date,fiscal_end_date,batch_id,inserted_at,raw")
+  const factQuery = admin
+    .from("metrics_tech_fact_day")
+    .select(
+      "pc_org_id,tech_id,metric_date,fiscal_end_date,batch_id,inserted_at,tnps_score,ftr_rate,tool_usage_rate,contact_48hr_rate,pht_pure_pass_rate,met_rate,soi_rate,repeat_rate,rework_rate,tnps_surveys,tnps_promoters,tnps_detractors,total_jobs,total_appts,total_met_appts,total_ftr_contact_jobs,ftr_fail_jobs,tu_eligible_jobs,tu_compliant_jobs,contact_48hr_orders,repeat_count,rework_count"
+    )
     .in("pc_org_id", pcOrgIds)
     .in("tech_id", techIds)
     .order("fiscal_end_date", { ascending: false })
@@ -262,18 +406,43 @@ export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> 
     .order("batch_id", { ascending: false })
     .limit(10000);
 
+  const compositeQuery = class_type
+    ? admin
+        .from("ui_master_metric_v2")
+        .select(
+          "tech_id,class_type,metric_date,fiscal_end_date,batch_id,created_at,composite_score"
+        )
+        .in("pc_org_id", pcOrgIds)
+        .in("tech_id", techIds)
+        .eq("class_type", class_type)
+        .eq("is_outlier", false)
+        .order("fiscal_end_date", { ascending: false })
+        .order("metric_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .order("batch_id", { ascending: false })
+        .limit(10000)
+    : Promise.resolve({ data: [], error: null } as any);
+
+  const [{ data, error }, { data: compositeData, error: compositeError }] =
+    await Promise.all([factQuery, compositeQuery]);
+
   if (error) {
     throw new Error(`resolveKpiOverrides failed: ${error.message}`);
   }
 
-  const rows: TechMetricRow[] = (data ?? []).map((row: any) => ({
-    tech_id: String(row.tech_id ?? ""),
-    metric_date: String(row.metric_date ?? "").slice(0, 10),
-    fiscal_end_date: String(row.fiscal_end_date ?? "").slice(0, 10),
-    batch_id: String(row.batch_id ?? ""),
-    inserted_at: String(row.inserted_at ?? ""),
-    raw: parseRaw(row.raw),
-  }));
+  if (compositeError) {
+    throw new Error(
+      `resolveKpiOverrides failed loading composite_score: ${compositeError.message}`
+    );
+  }
+
+  const rows: TechMetricRow[] = ((data ?? []) as FactViewRow[]).map(
+    factViewRowToTechMetricRow
+  );
+
+  const compositeRowsByTech = groupCompositeRowsByTech(
+    (compositeData ?? []) as CompositeRow[]
+  );
 
   const rowsByTech = groupRowsByTech(rows);
 
@@ -291,6 +460,10 @@ export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> 
     const rework = computeReworkRate(selectedFacts);
     const soi = computeSoiRate(selectedFacts);
     const met = computeMetRate(selectedFacts);
+    const composite = resolveCompositeValue(
+      compositeRowsByTech.get(techId) ?? [],
+      range
+    );
 
     overrides.tnps.set(techId, tnps);
     overrides.tnps_score.set(techId, tnps);
@@ -319,6 +492,11 @@ export async function resolveKpiOverrides(args: Args): Promise<KpiOverrideMaps> 
 
     overrides.met.set(techId, met);
     overrides.met_rate.set(techId, met);
+
+    overrides.composite.set(techId, composite);
+    overrides.composite_score.set(techId, composite);
+    overrides.weighted_score.set(techId, composite);
+    overrides.ws.set(techId, composite);
   }
 
   return overrides;

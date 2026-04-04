@@ -5,19 +5,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 
 export type RangeKey = "FM" | "PREVIOUS" | "3FM" | "12FM";
-export type ClassType = "P4P" | "SMART" | "TECH";
 
 export type CompanySupervisorHeaderModel = {
   role_label: string | null;
-
-  // ✅ NEW — main title (user)
   rep_full_name: string | null;
-
-  // ✅ resolved context (must come from payload, same as KPI strip)
   division_label: string | null;
   org_display: string | null;
   pc_label: string | null;
-
   headcount: number;
   as_of_date: string;
 };
@@ -32,13 +26,6 @@ function normalizeRange(value: string | null | undefined): RangeKey {
   if (upper === "3FM") return "3FM";
   if (upper === "12FM") return "12FM";
   return "FM";
-}
-
-function normalizeClass(value: string | null | undefined): ClassType {
-  const upper = String(value ?? "P4P").toUpperCase();
-  if (upper === "SMART") return "SMART";
-  if (upper === "TECH") return "TECH";
-  return "P4P";
 }
 
 function formatAsOfDate(value: string) {
@@ -107,20 +94,13 @@ export default function CompanySupervisorHeader({ header }: Props) {
   const [isPending, startTransition] = useTransition();
   const [showFilters, setShowFilters] = useState(false);
   const [pendingRange, setPendingRange] = useState<RangeKey | null>(null);
-  const [pendingClass, setPendingClass] = useState<ClassType | null>(null);
 
   const activeRange = normalizeRange(searchParams.get("range"));
-  const activeClass = normalizeClass(searchParams.get("class"));
-
   const optimisticRange =
     isPending && pendingRange ? pendingRange : activeRange;
 
-  const optimisticClass =
-    isPending && pendingClass ? pendingClass : activeClass;
-
   function updateParams(next: {
     range?: RangeKey;
-    class_type?: ClassType;
   }) {
     startTransition(() => {
       const qs = new URLSearchParams(searchParams.toString());
@@ -130,10 +110,7 @@ export default function CompanySupervisorHeader({ header }: Props) {
         else qs.set("range", next.range);
       }
 
-      if (next.class_type) {
-        if (next.class_type === "P4P") qs.delete("class");
-        else qs.set("class", next.class_type);
-      }
+      qs.delete("class");
 
       const href = qs.toString()
         ? `?${qs.toString()}`
@@ -150,12 +127,6 @@ export default function CompanySupervisorHeader({ header }: Props) {
     updateParams({ range: next });
   }
 
-  function setClass(next: ClassType) {
-    if (next === activeClass) return;
-    setPendingClass(next);
-    updateParams({ class_type: next });
-  }
-
   const contextLine = buildContextLine([
     header.division_label,
     header.org_display,
@@ -164,20 +135,16 @@ export default function CompanySupervisorHeader({ header }: Props) {
 
   return (
     <Card className={`p-4 ${isPending ? "opacity-90" : ""}`}>
-      {/* TOP */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          {/* eyebrow */}
           <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
             {header.role_label ?? "Company Supervisor"}
           </div>
 
-          {/* ✅ MAIN TITLE = USER */}
           <div className="mt-1 text-2xl font-semibold tracking-tight">
             {header.rep_full_name ?? "—"}
           </div>
 
-          {/* ✅ CLEAN CONTEXT LINE */}
           {contextLine && (
             <div className="mt-2 text-sm text-muted-foreground">
               {contextLine}
@@ -195,6 +162,7 @@ export default function CompanySupervisorHeader({ header }: Props) {
           </div>
 
           <button
+            type="button"
             onClick={() => setShowFilters((v) => !v)}
             className="h-[42px] rounded-xl border px-3 text-sm font-medium hover:bg-muted/30"
           >
@@ -203,67 +171,36 @@ export default function CompanySupervisorHeader({ header }: Props) {
         </div>
       </div>
 
-      {/* FILTER PANEL */}
       {showFilters && (
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          {/* RANGE */}
-          <div>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Range
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Chip
-                label="Current"
-                active={optimisticRange === "FM"}
-                pending={isPending && pendingRange === "FM"}
-                onClick={() => setRange("FM")}
-              />
-              <Chip
-                label="Previous"
-                active={optimisticRange === "PREVIOUS"}
-                pending={isPending && pendingRange === "PREVIOUS"}
-                onClick={() => setRange("PREVIOUS")}
-              />
-              <Chip
-                label="3 FM"
-                active={optimisticRange === "3FM"}
-                pending={isPending && pendingRange === "3FM"}
-                onClick={() => setRange("3FM")}
-              />
-              <Chip
-                label="12 FM"
-                active={optimisticRange === "12FM"}
-                pending={isPending && pendingRange === "12FM"}
-                onClick={() => setRange("12FM")}
-              />
-            </div>
+        <div className="mt-4">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Range
           </div>
-
-          {/* CLASS */}
-          <div>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Class
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Chip
-                label="P4P"
-                active={optimisticClass === "P4P"}
-                pending={isPending && pendingClass === "P4P"}
-                onClick={() => setClass("P4P")}
-              />
-              <Chip
-                label="SMART"
-                active={optimisticClass === "SMART"}
-                pending={isPending && pendingClass === "SMART"}
-                onClick={() => setClass("SMART")}
-              />
-              <Chip
-                label="TECH"
-                active={optimisticClass === "TECH"}
-                pending={isPending && pendingClass === "TECH"}
-                onClick={() => setClass("TECH")}
-              />
-            </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Chip
+              label="Current"
+              active={optimisticRange === "FM"}
+              pending={isPending && pendingRange === "FM"}
+              onClick={() => setRange("FM")}
+            />
+            <Chip
+              label="Previous"
+              active={optimisticRange === "PREVIOUS"}
+              pending={isPending && pendingRange === "PREVIOUS"}
+              onClick={() => setRange("PREVIOUS")}
+            />
+            <Chip
+              label="3 FM"
+              active={optimisticRange === "3FM"}
+              pending={isPending && pendingRange === "3FM"}
+              onClick={() => setRange("3FM")}
+            />
+            <Chip
+              label="12 FM"
+              active={optimisticRange === "12FM"}
+              pending={isPending && pendingRange === "12FM"}
+              onClick={() => setRange("12FM")}
+            />
           </div>
         </div>
       )}

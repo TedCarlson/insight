@@ -22,6 +22,13 @@ type Args = {
    */
   team_key_by_person?: Map<string, string>;
 
+  /**
+   * Optional scoped population for local views like
+   * company-supervisor. When provided, rank is limited
+   * to this exact person set.
+   */
+  allowed_person_ids?: string[];
+
   config?: RankResolverConfig;
 };
 
@@ -34,6 +41,7 @@ export async function getRankContextByTech(
     range: args.range,
     batch_id: args.batch_id ?? null,
     team_key_by_person: args.team_key_by_person,
+    allowed_person_ids: args.allowed_person_ids,
   });
 
   return resolveRankContextByTech(rows, args.config);

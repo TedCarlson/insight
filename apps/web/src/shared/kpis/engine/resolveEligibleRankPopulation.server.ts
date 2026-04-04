@@ -1,7 +1,10 @@
 import { supabaseServer } from "@/shared/data/supabase/server";
 import { resolveFiscalSelection } from "@/shared/kpis/core/rowSelection";
 import type { MetricsRangeKey, RawMetricRow } from "@/shared/kpis/core/types";
-import type { RankInputRow } from "@/shared/kpis/contracts/rankTypes";
+import type {
+  RankDirection,
+  RankInputRow,
+} from "@/shared/kpis/contracts/rankTypes";
 
 type ReportClassType = "P4P" | "SMART" | "TECH";
 
@@ -11,9 +14,10 @@ type Args = {
   range: MetricsRangeKey;
   batch_id?: string | null;
   team_key_by_person?: Map<string, string>;
+  allowed_person_ids?: string[];
 };
 
-type ActivePopulationRow = {
+type PopulationRow = {
   tech_id: string | null;
   person_id: string | null;
   composite_score: number | null;
@@ -24,10 +28,10 @@ type ActivePopulationRow = {
   fiscal_end_date: string | null;
   batch_id: string | null;
   created_at: string | null;
-  raw_metrics_json: unknown;
+  metrics_json: unknown;
 };
 
-type RankCandidateRow = ActivePopulationRow & RawMetricRow;
+type RankCandidateRow = PopulationRow & RawMetricRow;
 
 type PcOrgAdminRow = {
   pc_org_id: string | null;
@@ -37,6 +41,19 @@ type PcOrgAdminRow = {
 type DivisionAdminRow = {
   division_id: string | null;
   division_code: string | null;
+};
+
+type ClassConfigRow = {
+  kpi_key: string | null;
+  is_tiebreaker: boolean | null;
+};
+
+type KpiDefRow = {
+  kpi_key: string | null;
+  label: string | null;
+  customer_label: string | null;
+  raw_label_identifier: string | null;
+  direction: string | null;
 };
 
 function toTrimmedString(value: unknown) {
@@ -53,24 +70,85 @@ function parseNumber(value: unknown): number | null {
   return null;
 }
 
-function extractFtrContactJobs(rawMetricsJson: unknown): number | null {
-  if (!rawMetricsJson) return null;
+function normalizeToken(value: string | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_%]/g, "");
+}
 
-  if (typeof rawMetricsJson === "string") {
+function extractRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+
+  if (typeof value === "string") {
     try {
-      const parsed = JSON.parse(rawMetricsJson);
-      return extractFtrContactJobs(parsed);
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object"
+        ? (parsed as Record<string, unknown>)
+        : {};
     } catch {
-      return null;
+      return {};
     }
   }
 
-  if (typeof rawMetricsJson === "object" && rawMetricsJson !== null) {
-    const record = rawMetricsJson as Record<string, unknown>;
-    return parseNumber(record["Total FTR/Contact Jobs"]);
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function extractMetricValue(
+  metricsJson: unknown,
+  def: KpiDefRow | null
+): number | null {
+  const record = extractRecord(metricsJson);
+  if (!Object.keys(record).length) return null;
+
+  const candidateKeys = [
+    def?.raw_label_identifier,
+    def?.customer_label,
+    def?.label,
+    def?.kpi_key,
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+
+  for (const key of candidateKeys) {
+    const direct = parseNumber(record[key]);
+    if (direct != null) return direct;
+  }
+
+  const normalizedCandidates = candidateKeys.map(normalizeToken);
+
+  for (const [key, value] of Object.entries(record)) {
+    if (normalizedCandidates.includes(normalizeToken(key))) {
+      const parsed = parseNumber(value);
+      if (parsed != null) return parsed;
+    }
   }
 
   return null;
+}
+
+function extractTotalJobs(metricsJson: unknown): number | null {
+  const record = extractRecord(metricsJson);
+
+  return (
+    parseNumber(record["Total Jobs"]) ??
+    parseNumber(record["total_jobs"]) ??
+    parseNumber(record["jobs"]) ??
+    null
+  );
+}
+
+function extractRiskFlags(metricsJson: unknown): number | null {
+  const record = extractRecord(metricsJson);
+
+  return (
+    parseNumber(record["below_target_count"]) ??
+    parseNumber(record["risk_flags"]) ??
+    parseNumber(record["risk_count"]) ??
+    0
+  );
 }
 
 function compareIsoDesc(a: string | null, b: string | null) {
@@ -111,7 +189,7 @@ function choosePreferredRow(
   return currentTech.localeCompare(candidateTech) <= 0 ? current : candidate;
 }
 
-function toRankCandidateRow(row: ActivePopulationRow): RankCandidateRow | null {
+function toRankCandidateRow(row: PopulationRow): RankCandidateRow | null {
   const metric_date = toTrimmedString(row.metric_date);
   const fiscal_end_date = toTrimmedString(row.fiscal_end_date);
   const batch_id = toTrimmedString(row.batch_id);
@@ -127,22 +205,10 @@ function toRankCandidateRow(row: ActivePopulationRow): RankCandidateRow | null {
     fiscal_end_date,
     batch_id,
     inserted_at,
-    raw:
-      typeof row.raw_metrics_json === "object" && row.raw_metrics_json !== null
-        ? (row.raw_metrics_json as Record<string, unknown>)
-        : {},
+    raw: extractRecord(row.metrics_json),
   };
 }
 
-/**
- * Enforced rules:
- * 1) unique person_id
- * 2) open assignment only (inherited from v_metrics_active_population)
- * 3) positive Total FTR/Contact Jobs
- * 4) class container filter
- * 5) selected range must be applied before final person-level row resolution
- * 6) team key uses snapshot value first, then supplied live fallback map
- */
 export async function resolveEligibleRankPopulation(
   args: Args
 ): Promise<RankInputRow[]> {
@@ -158,8 +224,17 @@ export async function resolveEligibleRankPopulation(
 
   if (!pcOrgIds.length) return [];
 
+  const allowedPersonIds =
+    args.allowed_person_ids && args.allowed_person_ids.length
+      ? new Set(
+          args.allowed_person_ids
+            .map((value) => String(value ?? "").trim())
+            .filter(Boolean)
+        )
+      : null;
+
   let populationQuery = supabase
-    .from("v_metrics_active_population")
+    .from("ui_master_metric_v2")
     .select(
       `
       tech_id,
@@ -172,7 +247,7 @@ export async function resolveEligibleRankPopulation(
       fiscal_end_date,
       batch_id,
       created_at,
-      raw_metrics_json
+      metrics_json
     `
     )
     .in("pc_org_id", pcOrgIds)
@@ -187,30 +262,30 @@ export async function resolveEligibleRankPopulation(
     { data: populationRows, error: populationError },
     { data: pcOrgRows, error: pcOrgError },
     { data: divisionRows, error: divisionError },
+    { data: classConfigRows, error: classConfigError },
+    { data: kpiDefRows, error: kpiDefError },
   ] = await Promise.all([
     populationQuery,
     supabase
       .from("pc_org_admin_v")
-      .select(
-        `
-        pc_org_id,
-        region_id
-      `
-      )
+      .select("pc_org_id,region_id")
       .in("pc_org_id", pcOrgIds),
     supabase
       .from("division_admin_v")
-      .select(
-        `
-        division_id,
-        division_code
-      `
-      ),
+      .select("division_id,division_code"),
+    supabase
+      .from("metrics_class_kpi_config")
+      .select("kpi_key,is_tiebreaker")
+      .eq("class_type", args.class_type)
+      .eq("is_tiebreaker", true),
+    supabase
+      .from("metrics_kpi_def")
+      .select("kpi_key,label,customer_label,raw_label_identifier,direction"),
   ]);
 
   if (populationError) {
     throw new Error(
-      `resolveEligibleRankPopulation failed loading v_metrics_active_population: ${populationError.message}`
+      `resolveEligibleRankPopulation failed loading ui_master_metric_v2: ${populationError.message}`
     );
   }
 
@@ -223,6 +298,18 @@ export async function resolveEligibleRankPopulation(
   if (divisionError) {
     throw new Error(
       `resolveEligibleRankPopulation failed loading division_admin_v: ${divisionError.message}`
+    );
+  }
+
+  if (classConfigError) {
+    throw new Error(
+      `resolveEligibleRankPopulation failed loading metrics_class_kpi_config: ${classConfigError.message}`
+    );
+  }
+
+  if (kpiDefError) {
+    throw new Error(
+      `resolveEligibleRankPopulation failed loading metrics_kpi_def: ${kpiDefError.message}`
     );
   }
 
@@ -242,20 +329,41 @@ export async function resolveEligibleRankPopulation(
     divisionIdByCode.set(divisionCode, divisionId);
   }
 
+  const tiebreakerKpiKey =
+    (classConfigRows as ClassConfigRow[] | null | undefined)?.[0]?.kpi_key
+      ? String((classConfigRows as ClassConfigRow[])[0].kpi_key).trim()
+      : null;
+
+  const defByKey = new Map<string, KpiDefRow>();
+  for (const row of (kpiDefRows ?? []) as KpiDefRow[]) {
+    const key = toTrimmedString(row.kpi_key);
+    if (!key) continue;
+    defByKey.set(key, row);
+  }
+
+  const tiebreakerDef = tiebreakerKpiKey
+    ? defByKey.get(tiebreakerKpiKey) ?? null
+    : null;
+
+  const tiebreakerDirection = (() => {
+    const direction = toTrimmedString(tiebreakerDef?.direction);
+    return direction === "LOWER_BETTER"
+      ? ("LOWER_BETTER" as RankDirection)
+      : ("HIGHER_BETTER" as RankDirection);
+  })();
+
   const candidatesByPersonId = new Map<string, RankCandidateRow[]>();
 
-  for (const row of (populationRows ?? []) as ActivePopulationRow[]) {
+  for (const row of (populationRows ?? []) as PopulationRow[]) {
     const personId = toTrimmedString(row.person_id);
     const techId = toTrimmedString(row.tech_id);
     const pcOrgId = toTrimmedString(row.pc_org_id);
 
     if (!personId || !techId || !pcOrgId) continue;
+    if (allowedPersonIds && !allowedPersonIds.has(personId)) continue;
 
     const compositeScore = parseNumber(row.composite_score);
     if (compositeScore == null) continue;
-
-    const ftrContactJobs = extractFtrContactJobs(row.raw_metrics_json);
-    if (ftrContactJobs == null || ftrContactJobs <= 0) continue;
 
     const candidate = toRankCandidateRow(row);
     if (!candidate) continue;
@@ -301,9 +409,10 @@ export async function resolveEligibleRankPopulation(
       team_key: teamKey,
       region_key: regionByPcOrg.get(pcOrgId) ?? null,
       division_key: coCode ? divisionIdByCode.get(coCode) ?? null : null,
-      tiebreak_value: null,
-      tiebreak_direction: "HIGHER_BETTER",
-      fallback_value: parseNumber(row.composite_score),
+      tiebreak_value: extractMetricValue(row.metrics_json, tiebreakerDef),
+      tiebreak_direction: tiebreakerDirection,
+      total_jobs: extractTotalJobs(row.metrics_json),
+      risk_flags: extractRiskFlags(row.metrics_json),
     });
   }
 

@@ -30,7 +30,6 @@ export default async function CompanySupervisorPageShell(props: Props) {
 
       <CompanySupervisorRiskStrip items={payload.risk_strip} />
 
-      <CompanySupervisorWorkMixCard work_mix={payload.work_mix} />
 
       <CompanySupervisorRosterTable
         columns={payload.roster_columns}

@@ -8,7 +8,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import MetricsColorsDrawer from "@/features/metrics-admin/components/MetricsColorsDrawer";
 
 type AnyRow = Record<string, any>;
-type ClassType = "P4P" | "SMART" | "TECH";
+type ClassType = "NSR" | "SMART" | "TECH";
 
 type InitialPayload = {
   kpiDefs: AnyRow[];
@@ -16,7 +16,7 @@ type InitialPayload = {
   rubricRows: AnyRow[]; // ✅ GLOBAL by KPI: (kpi_key, band_key, min/max/score, ...)
 };
 
-const CLASS_TABS: ClassType[] = ["P4P", "SMART", "TECH"];
+const CLASS_TABS: ClassType[] = ["NSR", "SMART", "TECH"];
 
 // Update if your DB uses different band keys.
 const BAND_KEYS = ["EXCEEDS", "MEETS", "NEEDS_IMPROVEMENT", "MISSES", "NO_DATA"] as const;
@@ -33,6 +33,21 @@ function asBool(v: unknown): boolean {
 function toNumberOrNull(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : Number(String(v));
+  return Number.isFinite(n) ? n : null;
+}
+
+function toDraftText(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "";
+  return String(v);
+}
+
+function parseDecimalDraft(v: string): number | null {
+  const raw = String(v ?? "").trim();
+  if (!raw) return null;
+
+  if (!/^-?\d*(\.\d*)?$/.test(raw)) return null;
+
+  const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -135,8 +150,9 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
   const [classConfig, setClassConfig] = useState<AnyRow[]>(initial.classConfig ?? []);
   const [rubricRows, setRubricRows] = useState<AnyRow[]>(initial.rubricRows ?? []);
 
-  const [activeClass, setActiveClass] = useState<ClassType>("P4P");
+  const [activeClass, setActiveClass] = useState<ClassType>("NSR");
   const [openRubricKey, setOpenRubricKey] = useState<string | null>(null);
+  const [rubricDrafts, setRubricDrafts] = useState<Record<string, string>>({});
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -363,6 +379,51 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
       })
     );
   }
+  function rubricDraftKey(
+    kpiKey: string,
+    bandKey: BandKey,
+    field: "min_value" | "max_value" | "score_value"
+  ) {
+    return `${kpiKey}::${bandKey}::${field}`;
+  }
+
+  function getRubricInputValue(args: {
+    kpiKey: string;
+    bandKey: BandKey;
+    field: "min_value" | "max_value" | "score_value";
+    fallback: number | null;
+  }) {
+    const key = rubricDraftKey(args.kpiKey, args.bandKey, args.field);
+    if (key in rubricDrafts) return rubricDrafts[key];
+    return toDraftText(args.fallback);
+  }
+
+  function setRubricInputDraft(args: {
+    kpiKey: string;
+    bandKey: BandKey;
+    field: "min_value" | "max_value" | "score_value";
+    value: string;
+  }) {
+    const next = args.value;
+
+    if (next !== "" && !/^-?\d*(\.\d*)?$/.test(next)) {
+      return;
+    }
+
+    const key = rubricDraftKey(args.kpiKey, args.bandKey, args.field);
+
+    setRubricDrafts((prev) => ({
+      ...prev,
+      [key]: next,
+    }));
+
+    updateRubricCell(
+      args.kpiKey,
+      args.bandKey,
+      args.field,
+      parseDecimalDraft(next)
+    );
+  }
 
   async function save() {
     setSaving(true);
@@ -387,6 +448,7 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
       setKpiDefs(j.kpiDefs ?? []);
       setClassConfig(j.classConfig ?? []);
       setRubricRows(j.rubricRows ?? normalizedRubrics);
+      setRubricDrafts({});
       setSavedAt(new Date().toLocaleString());
     } catch (e: any) {
       setSaveError(e?.message ?? "Save failed");
@@ -410,6 +472,7 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
                 onClick={() => {
                   setActiveClass(ct);
                   setOpenRubricKey(null);
+                  setRubricDrafts({});
                 }}
                 type="button"
               >
@@ -585,6 +648,7 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
                           onClick={() => {
                             ensureRubricBandRowsForKpi(kpiKey);
                             setOpenRubricKey((cur) => (cur === kpiKey ? null : kpiKey));
+                            setRubricDrafts({});
                           }}
                         >
                           {isOpen ? "Hide rubric" : "Edit rubric"}
@@ -634,9 +698,20 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
                                           <input
                                             className="h-8 w-28 rounded-md border bg-background px-2 text-right tabular-nums"
                                             inputMode="decimal"
-                                            value={min ?? ""}
+                                            type="text"
+                                            value={getRubricInputValue({
+                                              kpiKey,
+                                              bandKey: band,
+                                              field: "min_value",
+                                              fallback: min,
+                                            })}
                                             onChange={(e) =>
-                                              updateRubricCell(kpiKey, band, "min_value", toNumberOrNull(e.target.value))
+                                              setRubricInputDraft({
+                                                kpiKey,
+                                                bandKey: band,
+                                                field: "min_value",
+                                                value: e.target.value,
+                                              })
                                             }
                                           />
                                         </td>
@@ -645,9 +720,20 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
                                           <input
                                             className="h-8 w-28 rounded-md border bg-background px-2 text-right tabular-nums"
                                             inputMode="decimal"
-                                            value={max ?? ""}
+                                            type="text"
+                                            value={getRubricInputValue({
+                                              kpiKey,
+                                              bandKey: band,
+                                              field: "max_value",
+                                              fallback: max,
+                                            })}
                                             onChange={(e) =>
-                                              updateRubricCell(kpiKey, band, "max_value", toNumberOrNull(e.target.value))
+                                              setRubricInputDraft({
+                                                kpiKey,
+                                                bandKey: band,
+                                                field: "max_value",
+                                                value: e.target.value,
+                                              })
                                             }
                                           />
                                         </td>
@@ -656,9 +742,20 @@ export default function MetricsConsoleGrid({ initial }: { initial: InitialPayloa
                                           <input
                                             className="h-8 w-28 rounded-md border bg-background px-2 text-right tabular-nums"
                                             inputMode="decimal"
-                                            value={score ?? ""}
+                                            type="text"
+                                            value={getRubricInputValue({
+                                              kpiKey,
+                                              bandKey: band,
+                                              field: "score_value",
+                                              fallback: score,
+                                            })}
                                             onChange={(e) =>
-                                              updateRubricCell(kpiKey, band, "score_value", toNumberOrNull(e.target.value))
+                                              setRubricInputDraft({
+                                                kpiKey,
+                                                bandKey: band,
+                                                field: "score_value",
+                                                value: e.target.value,
+                                              })
                                             }
                                           />
                                         </td>

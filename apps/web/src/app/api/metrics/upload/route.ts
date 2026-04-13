@@ -41,18 +41,12 @@ function parseGeneratedAtFromTitle(title: string | null): string | null {
   const m = title.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2}:\d{2})/);
   if (!m) return null;
 
-  const mdY = m[1];
-  const hms = m[2];
-
-  const [mo, da, yr] = mdY.split("/").map((x) => Number(x));
-  const [hh, mi, ss] = hms.split(":").map((x) => Number(x));
-
-  if (![mo, da, yr, hh, mi, ss].every((n) => Number.isFinite(n))) return null;
+  const [mo, da, yr] = m[1].split("/").map(Number);
+  const [hh, mi, ss] = m[2].split(":").map(Number);
+  if (![mo, da, yr, hh, mi, ss].every(Number.isFinite)) return null;
 
   const d = new Date(yr, mo - 1, da, hh, mi, ss);
-  if (Number.isNaN(d.getTime())) return null;
-
-  return d.toISOString();
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
 async function resolveFiscalMonthByAnchorDate(
@@ -74,9 +68,7 @@ async function resolveFiscalMonthByAnchorDate(
     .maybeSingle();
 
   if (error) throw new Error(error.message);
-  if (!data?.end_date || !data?.start_date || !data?.fiscal_month_id) {
-    return null;
-  }
+  if (!data?.end_date || !data?.start_date || !data?.fiscal_month_id) return null;
 
   return {
     fiscal_month_id: String(data.fiscal_month_id),
@@ -100,30 +92,15 @@ function findFirstSheetName(workbook: XLSX.WorkBook): string | null {
   return workbook.SheetNames?.[0] ?? null;
 }
 
-function buildUniqueKey(
-  techId: string,
-  orgId: string,
-  fiscalEndDate: string,
-  batchId: string
-) {
-  const techNorm = techId.trim().replace(/\s+/g, " ");
-  const orgNorm = orgId.toLowerCase();
-  return `${techNorm}::${orgNorm}::${fiscalEndDate}::${batchId}`;
-}
-
 function dropCols2and3(headers: string[], row: any[]): Record<string, any> {
   const out: Record<string, any> = {};
-
   for (let i = 0; i < headers.length; i += 1) {
     const colIndex1Based = i + 1;
     if (colIndex1Based === 2 || colIndex1Based === 3) continue;
-
     const h = String(headers[i] ?? "").trim();
     if (!h) continue;
-
     out[h] = row?.[i] ?? null;
   }
-
   return out;
 }
 
@@ -137,16 +114,12 @@ export async function POST(req: NextRequest) {
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    if (!url || !anon) {
-      return json(500, { ok: false, error: "missing env" });
-    }
-
     const supabase = createServerClient(url, anon, {
       cookies: {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll() {},
+        setAll() { },
       },
     });
 
@@ -197,9 +170,6 @@ export async function POST(req: NextRequest) {
       ? String(form.get("picked_date"))
       : null;
     const confirm = String(form.get("confirm") ?? "") === "1";
-    const incomingBatchId = form.get("batch_id")
-      ? String(form.get("batch_id"))
-      : null;
 
     const file = form.get("file");
     if (!(file instanceof File)) {
@@ -208,7 +178,7 @@ export async function POST(req: NextRequest) {
 
     const filename = (file as any).name ? String((file as any).name) : "upload";
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const file_sha256 = sha256Hex(bytes);
+    const _file_sha256 = sha256Hex(bytes);
 
     let workbook: XLSX.WorkBook;
     try {
@@ -259,7 +229,6 @@ export async function POST(req: NextRequest) {
     }
 
     const metric_date = mode === "date" ? pickedDate : isoDateOnlyNY(new Date());
-
     if (!metric_date || !/^\d{4}-\d{2}-\d{2}$/.test(metric_date)) {
       return json(400, {
         ok: false,
@@ -317,9 +286,7 @@ export async function POST(req: NextRequest) {
       .filter((r) => Array.isArray(r) && r.length > 0);
 
     let row_count_total = 0;
-    let row_count_loaded = 0;
-
-    const normalizedTechIds: { tech_id: string; raw: Record<string, any> }[] = [];
+    const normalizedRows: { reported_tech_id: string; raw_payload: Record<string, any> }[] = [];
 
     for (const r of dataRows) {
       const techRaw = r?.[techIdHeaderIndex] ?? null;
@@ -327,8 +294,10 @@ export async function POST(req: NextRequest) {
       if (!tech_id) continue;
 
       row_count_total += 1;
-      const raw = dropCols2and3(headers, r);
-      normalizedTechIds.push({ tech_id, raw });
+      normalizedRows.push({
+        reported_tech_id: tech_id,
+        raw_payload: dropCols2and3(headers, r),
+      });
     }
 
     if (row_count_total === 0) {
@@ -339,27 +308,21 @@ export async function POST(req: NextRequest) {
     }
 
     if (!confirm) {
-      const { data: batch, error: batchErr } = await admin
-        .from("metrics_raw_batch")
-        .insert({
-          pc_org_id,
-          fiscal_end_date,
-          metric_date,
-          source_title: title,
-          source_generated_at: detected_generated_at,
-          source_filename: filename,
-          file_sha256,
-          uploaded_by: user.id,
-          status: "staged",
-          row_count: 0,
-          warning_flags,
-        })
-        .select("batch_id")
-        .maybeSingle();
+      const { data, error } = await admin.rpc("metrics_stage_batch", {
+        p_pc_org_id: pc_org_id,
+        p_metric_date: metric_date,
+        p_fiscal_end_date: fiscal_end_date,
+        p_source_filename: filename,
+        p_source_title: title,
+        p_source_generated_at: detected_generated_at,
+        p_warning_flags: warning_flags,
+      });
 
-      if (batchErr) {
-        return json(500, { ok: false, error: batchErr.message });
+      if (error) {
+        return json(500, { ok: false, error: error.message });
       }
+
+      const batch_id = Array.isArray(data) ? data[0]?.metric_batch_id : data?.metric_batch_id;
 
       return json(200, {
         ok: true,
@@ -370,102 +333,37 @@ export async function POST(req: NextRequest) {
         detected_title: title,
         row_count_total,
         warning_flags,
-        batch_id: batch?.batch_id ?? null,
-      });
-    }
-
-    if (!incomingBatchId) {
-      return json(400, { ok: false, error: "missing batch_id for confirm" });
-    }
-
-    const { data: batchRow, error: batchGetErr } = await admin
-      .from("metrics_raw_batch")
-      .select("batch_id, pc_org_id, fiscal_end_date, status, metric_date")
-      .eq("batch_id", incomingBatchId)
-      .maybeSingle();
-
-    if (batchGetErr) {
-      return json(500, { ok: false, error: batchGetErr.message });
-    }
-
-    if (!batchRow) {
-      return json(400, { ok: false, error: "batch not found" });
-    }
-
-    if (String(batchRow.pc_org_id) !== String(pc_org_id)) {
-      return json(403, { ok: false, error: "forbidden" });
-    }
-
-    if (String(batchRow.status) !== "staged") {
-      return json(400, {
-        ok: false,
-        error: "batch is not staged",
-        detail: { status: batchRow.status },
-      });
-    }
-
-    const batch_id = String(batchRow.batch_id);
-    const fiscalEndForKey = String(batchRow.fiscal_end_date);
-
-    const toInsert = normalizedTechIds.map(({ tech_id, raw }) => {
-      const unique_row_key = buildUniqueKey(
-        tech_id,
-        pc_org_id,
-        fiscalEndForKey,
-        batch_id
-      );
-
-      return {
         batch_id,
-        pc_org_id,
-        metric_date,
-        fiscal_end_date: fiscalEndForKey,
-        tech_id,
-        unique_row_key,
-        raw,
-      };
+      });
+    }
+
+    const { data, error } = await admin.rpc("metrics_upload_tpr_batch", {
+      p_pc_org_id: pc_org_id,
+      p_metric_date: metric_date,
+      p_fiscal_end_date: fiscal_end_date,
+      p_source_filename: filename,
+      p_source_title: title,
+      p_source_generated_at: detected_generated_at,
+      p_warning_flags: warning_flags,
+      p_rows: normalizedRows,
     });
 
-    if (toInsert.length) {
-      const { error: insErr } = await admin
-        .from("metrics_raw_row")
-        .insert(toInsert);
-
-      if (insErr) {
-        await admin
-          .from("metrics_raw_batch")
-          .update({ status: "failed", error: insErr.message })
-          .eq("batch_id", batch_id);
-
-        return json(500, { ok: false, error: insErr.message });
-      }
-
-      row_count_loaded = toInsert.length;
+    if (error) {
+      return json(500, { ok: false, error: error.message });
     }
 
-    const { error: upErr } = await admin
-      .from("metrics_raw_batch")
-      .update({
-        status: "loaded",
-        row_count: row_count_loaded,
-        warning_flags,
-        metric_date,
-      })
-      .eq("batch_id", batch_id);
-
-    if (upErr) {
-      return json(500, { ok: false, error: upErr.message });
-    }
+    const result = Array.isArray(data) ? data[0] : data;
 
     return json(200, {
       ok: true,
       loaded: true,
-      batch_id,
-      metric_date,
-      fiscal_end_date: fiscalEndForKey,
-      row_count_loaded,
+      batch_id: result?.metric_batch_id ?? null,
+      metric_date: result?.metric_date ?? metric_date,
+      fiscal_end_date: result?.fiscal_end_date ?? fiscal_end_date,
+      row_count_loaded: result?.row_count ?? row_count_total,
       warning_flags,
-      pipeline_triggered: false,
+      pipeline_triggered: true,
+      status: result?.status ?? "complete",
     });
   } catch (e: any) {
     return json(500, { ok: false, error: String(e?.message ?? e) });

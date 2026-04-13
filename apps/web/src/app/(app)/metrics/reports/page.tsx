@@ -1,2 +1,3 @@
-import MetricsReportsPage from "@/features/metrics/pages/MetricsReportsPage";
-export default MetricsReportsPage;
+export default function Page() {
+  return <div>Metrics Reports — Disabled</div>;
+}

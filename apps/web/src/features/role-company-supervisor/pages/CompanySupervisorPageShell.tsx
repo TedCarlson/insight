@@ -1,42 +1,159 @@
-import CompanySupervisorHeader from "../components/CompanySupervisorHeader";
-import CompanySupervisorKpiStrip from "../components/CompanySupervisorKpiStrip";
-import CompanySupervisorRiskStrip from "../components/CompanySupervisorRiskStrip";
-import CompanySupervisorRosterTable from "../components/CompanySupervisorRosterTable";
+// path: apps/web/src/features/role-company-supervisor/pages/CompanySupervisorPageShell.tsx
 
-import { getCompanySupervisorViewPayload } from "../lib/getCompanySupervisorViewPayload.server";
+import Link from "next/link";
 
-import type { RangeKey } from "@/shared/kpis/engine/resolveKpiOverrides";
+import MetricsSmartHeader from "@/shared/surfaces/MetricsSmartHeader";
+import MetricsExecutiveKpiStrip from "@/shared/surfaces/MetricsExecutiveKpiStrip";
+import MetricsRiskStrip from "@/shared/surfaces/MetricsRiskStrip";
+import MetricsTeamPerformanceTable from "@/shared/surfaces/MetricsTeamPerformanceTable";
 
-type ReportClassType = "P4P" | "SMART" | "TECH";
+import { getCompanySupervisorSurfacePayload } from "../lib/getCompanySupervisorSurfacePayload.server";
+
+type ReportClassType = "NSR" | "SMART";
+type MetricsRangeKey = "FM" | "PREVIOUS" | "3FM" | "12FM";
 
 type Props = {
-  range: RangeKey;
+  range?: string;
   class_type: ReportClassType;
 };
 
+function toProfileKey(classType: ReportClassType): "NSR" | "SMART" {
+  return classType === "SMART" ? "SMART" : "NSR";
+}
+
+function normalizeRangeKey(value: string | undefined): MetricsRangeKey {
+  const upper = String(value ?? "FM").trim().toUpperCase();
+  if (upper === "PREVIOUS") return "PREVIOUS";
+  if (upper === "3FM") return "3FM";
+  if (upper === "12FM") return "12FM";
+  return "FM";
+}
+
+function toRangeLabel(rangeKey: MetricsRangeKey): string {
+  if (rangeKey === "FM") return "Current";
+  if (rangeKey === "PREVIOUS") return "Previous";
+  if (rangeKey === "3FM") return "Previous 3FM";
+  return "Previous 12FM";
+}
+
+function buildHref(args: {
+  class_type: ReportClassType;
+  range: MetricsRangeKey;
+}) {
+  const params = new URLSearchParams();
+  params.set("class_type", args.class_type);
+  params.set("range", args.range);
+  return `/company-supervisor?${params.toString()}`;
+}
+
+function ClassSelector(props: {
+  class_type: ReportClassType;
+  range: MetricsRangeKey;
+}) {
+  const baseClass =
+    "inline-flex h-10 items-center justify-center rounded-xl border px-3 text-sm font-medium transition";
+  const activeClass =
+    "border-[var(--to-accent)] bg-[color-mix(in_oklab,var(--to-accent)_10%,white)] text-foreground";
+  const idleClass =
+    "border-[var(--to-border)] bg-background text-muted-foreground hover:bg-muted/30 hover:text-foreground";
+
+  return (
+    <div className="flex items-center gap-2">
+      <Link
+        href={buildHref({ class_type: "NSR", range: props.range })}
+        className={[
+          baseClass,
+          props.class_type === "NSR" ? activeClass : idleClass,
+        ].join(" ")}
+      >
+        NSR
+      </Link>
+
+      <Link
+        href={buildHref({ class_type: "SMART", range: props.range })}
+        className={[
+          baseClass,
+          props.class_type === "SMART" ? activeClass : idleClass,
+        ].join(" ")}
+      >
+        SMART
+      </Link>
+    </div>
+  );
+}
+
 export default async function CompanySupervisorPageShell(props: Props) {
-  const payload = await getCompanySupervisorViewPayload({
-    range: props.range,
-    class_type: props.class_type,
+  const range = normalizeRangeKey(props.range);
+
+  const payload = await getCompanySupervisorSurfacePayload({
+    profile_key: toProfileKey(props.class_type),
+    range,
   });
 
   return (
     <div className="space-y-4 p-4">
-      <CompanySupervisorHeader header={payload.header} />
-
-      <CompanySupervisorKpiStrip items={payload.kpi_strip} />
-
-      <CompanySupervisorRiskStrip items={payload.risk_strip} />
-
-      <CompanySupervisorRosterTable
-        columns={payload.roster_columns}
-        rows={payload.roster_rows}
-        rubricByKpi={payload.rubricByKpi}
-        work_mix={payload.work_mix}
-        parityRows={payload.parityRows}
-        parityDetailRows={payload.parityDetailRows}
-        active_range={props.range}
+      <MetricsSmartHeader
+        header={payload.header}
+        rangeOptions={
+          payload.permissions.can_filter_range
+            ? payload.filters.available_ranges.map((rangeKey) => ({
+                key: rangeKey,
+                label: toRangeLabel(rangeKey),
+                active: payload.filters.active_range === rangeKey,
+                onClick: undefined,
+              }))
+            : []
+        }
+        rightActions={
+          <ClassSelector
+            class_type={props.class_type}
+            range={payload.filters.active_range}
+          />
+        }
       />
+
+      {payload.permissions.can_view_exec_strip ? (
+        <MetricsExecutiveKpiStrip
+          items={payload.executive_kpis}
+          subtitle="Supervisor scope compared against total region fact set."
+        />
+      ) : null}
+
+      {payload.permissions.can_view_risk_strip ? (
+        <MetricsRiskStrip items={payload.risk_strip ?? []} />
+      ) : null}
+
+      {payload.permissions.can_view_team_table ? (
+        <MetricsTeamPerformanceTable
+          columns={payload.team_table.columns.map((column) => ({
+            kpi_key: column.kpi_key,
+            label: column.label,
+            report_order: column.report_order,
+          }))}
+          rows={payload.team_table.rows.map((row, index) => ({
+            subject_key:
+              row.row_key ??
+              row.tech_id?.trim() ??
+              `${row.full_name?.trim() || "unknown"}-${row.rank ?? "na"}-${index}`,
+            full_name: row.full_name,
+            tech_id: row.tech_id,
+            composite_score: row.composite_score,
+            rank: row.rank,
+            jobs_display: row.jobs_display,
+            risk_count: row.risk_count ?? null,
+            metrics: row.metrics.map((metric) => ({
+              metric_key: metric.metric_key,
+              label:
+                payload.team_table.columns.find(
+                  (column) => column.kpi_key === metric.metric_key
+                )?.label ?? metric.metric_key,
+              metric_value: metric.value,
+              render_band_key: metric.band_key,
+              weighted_points: metric.weighted_points,
+            })),
+          }))}
+        />
+      ) : null}
     </div>
   );
 }

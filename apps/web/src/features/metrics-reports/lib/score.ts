@@ -1,131 +1,41 @@
 // apps/web/src/features/metrics-reports/lib/score.ts
 
-export type Direction = "HIGHER_BETTER" | "LOWER_BETTER";
+export type BandKey =
+  | "EXCEEDS"
+  | "MEETS"
+  | "NEEDS_IMPROVEMENT"
+  | "MISSES"
+  | "NO_DATA";
 
-export type BandKey = "EXCEEDS" | "MEETS" | "NEEDS_IMPROVEMENT" | "MISSES" | "NO_DATA";
-
-/**
- * Rubric rows are KPI-driven (global by KPI), not class-driven.
- * class_type is optional for backward compatibility with older storage/reads.
- */
 export type RubricRow = {
-  class_type?: "P4P" | "SMART" | "TECH";
   kpi_key: string;
   band_key: BandKey;
   min_value: number | null;
   max_value: number | null;
-  score_value: number | null;
-};
-
-export type ClassKpiConfigRow = {
-  class_type: "P4P" | "SMART" | "TECH";
-  kpi_key: string;
-  enabled: boolean | null;
-  weight_percent: number | null;
-  threshold: number | null;
-  grade_value: number | null; // IMPORTANT: decimals allowed
-};
-
-export type KpiDefRow = {
-  kpi_key: string;
-  direction: Direction | null;
-};
-
-export type ScoreResult = {
-  band_key: BandKey;
-  score_value: number; // 0 if NO_DATA or missing score in rubric
 };
 
 /**
- * Pick the rubric band for a raw metric value.
- * - If metricValue is null/undefined/NaN => NO_DATA
- * - Otherwise selects the first band whose [min,max] contains metricValue (inclusive).
- * - If multiple match, prioritizes the "stronger" band ordering.
+ * Resolves a numeric value into a band using rubric rows.
+ * This is TEMP bridge until we fully move to shared/bands + rubric engine.
  */
 export function pickBand(args: {
-  metricValue: number | null | undefined;
+  value: number | null;
   rubricRows: RubricRow[];
 }): BandKey {
-  const v = args.metricValue;
-  if (v == null || !Number.isFinite(v)) return "NO_DATA";
+  const { value, rubricRows } = args;
 
-  const rows = (args.rubricRows ?? []).filter((r) => r.band_key !== "NO_DATA");
+  if (value == null || !Number.isFinite(value)) return "NO_DATA";
 
-  // Prefer a stable priority so overlaps don't cause random results
-  const priority: BandKey[] = ["EXCEEDS", "MEETS", "NEEDS_IMPROVEMENT", "MISSES", "NO_DATA"];
-  const sorted = rows.slice().sort((a, b) => priority.indexOf(a.band_key) - priority.indexOf(b.band_key));
+  for (const row of rubricRows ?? []) {
+    const minOk =
+      row.min_value == null || value >= row.min_value;
+    const maxOk =
+      row.max_value == null || value <= row.max_value;
 
-  for (const r of sorted) {
-    const minOk = r.min_value == null ? true : v >= r.min_value;
-    const maxOk = r.max_value == null ? true : v <= r.max_value;
-    if (minOk && maxOk) return r.band_key;
+    if (minOk && maxOk) {
+      return row.band_key;
+    }
   }
 
-  // If no explicit band matches, fall back:
-  // - This can happen when rubric isn't filled yet.
   return "NO_DATA";
-}
-
-/**
- * Convert a band to a score value using the rubric row's score_value.
- * If missing, returns 0.
- */
-export function bandToScore(args: {
-  bandKey: BandKey;
-  rubricRows: RubricRow[];
-}): number {
-  if (args.bandKey === "NO_DATA") return 0;
-
-  const r = (args.rubricRows ?? []).find((x) => x.band_key === args.bandKey);
-  const s = r?.score_value;
-  return Number.isFinite(Number(s)) ? Number(s) : 0;
-}
-
-/**
- * Score a single KPI.
- * You pass the rubric rows already filtered to (kpi_key) (and optionally class_type if legacy).
- */
-export function scoreKpi(args: {
-  metricValue: number | null | undefined;
-  rubricRowsForKpi: RubricRow[];
-}): ScoreResult {
-  const band_key = pickBand({
-    metricValue: args.metricValue,
-    rubricRows: args.rubricRowsForKpi,
-  });
-
-  const score_value = bandToScore({
-    bandKey: band_key,
-    rubricRows: args.rubricRowsForKpi,
-  });
-
-  return { band_key, score_value };
-}
-
-/**
- * Weighted rollup (simple):
- * - Uses weight_percent if provided; if missing, treats as 0.
- * - Uses the rubric score_value already computed (typically aligned to grade_value).
- * Returns a total score (not normalized).
- */
-export function rollupWeighted(args: {
-  scored: Array<{
-    kpi_key: string;
-    score_value: number;
-    weight_percent: number | null;
-    enabled: boolean | null;
-  }>;
-}): number {
-  let total = 0;
-
-  for (const row of args.scored ?? []) {
-    if (!row.enabled) continue;
-
-    const w = Number(row.weight_percent ?? 0);
-    if (!Number.isFinite(w) || w <= 0) continue;
-
-    total += row.score_value * (w / 100);
-  }
-
-  return total;
 }

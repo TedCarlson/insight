@@ -1,2 +1,3 @@
-import MetricsUploadsPage from "@/features/metrics/pages/MetricsUploadsPage";
-export default MetricsUploadsPage;
+export default function Page() {
+  return <div>Metrics Uploads — Disabled</div>;
+}

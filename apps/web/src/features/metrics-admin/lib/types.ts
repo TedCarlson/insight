@@ -17,7 +17,7 @@ export type MetricsKpiDef = {
   updated_at?: string;
 };
 
-export type MetricsClassType = "P4P" | "SMART" | "TECH";
+export type MetricsClassType = "NSR" | "SMART" | "TECH";
 
 export type MetricsClassKpiConfigRow = {
   class_type: MetricsClassType | string;

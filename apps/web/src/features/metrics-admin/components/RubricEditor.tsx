@@ -1,3 +1,5 @@
+// path: apps/web/src/features/metrics-admin/components/RubricEditor.tsx
+
 "use client";
 
 import React from "react";
@@ -7,7 +9,7 @@ import {
   RubricBandKey,
 } from "@/features/metrics-admin/lib/rubric";
 
-const DECIMAL_2 = /^-?\d*(\.\d{0,2})?$/;
+const DECIMAL_INPUT = /^-?\d*([.,]\d{0,2})?$/;
 
 type Props = {
   classType: string;
@@ -17,6 +19,40 @@ type Props = {
   onSave: (rows: RubricRow[]) => Promise<void>;
 };
 
+type DraftRow = {
+  band_key: RubricBandKey;
+  min_value: string;
+  max_value: string;
+  score_value: string;
+};
+
+function buildDraftRows(existingRows: RubricRow[]): DraftRow[] {
+  return RUBRIC_BANDS.map((band) => {
+    const found = existingRows.find((row) => row.band_key === band);
+    return {
+      band_key: band,
+      min_value: found?.min_value == null ? "" : String(found.min_value),
+      max_value: found?.max_value == null ? "" : String(found.max_value),
+      score_value: found?.score_value == null ? "" : String(found.score_value),
+    };
+  });
+}
+
+function normalizeDecimalString(value: string): string {
+  return value.replace(/,/g, ".");
+}
+
+function parseDecimal(value: string): number | null {
+  const trimmed = normalizeDecimalString(value).trim();
+  if (!trimmed) return null;
+  if (!DECIMAL_INPUT.test(value.trim())) return null;
+
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return null;
+
+  return Math.round(parsed * 100) / 100;
+}
+
 export default function RubricEditor({
   classType,
   kpiKey,
@@ -24,45 +60,53 @@ export default function RubricEditor({
   existingRows,
   onSave,
 }: Props) {
+  const contextKey = `${classType}::${kpiKey}::${mso_id ?? "global"}`;
+
   const [open, setOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [draftRows, setDraftRows] = React.useState<DraftRow[]>(() =>
+    buildDraftRows(existingRows)
+  );
 
-  const [rows, setRows] = React.useState<RubricRow[]>(() => {
-    if (existingRows.length > 0) return existingRows;
-    return RUBRIC_BANDS.map((band) => ({
-      mso_id: mso_id ?? null,
-      class_type: classType,
-      kpi_key: kpiKey,
-      band_key: band,
-      min_value: null,
-      max_value: null,
-      score_value: null,
-    }));
-  });
+  React.useEffect(() => {
+    setDraftRows(buildDraftRows(existingRows));
+  }, [contextKey, existingRows]);
 
-  function updateRow(
+  function updateDraftRow(
     band: RubricBandKey,
-    field: keyof RubricRow,
-    value: number | null
+    field: "min_value" | "max_value" | "score_value",
+    value: string
   ) {
-    setRows((prev) =>
-      prev.map((r) =>
-        r.band_key === band ? { ...r, [field]: value } : r
+    const next = value.trim() === "" ? "" : value;
+
+    if (next !== "" && !DECIMAL_INPUT.test(next)) {
+      return;
+    }
+
+    setDraftRows((prev) =>
+      prev.map((row) =>
+        row.band_key === band ? { ...row, [field]: next } : row
       )
     );
   }
 
-  function parseDecimal(val: string) {
-    if (!val.trim()) return null;
-    if (!DECIMAL_2.test(val)) return null;
-    const n = Number(val);
-    return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
-  }
-
   async function handleSave() {
     setSaving(true);
-    await onSave(rows);
-    setSaving(false);
+    try {
+      const rows: RubricRow[] = draftRows.map((row) => ({
+        mso_id: mso_id ?? null,
+        class_type: classType,
+        kpi_key: kpiKey,
+        band_key: row.band_key,
+        min_value: parseDecimal(row.min_value),
+        max_value: parseDecimal(row.max_value),
+        score_value: parseDecimal(row.score_value),
+      }));
+
+      await onSave(rows);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -70,55 +114,56 @@ export default function RubricEditor({
       <button
         className="text-xs underline text-muted-foreground"
         onClick={() => setOpen((o) => !o)}
+        type="button"
       >
         {open ? "Hide Rubric" : "Edit Rubric"}
       </button>
 
-      {open && (
-        <div className="mt-3 border rounded-md p-3 space-y-2">
-          {rows.map((r) => (
+      {open ? (
+        <div className="mt-3 space-y-2 rounded-md border p-3">
+          {draftRows.map((row) => (
             <div
-              key={r.band_key}
-              className="grid grid-cols-4 gap-3 items-center text-sm"
+              key={row.band_key}
+              className="grid grid-cols-4 items-center gap-3 text-sm"
             >
-              <div className="font-medium">{r.band_key}</div>
+              <div className="font-medium">{row.band_key}</div>
 
               <input
-                className="border rounded px-2 py-1"
+                className="rounded border px-2 py-1"
                 placeholder="Min"
-                defaultValue={r.min_value ?? ""}
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                spellCheck={false}
+                value={row.min_value}
                 onChange={(e) =>
-                  updateRow(
-                    r.band_key,
-                    "min_value",
-                    parseDecimal(e.target.value)
-                  )
+                  updateDraftRow(row.band_key, "min_value", e.target.value)
                 }
               />
 
               <input
-                className="border rounded px-2 py-1"
+                className="rounded border px-2 py-1"
                 placeholder="Max"
-                defaultValue={r.max_value ?? ""}
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                spellCheck={false}
+                value={row.max_value}
                 onChange={(e) =>
-                  updateRow(
-                    r.band_key,
-                    "max_value",
-                    parseDecimal(e.target.value)
-                  )
+                  updateDraftRow(row.band_key, "max_value", e.target.value)
                 }
               />
 
               <input
-                className="border rounded px-2 py-1"
+                className="rounded border px-2 py-1"
                 placeholder="Score"
-                defaultValue={r.score_value ?? ""}
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                spellCheck={false}
+                value={row.score_value}
                 onChange={(e) =>
-                  updateRow(
-                    r.band_key,
-                    "score_value",
-                    parseDecimal(e.target.value)
-                  )
+                  updateDraftRow(row.band_key, "score_value", e.target.value)
                 }
               />
             </div>
@@ -126,15 +171,16 @@ export default function RubricEditor({
 
           <div className="pt-2">
             <button
-              className="px-3 py-1 text-xs bg-primary text-white rounded disabled:opacity-50"
+              className="rounded bg-primary px-3 py-1 text-xs text-white disabled:opacity-50"
               disabled={saving}
               onClick={handleSave}
+              type="button"
             >
               {saving ? "Saving..." : "Save Rubric"}
             </button>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

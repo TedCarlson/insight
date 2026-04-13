@@ -3,11 +3,11 @@
 export type GridState = {
   kpiOrder: string[];
   kpiDefsByKey: Record<string, any>;
-  classConfigByClass: Record<"P4P" | "SMART" | "TECH", Record<string, any>>;
-  rubricByClass: Record<"P4P" | "SMART" | "TECH", Record<string, Record<string, any>>>;
+  classConfigByClass: Record<"NSR" | "SMART" | "TECH", Record<string, any>>;
+  rubricByClass: Record<"NSR" | "SMART" | "TECH", Record<string, Record<string, any>>>;
 };
 
-const CLASSES = ["P4P", "SMART", "TECH"] as const;
+const CLASSES = ["NSR", "SMART", "TECH"] as const;
 
 export function buildStateFromDb(kpiDefs: any[], classConfig: any[], rubricRows: any[]): GridState {
   const kpiDefsByKey: Record<string, any> = {};
@@ -19,12 +19,12 @@ export function buildStateFromDb(kpiDefs: any[], classConfig: any[], rubricRows:
     kpiOrder.push(key);
   }
 
-  const classConfigByClass: any = { P4P: {}, SMART: {}, TECH: {} };
+  const classConfigByClass: any = { NSR: {}, SMART: {}, TECH: {} };
 
   for (const c of classConfig ?? []) {
     const cls = String(c.class_type).toUpperCase();
     const k = String(c.kpi_key);
-    if (cls === "P4P" || cls === "SMART" || cls === "TECH") {
+    if (cls === "NSR" || cls === "SMART" || cls === "TECH") {
       classConfigByClass[cls][k] = c;
     }
   }
@@ -45,14 +45,14 @@ export function buildStateFromDb(kpiDefs: any[], classConfig: any[], rubricRows:
     }
   }
 
-  const rubricByClass: any = { P4P: {}, SMART: {}, TECH: {} };
+  const rubricByClass: any = { NSR: {}, SMART: {}, TECH: {} };
 
   // Normalize rubric rows into class->kpi->band
   for (const r of rubricRows ?? []) {
     const cls = String(r.class_type).toUpperCase();
     const k = String(r.kpi_key);
     const b = String(r.band_key).toUpperCase();
-    if (!(cls === "P4P" || cls === "SMART" || cls === "TECH")) continue;
+    if (!(cls === "NSR" || cls === "SMART" || cls === "TECH")) continue;
 
     if (!rubricByClass[cls][k]) rubricByClass[cls][k] = {};
     rubricByClass[cls][k][b] = r;

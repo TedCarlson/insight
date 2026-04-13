@@ -1,3 +1,5 @@
+// path: apps/web/src/features/metrics-admin/components/MetricsRubricSection.tsx
+
 "use client";
 
 import React from "react";
@@ -19,10 +21,7 @@ export default function MetricsRubricSection({
   rubricRows = [],
   mso_id,
 }: Props) {
-  async function saveRubric(
-    kpiKey: string,
-    rows: RubricRow[]
-  ) {
+  async function saveRubric(kpiKey: string, rows: RubricRow[]) {
     await fetch("/api/admin/metrics-config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -37,7 +36,7 @@ export default function MetricsRubricSection({
   }
 
   return (
-    <section className="border rounded-lg p-6 space-y-4">
+    <section className="space-y-4 rounded-lg border p-6">
       <h2 className="text-lg font-semibold">{classType}</h2>
 
       <div className="space-y-6">
@@ -50,8 +49,8 @@ export default function MetricsRubricSection({
           );
 
           return (
-            <div key={kpi.kpi_key} className="border-b pb-4">
-              <div className="flex justify-between items-center">
+            <div key={`${classType}::${kpi.kpi_key}::${mso_id ?? "global"}`} className="border-b pb-4">
+              <div className="flex items-center justify-between">
                 <div>
                   <div className="font-medium">
                     {kpi.customer_label || kpi.label}

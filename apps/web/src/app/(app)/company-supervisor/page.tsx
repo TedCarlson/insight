@@ -1,30 +1,22 @@
-import { unstable_noStore as noStore } from "next/cache";
+// path: apps/web/src/app/(app)/company-supervisor/page.tsx
 
 import CompanySupervisorPageShell from "@/features/role-company-supervisor/pages/CompanySupervisorPageShell";
 
-type ReportClassType = "P4P" | "SMART" | "TECH";
+type ReportClassType = "NSR" | "SMART";
 
-type Props = {
-  searchParams: Promise<{
-    range?: "FM" | "PREVIOUS" | "3FM" | "12FM";
-    class_type?: ReportClassType;
-  }>;
-};
+export default async function Page(props: {
+  searchParams?: Promise<{ class_type?: string; range?: string }>;
+}) {
+  const searchParams = (await props.searchParams) ?? {};
+  const rawClass = String(searchParams.class_type ?? "NSR").toUpperCase();
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
-export default async function Route(props: Props) {
-  noStore();
-
-  const sp = await props.searchParams;
-  const range = sp?.range ?? "FM";
-  const class_type = sp?.class_type ?? "TECH";
+  const class_type: ReportClassType =
+    rawClass === "SMART" ? "SMART" : "NSR";
 
   return (
     <CompanySupervisorPageShell
-      range={range}
       class_type={class_type}
+      range={searchParams.range}
     />
   );
 }

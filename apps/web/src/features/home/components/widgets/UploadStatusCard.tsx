@@ -1,3 +1,5 @@
+// path: apps/web/src/features/home/components/widgets/UploadStatusCard.tsx
+
 "use client";
 
 import { Card } from "@/components/ui/Card";
@@ -88,6 +90,12 @@ export function UploadStatusCard(props: {
           href="/roster"
           label="Open Team Roster"
           note="Temporary bridge into legacy roster workflow"
+        />
+
+        <QuickLinkTile
+          href="/metrics/uploads"
+          label="Open Metrics Uploads"
+          note="Bulk TPR staging, verification, and load bridge"
         />
 
         {props.items.map((item) => (

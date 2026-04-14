@@ -2,9 +2,22 @@
 
 "use client";
 
+import { useState } from "react";
+
 import { Card } from "@/components/ui/Card";
+import NeedsAttentionCard from "@/shared/surfaces/risk-strip/NeedsAttentionCard";
+import ParticipationCard from "@/shared/surfaces/risk-strip/ParticipationCard";
+import {
+  ParticipationOverlay,
+  PriorityMovementOverlay,
+  TopPriorityRiskOverlay,
+} from "@/shared/surfaces/risk-strip/RiskOverlays";
+import TopPerformersCard from "@/shared/surfaces/risk-strip/TopPerformersCard";
+import TopRiskCard from "@/shared/surfaces/risk-strip/TopRiskCard";
 import type {
+  MetricsRiskInsightKpiMovement,
   MetricsRiskInsights,
+  MetricsRiskMovementType,
   MetricsRiskStripItem,
 } from "@/shared/types/metrics/surfacePayload";
 
@@ -14,15 +27,16 @@ type Props = {
   insights?: MetricsRiskInsights | null;
 };
 
+type TopPriorityOverlayMode = "new" | "persistent" | "recovered";
+type ParticipationOverlayMode = "meets_3" | "meets_2" | "meets_1" | "meets_0";
+
 function LegacyTile({ item }: { item: MetricsRiskStripItem }) {
   return (
-    <div className="rounded-xl border bg-card px-3 py-2.5">
+    <div className="rounded-xl border bg-card px-3 py-2">
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
         {item.title}
       </div>
-      <div className="mt-1 text-xl font-semibold leading-none">
-        {item.value}
-      </div>
+      <div className="mt-1 text-lg font-semibold leading-none">{item.value}</div>
       <div className="mt-1 text-[10px] text-muted-foreground">
         {item.note ?? "—"}
       </div>
@@ -30,157 +44,86 @@ function LegacyTile({ item }: { item: MetricsRiskStripItem }) {
   );
 }
 
-function SectionCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-xl border bg-card p-3">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-        {title}
-      </div>
-      <div className="mt-2">{children}</div>
-    </div>
-  );
-}
-
-function TopRiskCard({ insights }: { insights: MetricsRiskInsights }) {
-  return (
-    <SectionCard title="Top Priority Risk">
-      <div className="text-sm font-semibold">
-        {insights.top_priority_kpi.label ?? "—"}
-      </div>
-      <div className="text-xs text-muted-foreground mt-1">
-        {insights.top_priority_kpi.miss_count} techs impacted
-      </div>
-    </SectionCard>
-  );
-}
-
-function ParticipationCard({ insights }: { insights: MetricsRiskInsights }) {
-  const p = insights.participation;
-
-  const total =
-    p.meets_3.count +
-    p.meets_2.count +
-    p.meets_1.count +
-    p.meets_0.count;
-
-  function Row(label: string, bucket: { count: number }) {
-    return (
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-medium">
-          {bucket.count}/{total}
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <SectionCard title="Participation">
-      <div className="space-y-1">
-        {Row("Meets 3/3", p.meets_3)}
-        {Row("Meets 2/3", p.meets_2)}
-        {Row("Meets 1/3", p.meets_1)}
-        {Row("Meets 0/3", p.meets_0)}
-      </div>
-    </SectionCard>
-  );
-}
-
-function PerformerList({
-  items,
-  emptyLabel,
-}: {
-  items: MetricsRiskInsights["top_performers"];
-  emptyLabel: string;
-}) {
-  if (!items.length) {
-    return (
-      <div className="text-xs text-muted-foreground">{emptyLabel}</div>
-    );
-  }
-
-  return (
-    <div className="space-y-1">
-      {items.map((p) => (
-        <div
-          key={p.tech_id}
-          className="flex items-center justify-between text-xs"
-        >
-          <span className="truncate pr-2">
-            {p.full_name ?? p.tech_id}
-          </span>
-          <span className="font-medium">
-            {p.composite_score != null
-              ? p.composite_score.toFixed(1)
-              : "—"}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TopPerformersCard({
-  insights,
-}: {
-  insights: MetricsRiskInsights;
-}) {
-  return (
-    <SectionCard title="Top Performers">
-      <PerformerList
-        items={insights.top_performers}
-        emptyLabel="No top performers"
-      />
-    </SectionCard>
-  );
-}
-
-function BottomPerformersCard({
-  insights,
-}: {
-  insights: MetricsRiskInsights;
-}) {
-  return (
-    <SectionCard title="Needs Attention">
-      <PerformerList
-        items={insights.bottom_performers}
-        emptyLabel="No risks detected"
-      />
-    </SectionCard>
-  );
-}
-
 export default function MetricsRiskStrip({
-  title = "Risk",
+  title = "Focus",
   items,
   insights,
 }: Props) {
+  const [topPriorityOverlayMode, setTopPriorityOverlayMode] =
+    useState<TopPriorityOverlayMode | null>(null);
+  const [participationOverlayMode, setParticipationOverlayMode] =
+    useState<ParticipationOverlayMode | null>(null);
+  const [gridOverlay, setGridOverlay] = useState<{
+    kpi: MetricsRiskInsightKpiMovement;
+    mode: MetricsRiskMovementType;
+  } | null>(null);
+
   return (
     <Card className="p-4">
       <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {title}
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
         {insights ? (
           <>
-            <TopRiskCard insights={insights} />
-            <ParticipationCard insights={insights} />
-            <TopPerformersCard insights={insights} />
-            <BottomPerformersCard insights={insights} />
+            <TopRiskCard
+              insights={insights}
+              onCellClick={(kpi, mode) => {
+                setGridOverlay({ kpi, mode });
+              }}
+            />
+
+            <ParticipationCard
+              insights={insights}
+              onSelect={(mode) => {
+                setParticipationOverlayMode(mode);
+              }}
+            />
+
+            <TopPerformersCard
+              rows={insights.top_performers.map((p) => ({
+                name: p.full_name ?? p.tech_id,
+                value: p.composite_score ?? 0,
+              }))}
+            />
+
+            <NeedsAttentionCard
+              rows={insights.bottom_performers.map((p) => ({
+                name: p.full_name ?? p.tech_id,
+                value: p.composite_score ?? 0,
+              }))}
+            />
           </>
         ) : (
-          items.map((item) => (
-            <LegacyTile key={item.key} item={item} />
-          ))
+          items.map((item) => <LegacyTile key={item.key} item={item} />)
         )}
       </div>
+
+      {insights && topPriorityOverlayMode ? (
+        <TopPriorityRiskOverlay
+          insights={insights}
+          mode={topPriorityOverlayMode}
+          onClose={() => setTopPriorityOverlayMode(null)}
+        />
+      ) : null}
+
+      {insights && gridOverlay ? (
+        <PriorityMovementOverlay
+          insights={insights}
+          kpi={gridOverlay.kpi}
+          mode={gridOverlay.mode}
+          onClose={() => setGridOverlay(null)}
+        />
+      ) : null}
+
+      {insights && participationOverlayMode ? (
+        <ParticipationOverlay
+          insights={insights}
+          mode={participationOverlayMode}
+          onClose={() => setParticipationOverlayMode(null)}
+        />
+      ) : null}
     </Card>
   );
 }

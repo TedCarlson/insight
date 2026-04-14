@@ -86,6 +86,9 @@ export type MetricsRiskStripItem = {
   note: string;
 };
 
+export type MetricsRiskTrendDirection = "up" | "down" | "flat" | null;
+export type MetricsRiskMovementType = "new" | "persistent" | "recovered";
+
 export type MetricsRiskInsightTopPriority = {
   kpi_key: string | null;
   label: string | null;
@@ -94,6 +97,60 @@ export type MetricsRiskInsightTopPriority = {
   new_tech_ids: string[];
   persistent_tech_ids: string[];
   recovered_tech_ids: string[];
+};
+
+export type MetricsRiskInsightKpiMovement = {
+  kpi_key: string;
+  label: string;
+  miss_count: number;
+  tech_ids: string[];
+  new_tech_ids: string[];
+  persistent_tech_ids: string[];
+  recovered_tech_ids: string[];
+};
+
+export type MetricsTopPriorityOverlayRow = {
+  tech_id: string;
+  full_name: string | null;
+  rank: number | null;
+  metric_value: number | null;
+  band_key: string | null;
+  trend_direction: MetricsRiskTrendDirection;
+};
+
+export type MetricsTopPriorityOverlay = {
+  new_rows: MetricsTopPriorityOverlayRow[];
+  persistent_rows: MetricsTopPriorityOverlayRow[];
+  recovered_rows: MetricsTopPriorityOverlayRow[];
+};
+
+export type MetricsPriorityKpiOverlay = {
+  kpi_key: string;
+  label: string;
+  new_rows: MetricsTopPriorityOverlayRow[];
+  persistent_rows: MetricsTopPriorityOverlayRow[];
+  recovered_rows: MetricsTopPriorityOverlayRow[];
+};
+
+export type MetricsParticipationOverlayMetric = {
+  kpi_key: string;
+  label: string;
+  value: number | null;
+  band_key: string | null;
+};
+
+export type MetricsParticipationOverlayRow = {
+  tech_id: string;
+  full_name: string | null;
+  rank: number | null;
+  metrics: MetricsParticipationOverlayMetric[];
+};
+
+export type MetricsParticipationOverlay = {
+  meets_3_rows: MetricsParticipationOverlayRow[];
+  meets_2_rows: MetricsParticipationOverlayRow[];
+  meets_1_rows: MetricsParticipationOverlayRow[];
+  meets_0_rows: MetricsParticipationOverlayRow[];
 };
 
 export type MetricsRiskInsightParticipationBucket = {
@@ -121,6 +178,10 @@ export type MetricsRiskInsightPerformer = {
 
 export type MetricsRiskInsights = {
   top_priority_kpi: MetricsRiskInsightTopPriority;
+  priority_kpis?: MetricsRiskInsightKpiMovement[];
+  top_priority_kpi_overlay?: MetricsTopPriorityOverlay | null;
+  priority_kpi_overlays?: MetricsPriorityKpiOverlay[] | null;
+  participation_overlay?: MetricsParticipationOverlay | null;
   participation: MetricsRiskInsightParticipation;
   top_performers: MetricsRiskInsightPerformer[];
   bottom_performers: MetricsRiskInsightPerformer[];

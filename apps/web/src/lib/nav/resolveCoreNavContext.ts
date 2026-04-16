@@ -1,3 +1,5 @@
+// path: apps/web/src/lib/nav/resolveCoreNavContext.ts
+
 import type { AppRole } from "./buildRoleNav";
 import type { SurfaceFamily } from "./resolveSurfaceFamily";
 import { resolveSurfaceFamily } from "./resolveSurfaceFamily";
@@ -52,6 +54,14 @@ export function resolveCoreNavContext(args: {
       role: "BP_SUPERVISOR",
       surfaceFamily,
       useScopedRail: true,
+    };
+  }
+
+  if (surfaceFamily === "SHARED_OPS") {
+    return {
+      role: "UNKNOWN",
+      surfaceFamily,
+      useScopedRail: false,
     };
   }
 

@@ -1,3 +1,5 @@
+// path: apps/web/src/components/AppChrome.tsx
+
 "use client";
 
 import { usePathname } from "next/navigation";
@@ -12,15 +14,21 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
       className={
         isTechRoute
           ? "min-h-screen flex flex-col pt-14"
-          : "min-h-screen flex flex-col lg:pl-72 pt-14 lg:pt-0"
+          : "min-h-screen flex flex-col pt-14"
       }
     >
-      <main className={isTechRoute ? "flex-1 px-4 py-4 pb-24" : "flex-1 px-6 py-6 pb-24 lg:pb-6"}>
+      <main
+        className={
+          isTechRoute
+            ? "flex-1 px-4 py-4 pb-24"
+            : "flex-1 px-6 py-6 pb-24"
+        }
+      >
         {children}
       </main>
 
       {!isTechRoute ? (
-        <div className="px-6">
+        <div className="px-6 pb-6">
           <FooterHelp />
         </div>
       ) : null}

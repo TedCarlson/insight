@@ -1,7 +1,3 @@
-// RUN THIS
-// Replace the entire file:
-// apps/web/src/app/api/org/rpc/route.ts
-
 import { NextRequest } from "next/server";
 import { supabaseUserClient } from "@/shared/data/supabase/user";
 
@@ -80,7 +76,6 @@ export async function POST(req: NextRequest) {
 
     const pcOrgFromArgs = extractPcOrgIdFromArgs(rpcArgs);
 
-    // Elevated users still must have baseline org access (prevents cross-org privilege).
     if (pcOrgFromArgs && elevated) {
       const ok = await canAccessPcOrgUserClient(supabaseUser, pcOrgFromArgs);
       if (!ok) {
@@ -94,7 +89,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Global onboard reads
+    // -------------------------------
+    // GLOBAL READS
+    // -------------------------------
     if (ONBOARD_GLOBAL_READS.has(fn)) {
       if (!selectedPcOrgId && !elevated) {
         return json(409, { ok: false, request_id: rid, error: "No selected org", code: "no_selected_pc_org" });
@@ -115,7 +112,9 @@ export async function POST(req: NextRequest) {
       return handleOnboardGlobalRead({ rid, fn, schema, rpcArgs });
     }
 
-    // Sensitive permission RPCs (execute as user)
+    // -------------------------------
+    // PERMISSION RPCS
+    // -------------------------------
     if (
       fn === "permission_grant" ||
       fn === "permission_revoke" ||
@@ -140,7 +139,9 @@ export async function POST(req: NextRequest) {
       return handleDefaultRpcAsUser({ rid, supabaseUser, schema, fn, rpcArgs });
     }
 
-    // Direct table write: end association (service role)
+    // -------------------------------
+    // DIRECT END ASSOCIATION
+    // -------------------------------
     if (schema === "public" && fn === "person_pc_org_end_association") {
       const person_id = String(rpcArgs?.person_id ?? "").trim();
       const pc_org_id = String(rpcArgs?.pc_org_id ?? "").trim();
@@ -166,11 +167,12 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // IMPORTANT: handler expects ONLY { rid, person_id, pc_org_id, end_date }
       return handlePersonPcOrgEndAssociation({ rid, person_id, pc_org_id, end_date });
     }
 
-    // person_upsert: service role (selected org gate)
+    // -------------------------------
+    // PERSON UPSERT
+    // -------------------------------
     if (fn === "person_upsert") {
       if (!selectedPcOrgId && !elevated) {
         return json(409, { ok: false, request_id: rid, error: "No selected org", code: "no_selected_pc_org" });
@@ -182,7 +184,9 @@ export async function POST(req: NextRequest) {
       return handlePersonUpsertServiceRole({ rid, fn: "person_upsert", schema, rpcArgs });
     }
 
-    // Roster-manage gated writes
+    // -------------------------------
+    // ROSTER WRITE BLOCK (🔥 THIS IS THE ONE)
+    // -------------------------------
     if (fn === "add_to_roster" || fn === "assignment_start" || fn === "assignment_end" || fn === "assignment_patch") {
       const scope = ensureOrgScope(pcOrgFromArgs);
       if (!scope.ok) return json(scope.status, scope.body);
@@ -199,16 +203,61 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // add_to_roster uses service role (membership table)
       if (fn === "add_to_roster") {
         return handleAddToRosterServiceRole({ rid, schema, rpcArgs });
       }
 
-      // everything else: execute as user
-      return handleDefaultRpcAsUser({ rid, supabaseUser, schema, fn, rpcArgs });
+      // ✅ EXECUTE PRIMARY RPC
+      const result = await handleDefaultRpcAsUser({ rid, supabaseUser, schema, fn, rpcArgs });
+
+      // 🧠 SHADOW WRITE (CORRECT LOCATION)
+      try {
+        if (fn === "assignment_start" || fn === "assignment_patch") {
+          const pc_org_id = extractPcOrgIdFromArgs(rpcArgs);
+
+          const person_id =
+            String(rpcArgs?.p_person_id ?? rpcArgs?.person_id ?? "").trim() || null;
+
+          const position_title =
+            String(rpcArgs?.p_position_title ?? rpcArgs?.position_title ?? "").trim() || null;
+
+          const office_id =
+            String(rpcArgs?.p_office_id ?? rpcArgs?.office_id ?? "").trim() || null;
+
+          const tech_id =
+            String(rpcArgs?.tech_id ?? rpcArgs?.p_patch?.tech_id ?? "").trim() || null;
+
+          const start_date =
+            String(rpcArgs?.p_start_date ?? rpcArgs?.start_date ?? "").trim() ||
+            new Date().toISOString().slice(0, 10);
+
+          if (pc_org_id && person_id) {
+            await handleDefaultRpcAsUser({
+              rid,
+              supabaseUser,
+              schema: "public",
+              fn: "company_profile_fact_upsert",
+              rpcArgs: {
+                p_person_id: person_id,
+                p_pc_org_id: pc_org_id,
+                p_position_title: position_title,
+                p_office_id: office_id,
+                p_tech_id: tech_id,
+                p_start_date: start_date,
+              },
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("company_profile_fact shadow write failed", e);
+      }
+
+      return result;
     }
 
-    // Default: execute as user
+    // -------------------------------
+    // DEFAULT
+    // -------------------------------
     return handleDefaultRpcAsUser({ rid, supabaseUser, schema, fn, rpcArgs });
   } catch (e: any) {
     return json(500, { ok: false, request_id: rid, error: e?.message ?? "Unknown error", code: "exception" });

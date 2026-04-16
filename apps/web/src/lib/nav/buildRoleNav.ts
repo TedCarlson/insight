@@ -1,3 +1,5 @@
+// path: apps/web/src/lib/nav/buildRoleNav.ts
+
 export type AppRole =
   | "TECH"
   | "ITG_SUPERVISOR"
@@ -17,7 +19,7 @@ export function buildRoleNav(role: AppRole): RoleNavItem[] {
   if (role === "TECH") {
     return [
       { key: "home", label: "Home", href: "/home" },
-      { key: "metrics", label: "Tech Metrics", href: "/tech/metrics" },
+      { key: "metrics", label: "Metrics", href: "/tech/metrics" },
       { key: "schedule", label: "Schedule", href: "/tech/schedule" },
       { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console" },
       { key: "fieldlog", label: "Field Log", href: "/tech/field-log" },
@@ -27,7 +29,9 @@ export function buildRoleNav(role: AppRole): RoleNavItem[] {
   if (role === "ITG_SUPERVISOR") {
     return [
       { key: "home", label: "Home", href: "/home" },
-      { key: "supervisor", label: "Team Metrics", href: "/company-supervisor" },
+      { key: "metrics", label: "Metrics", href: "/company-supervisor/metrics" },
+      { key: "workforce", label: "Workforce", href: "/company-supervisor/workforce" },
+      { key: "people", label: "People", href: "/company-supervisor/people" },
       { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console" },
       { key: "fieldlog", label: "Field Log", href: "/field-log" },
     ];
@@ -36,7 +40,10 @@ export function buildRoleNav(role: AppRole): RoleNavItem[] {
   if (role === "COMPANY_MANAGER") {
     return [
       { key: "home", label: "Home", href: "/home" },
-      { key: "manager", label: "Team Metrics", href: "/company-manager" },
+      { key: "metrics", label: "Metrics", href: "/company-manager/metrics" },
+      { key: "workforce", label: "Workforce", href: "/company-manager/workforce" },
+      { key: "people", label: "People", href: "/company-manager/people" },
+      { key: "routelock", label: "Route Lock", href: "/route-lock" },
       { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console" },
       { key: "fieldlog", label: "Field Log", href: "/field-log" },
     ];
@@ -49,7 +56,9 @@ export function buildRoleNav(role: AppRole): RoleNavItem[] {
   ) {
     return [
       { key: "home", label: "Home", href: "/home" },
-      { key: "bpview", label: "Team Metrics", href: "/bp/view" },
+      { key: "metrics", label: "Metrics", href: "/bp/view/metrics" },
+      { key: "workforce", label: "Workforce", href: "/bp/view/workforce" },
+      { key: "people", label: "People", href: "/bp/view/people" },
       { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console" },
       { key: "fieldlog", label: "Field Log", href: "/field-log" },
     ];

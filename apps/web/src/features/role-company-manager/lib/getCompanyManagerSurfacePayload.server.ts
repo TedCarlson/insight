@@ -13,7 +13,9 @@ type CompanyManagerProfileKey = "NSR" | "SMART";
 function normalizeProfileKey(
   value: string | null | undefined
 ): CompanyManagerProfileKey {
-  return value === "NSR" ? "NSR" : "SMART";
+  return String(value ?? "NSR").trim().toUpperCase() === "SMART"
+    ? "SMART"
+    : "NSR";
 }
 
 function normalizeRangeKey(

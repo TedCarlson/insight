@@ -1,8 +1,11 @@
+// path: apps/web/src/lib/nav/resolveSurfaceFamily.ts
+
 export type SurfaceFamily =
   | "TECH"
   | "BP"
   | "ITG_SUPERVISOR"
   | "COMPANY_MANAGER"
+  | "SHARED_OPS"
   | "LOCATE"
   | "FULFILLMENT_LEGACY"
   | "UNKNOWN";
@@ -18,24 +21,37 @@ export function resolveSurfaceFamily(
     return "TECH";
   }
 
-  // ITG Supervisor V2 surface
-  if (pathname === "/company-supervisor" || pathname.startsWith("/company-supervisor/")) {
+  // ITG Supervisor role surfaces
+  if (
+    pathname === "/company-supervisor" ||
+    pathname.startsWith("/company-supervisor/")
+  ) {
     return "ITG_SUPERVISOR";
   }
 
-  // Company Manager V2 surface
-  if (pathname === "/company-manager" || pathname.startsWith("/company-manager/")) {
+  // Company Manager role surfaces
+  if (
+    pathname === "/company-manager" ||
+    pathname.startsWith("/company-manager/")
+  ) {
     return "COMPANY_MANAGER";
   }
 
-  // BP V2 surface + shared operational modules
+  // BP role surfaces
   if (
     pathname === "/bp/view" ||
-    pathname.startsWith("/bp/view/") ||
-    pathname.startsWith("/dispatch-console") ||
-    pathname.startsWith("/field-log")
+    pathname.startsWith("/bp/view/")
   ) {
     return "BP";
+  }
+
+  // Shared operational modules
+  if (
+    pathname.startsWith("/dispatch-console") ||
+    pathname.startsWith("/field-log") ||
+    pathname.startsWith("/route-lock")
+  ) {
+    return "SHARED_OPS";
   }
 
   // Everything else (old fulfillment world)

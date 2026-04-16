@@ -1,4 +1,4 @@
-// path: apps/web/src/features/role-company-manager/pages/CompanyManagerPageShell.tsx
+// path: apps/web/src/features/role-company-manager/pages/CompanyManagerMetricsPageShell.tsx
 
 import Link from "next/link";
 

@@ -1,3 +1,5 @@
+// path: apps/web/src/components/CoreNav.tsx
+
 "use client";
 
 import Link from "next/link";
@@ -34,6 +36,7 @@ type CoreNavProps = {
 };
 
 const HIDE_ON_PREFIXES = ["/login", "/access", "/auth"];
+const LAST_SCOPED_ROLE_KEY = "to_last_scoped_role";
 
 function cls(...parts: Array<string | false | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -109,18 +112,12 @@ function iconForNavKey(
       return ClipboardCheck;
     case "fieldlog":
       return ClipboardList;
-    case "bpview":
-      return BarChart3;
-    case "supervisor":
+    case "workforce":
       return Users;
-    case "manager":
-      return Users;
-    case "roster":
+    case "people":
       return Users;
     case "routelock":
       return CalendarDays;
-    case "dailylog":
-      return ClipboardCheck;
     default:
       return Home;
   }
@@ -144,6 +141,39 @@ function readShellRoleHint(): AppRole | null {
   }
 
   return null;
+}
+
+function readLastScopedRole(): AppRole | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const role = window.localStorage.getItem(LAST_SCOPED_ROLE_KEY);
+    if (
+      role === "TECH" ||
+      role === "ITG_SUPERVISOR" ||
+      role === "COMPANY_MANAGER" ||
+      role === "BP_SUPERVISOR" ||
+      role === "BP_LEAD" ||
+      role === "BP_OWNER"
+    ) {
+      return role;
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+function persistLastScopedRole(role: AppRole | null) {
+  if (typeof window === "undefined") return;
+  if (!role || role === "UNKNOWN") return;
+
+  try {
+    window.localStorage.setItem(LAST_SCOPED_ROLE_KEY, role);
+  } catch {
+    // ignore
+  }
 }
 
 function mapRoleNavToItems(
@@ -187,9 +217,7 @@ function mapRoleNavToItems(
 
   return [
     { key: "home", label: "Home", href: "/home", icon: Home },
-    { key: "roster", label: "Roster", href: "/roster", icon: Users },
     { key: "routelock", label: "Route Lock", href: "/route-lock", icon: CalendarDays },
-    { key: "metrics", label: "Metrics", href: "/metrics", icon: BarChart3 },
     { key: "dispatch", label: "Dispatch Console", href: "/dispatch-console", icon: ClipboardCheck },
     { key: "fieldlog", label: "Field Log", href: "/field-log", icon: ClipboardList },
   ];
@@ -237,38 +265,38 @@ function GrantChipPill(props: { chip: GrantChip }) {
   );
 }
 
-function buildMobileFooterItems(navItems: NavItem[], role: AppRole) {
+function buildMobileFooterItems(navItems: NavItem[]) {
   const find = (key: string) => navItems.find((item) => item.key === key);
-  const roleSurfaceKey =
-    role === "COMPANY_MANAGER"
-      ? "manager"
-      : role === "ITG_SUPERVISOR"
-        ? "supervisor"
-        : role === "BP_SUPERVISOR" || role === "BP_LEAD" || role === "BP_OWNER"
-          ? "bpview"
-          : null;
-
-  const roleSurface = roleSurfaceKey ? find(roleSurfaceKey) : null;
 
   const items: Array<NavItem & { mobileLabel?: string }> = [];
+
   const home = find("home");
+  const metrics = find("metrics");
+  const workforce = find("workforce");
   const dispatch = find("dispatch");
-  const fieldLog = find("fieldlog");
 
   if (home) items.push(home);
-  if (roleSurface) {
+
+  if (metrics) {
     items.push({
-      ...roleSurface,
-      mobileLabel:
-        role === "COMPANY_MANAGER"
-          ? "Manager"
-          : role === "ITG_SUPERVISOR"
-            ? "Team"
-            : "BP View",
+      ...metrics,
+      mobileLabel: "Metrics",
     });
   }
-  if (dispatch) items.push({ ...dispatch, mobileLabel: "Dispatch" });
-  if (fieldLog) items.push({ ...fieldLog, mobileLabel: "Log" });
+
+  if (workforce) {
+    items.push({
+      ...workforce,
+      mobileLabel: "Workforce",
+    });
+  }
+
+  if (dispatch) {
+    items.push({
+      ...dispatch,
+      mobileLabel: "Dispatch",
+    });
+  }
 
   return items;
 }
@@ -326,20 +354,13 @@ function TechMobileNav(props: {
 
       {open
         ? createPortal(
-            <div className="fixed inset-0 z-[70] lg:hidden">
-              <button
-                type="button"
-                aria-label="Close account menu backdrop"
-                className="absolute inset-0"
-                onClick={() => setOpen(false)}
-                style={{ background: "rgba(0,0,0,0.35)" }}
-              />
-              <div className="absolute inset-0 backdrop-blur-sm" />
-
+            <div className="fixed inset-0 z-[70]" onClick={() => setOpen(false)}>
+              <div className="absolute inset-0 bg-black/35 backdrop-blur-sm" />
               <div
                 className="absolute right-0 top-0 h-full w-[82vw] max-w-xs border-l bg-background shadow-2xl"
                 role="dialog"
                 aria-modal="true"
+                onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex h-full flex-col px-5 py-5">
                   <div className="flex items-center justify-between">
@@ -382,10 +403,9 @@ function TechMobileNav(props: {
 function LeadershipMobileFooter(props: {
   pathname: string;
   navItems: NavItem[];
-  role: AppRole;
   onMore: () => void;
 }) {
-  const footerItems = buildMobileFooterItems(props.navItems, props.role);
+  const footerItems = buildMobileFooterItems(props.navItems);
 
   if (!footerItems.length) return null;
 
@@ -442,6 +462,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [hintRole, setHintRole] = useState<AppRole | null>(null);
+  const [persistedRole, setPersistedRole] = useState<AppRole | null>(null);
 
   useEffect(() => {
     setOpen(false);
@@ -466,32 +487,51 @@ export default function CoreNav({ lob }: CoreNavProps) {
 
   useEffect(() => {
     setHintRole(readShellRoleHint());
+    setPersistedRole(readLastScopedRole());
   }, [pathname]);
 
   const navContext = useMemo(() => {
     const base = resolveCoreNavContext({ pathname, lob });
 
-    if (pathname === "/home" && hintRole) {
-      return {
-        role: hintRole,
-        surfaceFamily:
-          hintRole === "TECH"
-            ? "TECH"
-            : hintRole === "ITG_SUPERVISOR"
-              ? "ITG_SUPERVISOR"
-              : hintRole === "COMPANY_MANAGER"
-                ? "COMPANY_MANAGER"
-                : hintRole === "BP_SUPERVISOR" ||
-                    hintRole === "BP_LEAD" ||
-                    hintRole === "BP_OWNER"
-                  ? "BP"
-                  : base.surfaceFamily,
-        useScopedRail: hintRole !== "UNKNOWN",
-      };
+    const effectiveRole = hintRole ?? persistedRole ?? null;
+
+    const hintedRoleContext =
+      effectiveRole
+        ? {
+            role: effectiveRole,
+            surfaceFamily:
+              effectiveRole === "TECH"
+                ? "TECH"
+                : effectiveRole === "ITG_SUPERVISOR"
+                  ? "ITG_SUPERVISOR"
+                  : effectiveRole === "COMPANY_MANAGER"
+                    ? "COMPANY_MANAGER"
+                    : effectiveRole === "BP_SUPERVISOR" ||
+                        effectiveRole === "BP_LEAD" ||
+                        effectiveRole === "BP_OWNER"
+                      ? "BP"
+                      : base.surfaceFamily,
+            useScopedRail: effectiveRole !== "UNKNOWN",
+          }
+        : null;
+
+    if (pathname === "/home" && hintedRoleContext) {
+      return hintedRoleContext;
+    }
+
+    if (base.surfaceFamily === "SHARED_OPS" && hintedRoleContext) {
+      return hintedRoleContext;
     }
 
     return base;
-  }, [pathname, lob, hintRole]);
+  }, [pathname, lob, hintRole, persistedRole]);
+
+  useEffect(() => {
+    if (navContext.useScopedRail) {
+      persistLastScopedRole(navContext.role);
+      setPersistedRole(navContext.role);
+    }
+  }, [navContext.role, navContext.useScopedRail]);
 
   const homeHref = useMemo(() => {
     if (lob === "LOCATE") return "/locate";
@@ -567,44 +607,37 @@ export default function CoreNav({ lob }: CoreNavProps) {
     );
   }
 
-  const RailContent = ({ variant }: { variant: "rail" | "drawer" }) => (
-    <div
-      className={cls(
-        "h-full w-full flex flex-col",
-        variant === "rail" ? "px-4 py-4" : "px-5 py-5"
-      )}
-    >
+  const DrawerContent = () => (
+    <div className="flex h-full w-full flex-col px-5 py-5">
       <div className="flex items-center justify-between">
         <Link href={homeHref} prefetch={false} className="inline-flex items-center gap-2">
           <MapPin className="h-4 w-4" />
           <span className="text-sm font-semibold">Insight</span>
         </Link>
 
-        {variant === "drawer" ? (
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className="rounded-md border px-2 py-2 hover:bg-muted"
-            aria-label="Close menu"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="rounded-md border px-2 py-2 hover:bg-muted"
+          aria-label="Close menu"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
 
       {isOwner ? (
         <div className="mt-4 rounded-lg border bg-background/60 p-2">
-          <div className="text-[11px] text-muted-foreground px-1 pb-1">LOB</div>
+          <div className="px-1 pb-1 text-[11px] text-muted-foreground">LOB</div>
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               disabled={switching}
               onClick={() => switchLob("FULFILLMENT")}
               className={cls(
-                "rounded-md px-2 py-2 text-sm border",
+                "rounded-md border px-2 py-2 text-sm",
                 lob === "FULFILLMENT"
                   ? "bg-muted font-medium"
-                  : "hover:bg-muted/60 text-muted-foreground"
+                  : "text-muted-foreground hover:bg-muted/60"
               )}
             >
               Fulfillment
@@ -614,10 +647,10 @@ export default function CoreNav({ lob }: CoreNavProps) {
               disabled={switching}
               onClick={() => switchLob("LOCATE")}
               className={cls(
-                "rounded-md px-2 py-2 text-sm border",
+                "rounded-md border px-2 py-2 text-sm",
                 lob === "LOCATE"
                   ? "bg-muted font-medium"
-                  : "hover:bg-muted/60 text-muted-foreground"
+                  : "text-muted-foreground hover:bg-muted/60"
               )}
             >
               Locate
@@ -627,7 +660,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
       ) : null}
 
       <div className="mt-4 rounded-lg border bg-background/60 p-3">
-        <div className="text-[11px] text-muted-foreground mb-2">Scope</div>
+        <div className="mb-2 text-[11px] text-muted-foreground">Scope</div>
 
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -651,7 +684,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
       </div>
 
       <div className="mt-5">
-        <div className="text-[11px] text-muted-foreground mb-2 px-1">Navigate</div>
+        <div className="mb-2 px-1 text-[11px] text-muted-foreground">Navigate</div>
         <nav className="flex flex-col gap-1">
           {navItems.map((item) => {
             const active = isActivePath(pathname, item.href);
@@ -662,12 +695,10 @@ export default function CoreNav({ lob }: CoreNavProps) {
                 key={item.key}
                 href={item.href}
                 prefetch={false}
-                onClick={() => {
-                  if (variant === "drawer") setOpen(false);
-                }}
+                onClick={() => setOpen(false)}
                 className={cls(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 border",
-                  active ? "bg-muted font-medium" : "hover:bg-muted/60 text-muted-foreground"
+                  "flex items-center gap-3 rounded-lg border px-3 py-2",
+                  active ? "bg-muted font-medium" : "text-muted-foreground hover:bg-muted/60"
                 )}
               >
                 <Icon className="h-4 w-4" />
@@ -680,14 +711,12 @@ export default function CoreNav({ lob }: CoreNavProps) {
             <Link
               href="/admin"
               prefetch={false}
-              onClick={() => {
-                if (variant === "drawer") setOpen(false);
-              }}
+              onClick={() => setOpen(false)}
               className={cls(
-                "mt-2 flex items-center gap-3 rounded-lg px-3 py-2 border",
+                "mt-2 flex items-center gap-3 rounded-lg border px-3 py-2",
                 pathname === "/admin" || pathname.startsWith("/admin/")
                   ? "bg-muted font-medium"
-                  : "hover:bg-muted/60 text-muted-foreground"
+                  : "text-muted-foreground hover:bg-muted/60"
               )}
             >
               <ShieldCheck className="h-4 w-4" />
@@ -699,10 +728,8 @@ export default function CoreNav({ lob }: CoreNavProps) {
             <Link
               href={fieldLogBackHref}
               prefetch={false}
-              onClick={() => {
-                if (variant === "drawer") setOpen(false);
-              }}
-              className="mt-2 flex items-center gap-3 rounded-lg px-3 py-2 border hover:bg-muted/60 text-muted-foreground"
+              onClick={() => setOpen(false)}
+              className="mt-2 flex items-center gap-3 rounded-lg border px-3 py-2 text-muted-foreground hover:bg-muted/60"
             >
               <ArrowLeft className="h-4 w-4" />
               <span className="text-sm">Back to Field Log</span>
@@ -714,7 +741,7 @@ export default function CoreNav({ lob }: CoreNavProps) {
       <div className="mt-auto pt-6">
         <div className="rounded-lg border bg-background/60 p-3">
           <div className="text-[11px] text-muted-foreground">Signed in</div>
-          <div className="mt-1 text-sm break-all">{email ?? "—"}</div>
+          <div className="mt-1 break-all text-sm">{email ?? "—"}</div>
           <button
             type="button"
             onClick={onSignOut}
@@ -730,45 +757,34 @@ export default function CoreNav({ lob }: CoreNavProps) {
 
   return (
     <>
-      <aside className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-50 lg:flex lg:w-72 lg:border-r lg:bg-background/95 lg:backdrop-blur">
-        <RailContent variant="rail" />
-      </aside>
-
       {showLeadershipMobileFooter ? (
         <LeadershipMobileFooter
           pathname={pathname}
           navItems={navItems}
-          role={navContext.role}
           onMore={() => setOpen(true)}
         />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="fixed left-4 top-4 z-50 inline-flex h-10 w-10 items-center justify-center rounded-md border bg-background/90 backdrop-blur lg:hidden"
-          aria-label="Open navigation menu"
-        >
-          <Menu className="h-5 w-5" />
-        </button>
-      )}
+      ) : null}
+
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="fixed left-3 top-3 z-50 inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background/90 shadow-sm backdrop-blur"
+        aria-label="Open navigation menu"
+      >
+        <Menu className="h-4 w-4" />
+      </button>
 
       {open
         ? createPortal(
-            <div className="fixed inset-0 z-[70] lg:hidden">
-              <button
-                type="button"
-                aria-label="Close navigation backdrop"
-                className="absolute inset-0"
-                onClick={() => setOpen(false)}
-                style={{ background: "rgba(0,0,0,0.35)" }}
-              />
-              <div className="absolute inset-0 backdrop-blur-sm" />
+            <div className="fixed inset-0 z-[70]" onClick={() => setOpen(false)}>
+              <div className="absolute inset-0 bg-black/35 backdrop-blur-sm" />
               <div
                 className="absolute left-0 top-0 h-full w-[82vw] max-w-sm border-r bg-background shadow-2xl"
                 role="dialog"
                 aria-modal="true"
+                onClick={(e) => e.stopPropagation()}
               >
-                <RailContent variant="drawer" />
+                <DrawerContent />
               </div>
             </div>,
             document.body

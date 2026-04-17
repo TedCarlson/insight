@@ -1,3 +1,5 @@
+// path: apps/web/src/features/role-company-manager/lib/resolveManagerScope.server.ts
+
 import { bootstrapProfileServer } from "@/lib/auth/bootstrapProfile.server";
 import { requireSelectedPcOrgServer } from "@/lib/auth/requireSelectedPcOrg.server";
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
@@ -62,6 +64,23 @@ function isoToday() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeDate(value: string | null | undefined) {
+  const v = String(value ?? "").trim();
+  return v || null;
+}
+
+function compareNullableDatesDesc(
+  a: string | null | undefined,
+  b: string | null | undefined
+) {
+  const av = normalizeDate(a);
+  const bv = normalizeDate(b);
+  if (av && bv) return bv.localeCompare(av);
+  if (av) return -1;
+  if (bv) return 1;
+  return 0;
+}
+
 function isActiveWindow(
   row: {
     active?: boolean | null;
@@ -74,6 +93,58 @@ function isActiveWindow(
   const startOk = !row.start_date || String(row.start_date) <= today;
   const endOk = !row.end_date || String(row.end_date) >= today;
   return activeOk && startOk && endOk;
+}
+
+function choosePreferredAssignment(
+  rows: CompanyManagerScopeAssignmentRow[]
+): CompanyManagerScopeAssignmentRow | null {
+  if (!rows.length) return null;
+
+  const sorted = [...rows].sort((a, b) => {
+    const aActive = a.active === true ? 1 : 0;
+    const bActive = b.active === true ? 1 : 0;
+    if (bActive !== aActive) return bActive - aActive;
+
+    const aOpenEnded = !normalizeDate(a.end_date) ? 1 : 0;
+    const bOpenEnded = !normalizeDate(b.end_date) ? 1 : 0;
+    if (bOpenEnded !== aOpenEnded) return bOpenEnded - aOpenEnded;
+
+    const endCmp = compareNullableDatesDesc(a.end_date, b.end_date);
+    if (endCmp !== 0) return endCmp;
+
+    const startCmp = compareNullableDatesDesc(a.start_date, b.start_date);
+    if (startCmp !== 0) return startCmp;
+
+    return String(b.assignment_id ?? "").localeCompare(String(a.assignment_id ?? ""));
+  });
+
+  return sorted[0] ?? null;
+}
+
+function dedupeAssignmentsByPerson(
+  rows: CompanyManagerScopeAssignmentRow[]
+): CompanyManagerScopeAssignmentRow[] {
+  const byPerson = new Map<string, CompanyManagerScopeAssignmentRow[]>();
+  const passthrough: CompanyManagerScopeAssignmentRow[] = [];
+
+  for (const row of rows) {
+    const personId = String(row.person_id ?? "").trim();
+    if (!personId) {
+      passthrough.push(row);
+      continue;
+    }
+    const list = byPerson.get(personId) ?? [];
+    list.push(row);
+    byPerson.set(personId, list);
+  }
+
+  const deduped = [...passthrough];
+  for (const group of byPerson.values()) {
+    const preferred = choosePreferredAssignment(group);
+    if (preferred) deduped.push(preferred);
+  }
+
+  return deduped;
 }
 
 async function loadOrgLabels(
@@ -308,8 +379,7 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
       .select(
         "assignment_id,person_id,pc_org_id,tech_id,start_date,end_date,position_title,active,office_id"
       )
-      .eq("pc_org_id", selected_pc_org_id)
-      .eq("active", true),
+      .eq("pc_org_id", selected_pc_org_id),
   ]);
 
   const me = (meRes.data ?? null) as CompanyManagerScopePersonRow | null;
@@ -318,9 +388,17 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
     throw new Error("Unable to resolve current person");
   }
 
-  const allOrgAssignments = (
+  const allOrgAssignmentsRaw = (
     (allOrgAssignmentsRes.data ?? []) as CompanyManagerScopeAssignmentRow[]
-  ).filter((a) => isActiveWindow(a, today));
+  ).filter((a) => {
+    const startOk = !a.start_date || String(a.start_date) <= today;
+    const endOk = !a.end_date || String(a.end_date) >= today;
+    return startOk && endOk;
+  });
+
+  const allOrgAssignments = dedupeAssignmentsByPerson(allOrgAssignmentsRaw).filter((a) =>
+    isActiveWindow(a, today)
+  );
 
   const assignmentsById = new Map<string, CompanyManagerScopeAssignmentRow>();
   for (const row of allOrgAssignments) {
@@ -377,11 +455,27 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
     .map((id) => assignmentsById.get(id))
     .filter((row): row is CompanyManagerScopeAssignmentRow => !!row);
 
-  const personIds = Array.from(
-    new Set(
-      allOrgAssignments.map((r) => String(r.person_id ?? "")).filter(Boolean)
-    )
+  const basePersonIds = new Set(
+    allOrgAssignments.map((r) => String(r.person_id ?? "")).filter(Boolean)
   );
+
+  for (const assignment of allOrgAssignments) {
+    const assignmentId = String(assignment.assignment_id ?? "");
+    if (!assignmentId) continue;
+
+    const leaderAssignment = resolveNearestLeader({
+      assignmentId,
+      parentByChild,
+      assignmentsById,
+      managerAssignmentIds: managerAssignmentIdSet,
+    });
+
+    if (leaderAssignment?.person_id) {
+      basePersonIds.add(String(leaderAssignment.person_id));
+    }
+  }
+
+  const personIds = Array.from(basePersonIds);
 
   const peopleRes = personIds.length
     ? await admin

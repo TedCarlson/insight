@@ -5,10 +5,35 @@ import { buildMetricsSurfacePayload } from "@/shared/server/metrics/buildMetrics
 import type {
   MetricsRangeKey,
   MetricsSurfacePayload,
+  MetricsSurfaceTeamRow,
 } from "@/shared/types/metrics/surfacePayload";
-import { resolveCompanyManagerScope } from "./resolveCompanyManagerScope.server";
+import {
+  resolveCompanyManagerScope,
+  type CompanyManagerScopeAssignmentRow,
+  type CompanyManagerScopePersonRow,
+} from "./resolveCompanyManagerScope.server";
 
 type CompanyManagerProfileKey = "NSR" | "SMART";
+
+type ManagerScopeMeta = {
+  office_label: string | null;
+  reports_to_person_id: string | null;
+  leader_name: string | null;
+  leader_title: string | null;
+  team_class: "ITG" | "BP" | null;
+  contractor_name: string | null;
+  office_id: string | null;
+  affiliation_type: string | null;
+  co_code: string | null;
+};
+
+type EnrichedMetricsSurfaceTeamRow = MetricsSurfaceTeamRow & {
+  leader_name?: string | null;
+  leader_title?: string | null;
+  team_class?: "ITG" | "BP" | null;
+  contractor_name?: string | null;
+  office_id?: string | null;
+};
 
 function normalizeProfileKey(
   value: string | null | undefined
@@ -18,14 +43,18 @@ function normalizeProfileKey(
     : "NSR";
 }
 
-function normalizeRangeKey(
-  value: string | null | undefined
-): MetricsRangeKey {
+function normalizeRangeKey(value: string | null | undefined): MetricsRangeKey {
   const upper = String(value ?? "FM").trim().toUpperCase();
   if (upper === "PREVIOUS") return "PREVIOUS";
   if (upper === "3FM") return "3FM";
   if (upper === "12FM") return "12FM";
   return "FM";
+}
+
+function toNullableString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function buildEmptyPayload(range: MetricsRangeKey): MetricsSurfacePayload {
@@ -92,15 +121,17 @@ export async function getCompanyManagerSurfacePayload(args?: {
 
   const resolvedScope = await resolveCompanyManagerScope();
 
-  const scopedTechIds = Array.from(
+  const scopedTechIds: string[] = Array.from(
     new Set(
       resolvedScope.scoped_assignments
-        .map((row) => String(row.tech_id ?? "").trim())
+        .map((row: CompanyManagerScopeAssignmentRow) =>
+          String(row.tech_id ?? "").trim()
+        )
         .filter(Boolean)
     )
   );
 
-  return buildMetricsSurfacePayload({
+  const basePayload = await buildMetricsSurfacePayload({
     role_key: "COMPANY_MANAGER",
     profile_key: profileKey,
     pc_org_id: scope.selected_pc_org_id,
@@ -115,4 +146,79 @@ export async function getCompanyManagerSurfacePayload(args?: {
       show_parity: false,
     },
   });
+
+  const peopleById = resolvedScope.people_by_id;
+
+  const scopeByTechId = new Map<string, ManagerScopeMeta>(
+    resolvedScope.scoped_assignments
+      .filter((row: CompanyManagerScopeAssignmentRow) =>
+        Boolean(String(row.tech_id ?? "").trim())
+      )
+      .map((row: CompanyManagerScopeAssignmentRow) => {
+        const leaderPersonId = toNullableString(row.leader_person_id);
+        const leaderPerson: CompanyManagerScopePersonRow | undefined =
+          leaderPersonId ? peopleById.get(leaderPersonId) : undefined;
+
+        const leaderName =
+          toNullableString(row.leader_name) ??
+          toNullableString(leaderPerson?.full_name) ??
+          null;
+
+        const leaderTitle = toNullableString(row.leader_title);
+
+        return [
+          String(row.tech_id ?? "").trim(),
+          {
+            office_label: toNullableString(row.office_name),
+            reports_to_person_id: leaderPersonId,
+            leader_name: leaderName,
+            leader_title: leaderTitle,
+            team_class: row.team_class ?? null,
+            contractor_name: toNullableString(row.contractor_name),
+            office_id: toNullableString(row.office_id),
+            affiliation_type:
+              row.team_class === "ITG"
+                ? "COMPANY"
+                : row.team_class === "BP"
+                  ? "CONTRACTOR"
+                  : null,
+            co_code: toNullableString(row.contractor_name),
+          },
+        ];
+      })
+  );
+
+  const enrichedRows: EnrichedMetricsSurfaceTeamRow[] =
+    basePayload.team_table.rows.map((row: MetricsSurfaceTeamRow) => {
+      const techId = String(row.tech_id ?? "").trim();
+      const scopeMeta = techId ? scopeByTechId.get(techId) : undefined;
+
+      return {
+        ...row,
+        office_label: scopeMeta?.office_label ?? row.office_label ?? null,
+        affiliation_type:
+          scopeMeta?.affiliation_type ?? row.affiliation_type ?? null,
+        reports_to_person_id:
+          scopeMeta?.reports_to_person_id ?? row.reports_to_person_id ?? null,
+        co_code: scopeMeta?.co_code ?? row.co_code ?? null,
+        leader_name: scopeMeta?.leader_name ?? null,
+        leader_title: scopeMeta?.leader_title ?? null,
+        team_class: scopeMeta?.team_class ?? null,
+        contractor_name: scopeMeta?.contractor_name ?? null,
+        office_id: scopeMeta?.office_id ?? null,
+      };
+    });
+
+  return {
+    ...basePayload,
+    header: {
+      ...basePayload.header,
+      total_headcount: scopedTechIds.length,
+      scope_headcount: enrichedRows.length,
+    },
+    team_table: {
+      ...basePayload.team_table,
+      rows: enrichedRows,
+    },
+  } as MetricsSurfacePayload;
 }

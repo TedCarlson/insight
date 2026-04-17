@@ -37,6 +37,11 @@ export type MetricsTeamRow = {
   risk_count?: number | null;
   jobs_display?: string | null;
 
+  office_label?: string | null;
+  affiliation_type?: string | null;
+  reports_to_person_id?: string | null;
+  co_code?: string | null;
+
   metrics: MetricsTeamCell[];
 };
 
@@ -61,7 +66,8 @@ type SelectedMetricTarget = {
   metric: MetricsTeamCell;
 };
 
-type SortKey = "rank" | "composite" | "name";
+type SortKey = "rank" | "composite" | "name" | "jobs" | "risk" | string;
+type SortDirection = "asc" | "desc";
 
 type Props = {
   title?: string;
@@ -169,25 +175,6 @@ function metricAccent(renderBandKey?: string | null) {
   }
 }
 
-function sortRows(rows: MetricsTeamRow[], sortKey: SortKey) {
-  const copy = [...rows];
-
-  copy.sort((a, b) => {
-    switch (sortKey) {
-      case "rank":
-        return (a.rank ?? 9999) - (b.rank ?? 9999);
-      case "composite":
-        return (b.composite_score ?? -1) - (a.composite_score ?? -1);
-      case "name":
-        return (a.full_name ?? "").localeCompare(b.full_name ?? "");
-      default:
-        return 0;
-    }
-  });
-
-  return copy;
-}
-
 function metricMap(row: MetricsTeamRow) {
   return new Map(row.metrics.map((m) => [m.metric_key, m]));
 }
@@ -198,6 +185,42 @@ function displayFirstName(fullName?: string | null) {
 
   const first = trimmed.split(/\s+/)[0]?.trim();
   return first || "Unknown";
+}
+
+function getSortValue(row: MetricsTeamRow, sortKey: SortKey): number | string {
+  if (sortKey === "rank") return row.rank ?? 999999;
+  if (sortKey === "composite") return row.composite_score ?? -1;
+  if (sortKey === "name") return String(row.full_name ?? "");
+  if (sortKey === "jobs") return Number(row.jobs_display ?? 0);
+  if (sortKey === "risk") return row.risk_count ?? -1;
+
+  const metric = row.metrics.find((item) => item.metric_key === sortKey);
+  return metric?.metric_value ?? -1;
+}
+
+function sortRows(
+  rows: MetricsTeamRow[],
+  sortKey: SortKey,
+  sortDirection: SortDirection
+) {
+  const copy = [...rows];
+
+  copy.sort((a, b) => {
+    const aValue = getSortValue(a, sortKey);
+    const bValue = getSortValue(b, sortKey);
+
+    let result = 0;
+
+    if (typeof aValue === "string" || typeof bValue === "string") {
+      result = String(aValue).localeCompare(String(bValue));
+    } else {
+      result = aValue - bValue;
+    }
+
+    return sortDirection === "asc" ? result : -result;
+  });
+
+  return copy;
 }
 
 /* -------------------------------- UI -------------------------------- */
@@ -217,6 +240,29 @@ function HeaderTrigger(props: {
       ].join(" ")}
     >
       {props.label}
+    </button>
+  );
+}
+
+function SortableHeader(props: {
+  label: string;
+  active: boolean;
+  direction: SortDirection;
+  onClick: () => void;
+  align?: "left" | "center";
+}) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      className={[
+        "inline-flex items-center gap-1 font-medium transition hover:text-foreground",
+        props.align === "left" ? "justify-start" : "justify-center",
+        props.active ? "text-foreground" : "text-muted-foreground",
+      ].join(" ")}
+    >
+      <span>{props.label}</span>
+      <span className="text-[9px]">{props.active ? (props.direction === "asc" ? "↑" : "↓") : "↕"}</span>
     </button>
   );
 }
@@ -288,10 +334,14 @@ export default function MetricsTeamPerformanceTable({
   renderInspectionDrawer,
 }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("rank");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [activePanel, setActivePanel] = useState<"work_mix" | "parity" | "help" | null>(null);
   const [selectedMetric, setSelectedMetric] = useState<SelectedMetricTarget | null>(null);
 
-  const sortedRows = useMemo(() => sortRows(rows, sortKey), [rows, sortKey]);
+  const sortedRows = useMemo(
+    () => sortRows(rows, sortKey, sortDirection),
+    [rows, sortKey, sortDirection]
+  );
 
   const activeDrillMetrics = useMemo<MetricsInspectionMetricCell[]>(() => {
     if (!selectedMetric) return [];
@@ -312,6 +362,16 @@ export default function MetricsTeamPerformanceTable({
     setSelectedMetric({ row, column, metric });
   }
 
+  function toggleSort(nextKey: SortKey) {
+    if (sortKey === nextKey) {
+      setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setSortKey(nextKey);
+    setSortDirection(nextKey === "name" ? "asc" : "desc");
+  }
+
   return (
     <>
       <Card className="p-4">
@@ -323,13 +383,30 @@ export default function MetricsTeamPerformanceTable({
 
             <select
               value={sortKey}
-              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              onChange={(e) => toggleSort(e.target.value as SortKey)}
               className="h-8 rounded-lg border px-2 text-[11px]"
             >
               <option value="rank">Sort: Rank</option>
               <option value="composite">Sort: Composite</option>
               <option value="name">Sort: Name</option>
+              <option value="jobs">Sort: Jobs</option>
+              <option value="risk">Sort: Risk</option>
+              {columns.map((column) => (
+                <option key={column.kpi_key} value={column.kpi_key}>
+                  Sort: {column.label}
+                </option>
+              ))}
             </select>
+
+            <button
+              type="button"
+              onClick={() =>
+                setSortDirection((current) => (current === "asc" ? "desc" : "asc"))
+              }
+              className="inline-flex h-8 items-center rounded-lg border px-2 text-[11px] font-medium text-muted-foreground transition hover:bg-muted/40 hover:text-foreground"
+            >
+              {sortDirection === "asc" ? "Asc ↑" : "Desc ↓"}
+            </button>
           </div>
 
           <div className="flex items-center gap-4">
@@ -357,31 +434,77 @@ export default function MetricsTeamPerformanceTable({
           <table className="min-w-full border-collapse">
             <thead>
               <tr className="border-b text-[10px]">
-                <th className="w-[190px] px-3 py-2.5 text-left">Tech</th>
-                <th className="w-[92px] px-3 py-2.5 text-center">Composite</th>
+                <th className="w-[190px] px-3 py-2.5 text-left">
+                  <SortableHeader
+                    label="Tech"
+                    active={sortKey === "name"}
+                    direction={sortDirection}
+                    onClick={() => toggleSort("name")}
+                    align="left"
+                  />
+                </th>
+
+                <th className="w-[92px] px-3 py-2.5 text-center">
+                  <SortableHeader
+                    label="Composite"
+                    active={sortKey === "composite" || sortKey === "rank"}
+                    direction={sortDirection}
+                    onClick={() => toggleSort("composite")}
+                    align="center"
+                  />
+                </th>
 
                 {columns.map((col) => (
                   <th
                     key={col.kpi_key}
                     className="px-2.5 py-2.5 text-center whitespace-nowrap"
                   >
-                    {col.label}
+                    <SortableHeader
+                      label={col.label}
+                      active={sortKey === col.kpi_key}
+                      direction={sortDirection}
+                      onClick={() => toggleSort(col.kpi_key)}
+                      align="center"
+                    />
                   </th>
                 ))}
 
                 <th className="w-[80px] px-2.5 py-2.5 text-center">
                   {workMixContent ? (
-                    <HeaderTrigger
-                      compact
-                      label="Jobs"
-                      onClick={() => setActivePanel("work_mix")}
-                    />
+                    <div className="flex items-center justify-center gap-2">
+                      <HeaderTrigger
+                        compact
+                        label="Jobs"
+                        onClick={() => setActivePanel("work_mix")}
+                      />
+                      <SortableHeader
+                        label=""
+                        active={sortKey === "jobs"}
+                        direction={sortDirection}
+                        onClick={() => toggleSort("jobs")}
+                        align="center"
+                      />
+                    </div>
                   ) : (
-                    "Jobs"
+                    <SortableHeader
+                      label="Jobs"
+                      active={sortKey === "jobs"}
+                      direction={sortDirection}
+                      onClick={() => toggleSort("jobs")}
+                      align="center"
+                    />
                   )}
                 </th>
 
-                <th className="w-[60px] px-2.5 py-2.5 text-center">Risk</th>
+                <th className="w-[60px] px-2.5 py-2.5 text-center">
+                  <SortableHeader
+                    label="Risk"
+                    active={sortKey === "risk"}
+                    direction={sortDirection}
+                    onClick={() => toggleSort("risk")}
+                    align="center"
+                  />
+                </th>
               </tr>
             </thead>
 
@@ -398,6 +521,11 @@ export default function MetricsTeamPerformanceTable({
                       <div className="mt-0.5 text-[10px] leading-none text-[var(--to-ink-muted)]">
                         {row.tech_id ?? "—"}
                       </div>
+                      {row.office_label ? (
+                        <div className="mt-1 text-[10px] leading-none text-[var(--to-ink-muted)]">
+                          {row.office_label}
+                        </div>
+                      ) : null}
                     </td>
 
                     <td className="px-3 py-3 text-center">

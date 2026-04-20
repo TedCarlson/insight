@@ -10,24 +10,41 @@ type Row = {
 function podiumTone(rank: number) {
   if (rank === 0) {
     return {
-      row: "border-amber-300 bg-amber-50/70 text-amber-800",
+      row: "border-amber-300 bg-transparent text-amber-800",
       badge: "bg-amber-500 text-white",
     };
   }
   if (rank === 1) {
     return {
-      row: "border-zinc-300 bg-zinc-50/80 text-zinc-700",
+      row: "border-zinc-300 bg-transparent text-zinc-700",
       badge: "bg-zinc-500 text-white",
     };
   }
   return {
-    row: "border-amber-400/70 bg-amber-50/45 text-amber-900",
+    row: "border-amber-400/70 bg-transparent text-amber-900",
     badge: "bg-amber-700 text-white",
   };
 }
 
-export default function TopPerformersCard(props: { rows: Row[] }) {
-  const rows = props.rows.slice(0, 5);
+function sortTopPerformers(rows: Row[]) {
+  return [...rows]
+    .filter(
+      (r) =>
+        typeof r.value === "number" &&
+        Number.isFinite(r.value) &&
+        r.value > 0 // 🚨 CRITICAL: removes zero + junk
+    )
+    .sort((a, b) => {
+      if (b.value !== a.value) return b.value - a.value; // DESC
+      return String(a.name ?? "").localeCompare(String(b.name ?? ""));
+    });
+}
+
+export default function TopPerformersCard(props: {
+  rows: Row[];
+  limit?: number;
+}) {
+  const rows = sortTopPerformers(props.rows).slice(0, props.limit ?? 5);
 
   return (
     <div className="rounded-xl border bg-card p-3">
@@ -37,20 +54,21 @@ export default function TopPerformersCard(props: { rows: Row[] }) {
 
       <div className="mt-2 space-y-1.5">
         {rows.map((r, i) => {
+          const tone = podiumTone(i);
           const isTop3 = i < 3;
 
-          if (isTop3) {
-            const tone = podiumTone(i);
-
-            return (
-              <div
-                key={`${r.name}-${i}`}
-                className={[
-                  "flex items-center justify-between rounded-md border px-2 py-1.5 text-sm",
-                  tone.row,
-                ].join(" ")}
-              >
-                <div className="flex min-w-0 items-center gap-2">
+          return (
+            <div
+              key={`${r.name}-${i}`}
+              className={[
+                "flex items-center justify-between rounded-md border px-2 py-1.5 text-sm",
+                isTop3
+                  ? tone.row
+                  : "border-zinc-200 bg-transparent text-foreground/90",
+              ].join(" ")}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                {isTop3 ? (
                   <span
                     className={[
                       "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-semibold",
@@ -59,23 +77,21 @@ export default function TopPerformersCard(props: { rows: Row[] }) {
                   >
                     #{i + 1}
                   </span>
-                  <span className="truncate">{r.name}</span>
-                </div>
+                ) : (
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-zinc-200 px-1 text-[10px] font-medium text-muted-foreground">
+                    #{i + 1}
+                  </span>
+                )}
 
-                <div className="tabular-nums text-sm font-semibold">
-                  {r.value.toFixed(1)}
-                </div>
+                <span className="truncate">{r.name}</span>
               </div>
-            );
-          }
 
-          return (
-            <div
-              key={`${r.name}-${i}`}
-              className="flex items-center justify-between rounded-md border border-zinc-200 bg-zinc-50/35 px-2 py-1.5 text-sm"
-            >
-              <span className="truncate text-foreground/90">{r.name}</span>
-              <span className="tabular-nums font-medium text-foreground/90">
+              <span
+                className={[
+                  "tabular-nums text-sm",
+                  isTop3 ? "font-semibold" : "font-medium",
+                ].join(" ")}
+              >
                 {r.value.toFixed(1)}
               </span>
             </div>

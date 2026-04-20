@@ -91,8 +91,8 @@ export default function TopRiskCard(props: {
                 {mode === "new"
                   ? "New"
                   : mode === "persistent"
-                    ? "Persistent"
-                    : "Recovered"}
+                  ? "Persistent"
+                  : "Recovered"}
               </div>
 
               {priorityKpis.map((kpi) => {
@@ -104,7 +104,7 @@ export default function TopRiskCard(props: {
                     key={`${kpi.kpi_key}-${mode}`}
                     disabled={!clickable}
                     onClick={() => clickable && onCellClick(kpi, mode)}
-                    className="flex h-6 items-center justify-center rounded-md border px-1 text-xs font-medium transition hover:bg-muted/50"
+                    className="flex h-6 items-center justify-center rounded-md border px-1 text-xs font-medium transition hover:bg-muted/40"
                   >
                     <span className={tone(mode)}>
                       {count > 0 ? `${prefix(mode)} ${count}` : "—"}
@@ -135,8 +135,9 @@ export default function TopRiskCard(props: {
           })}
         </div>
 
+        {/* Top KPI Callout — NO FILL */}
         <div className="pt-1">
-          <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-2.5 py-1.5">
+          <div className="flex items-center gap-2 rounded-md border px-2.5 py-1.5">
             <span className="h-5 w-1.5 rounded-full bg-amber-500" />
             <div className="min-w-0">
               <div className="truncate text-[11px]">

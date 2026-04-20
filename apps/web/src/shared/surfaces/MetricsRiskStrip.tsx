@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Card } from "@/components/ui/Card";
 import NeedsAttentionCard from "@/shared/surfaces/risk-strip/NeedsAttentionCard";
@@ -10,7 +10,6 @@ import ParticipationCard from "@/shared/surfaces/risk-strip/ParticipationCard";
 import {
   ParticipationOverlay,
   PriorityMovementOverlay,
-  TopPriorityRiskOverlay,
 } from "@/shared/surfaces/risk-strip/RiskOverlays";
 import TopPerformersCard from "@/shared/surfaces/risk-strip/TopPerformersCard";
 import TopRiskCard from "@/shared/surfaces/risk-strip/TopRiskCard";
@@ -27,7 +26,6 @@ type Props = {
   insights?: MetricsRiskInsights | null;
 };
 
-type TopPriorityOverlayMode = "new" | "persistent" | "recovered";
 type ParticipationOverlayMode = "meets_3" | "meets_2" | "meets_1" | "meets_0";
 
 function LegacyTile({ item }: { item: MetricsRiskStripItem }) {
@@ -44,19 +42,45 @@ function LegacyTile({ item }: { item: MetricsRiskStripItem }) {
   );
 }
 
+function resolveEligibleTeamSize(
+  insights: MetricsRiskInsights | null | undefined
+) {
+  if (!insights) return 0;
+
+  const p = insights.participation;
+  const fallbackTotal =
+    p.meets_3.count + p.meets_2.count + p.meets_1.count + p.meets_0.count;
+
+  return insights.participation_signal?.eligible_count ?? fallbackTotal;
+}
+
+function resolveDisplayLimit(teamSize: number) {
+  if (teamSize < 5) return 1;
+  if (teamSize < 10) return 3;
+  return 5;
+}
+
 export default function MetricsRiskStrip({
   title = "Focus",
   items,
   insights,
 }: Props) {
-  const [topPriorityOverlayMode, setTopPriorityOverlayMode] =
-    useState<TopPriorityOverlayMode | null>(null);
   const [participationOverlayMode, setParticipationOverlayMode] =
     useState<ParticipationOverlayMode | null>(null);
   const [gridOverlay, setGridOverlay] = useState<{
     kpi: MetricsRiskInsightKpiMovement;
     mode: MetricsRiskMovementType;
   } | null>(null);
+
+  const eligibleTeamSize = useMemo(
+    () => resolveEligibleTeamSize(insights),
+    [insights]
+  );
+
+  const displayLimit = useMemo(
+    () => resolveDisplayLimit(eligibleTeamSize),
+    [eligibleTeamSize]
+  );
 
   return (
     <Card className="p-4">
@@ -82,6 +106,7 @@ export default function MetricsRiskStrip({
             />
 
             <TopPerformersCard
+              limit={displayLimit}
               rows={insights.top_performers.map((p) => ({
                 name: p.full_name ?? p.tech_id,
                 value: p.composite_score ?? 0,
@@ -89,6 +114,7 @@ export default function MetricsRiskStrip({
             />
 
             <NeedsAttentionCard
+              limit={displayLimit}
               rows={insights.bottom_performers.map((p) => ({
                 name: p.full_name ?? p.tech_id,
                 value: p.composite_score ?? 0,
@@ -99,14 +125,6 @@ export default function MetricsRiskStrip({
           items.map((item) => <LegacyTile key={item.key} item={item} />)
         )}
       </div>
-
-      {insights && topPriorityOverlayMode ? (
-        <TopPriorityRiskOverlay
-          insights={insights}
-          mode={topPriorityOverlayMode}
-          onClose={() => setTopPriorityOverlayMode(null)}
-        />
-      ) : null}
 
       {insights && gridOverlay ? (
         <PriorityMovementOverlay

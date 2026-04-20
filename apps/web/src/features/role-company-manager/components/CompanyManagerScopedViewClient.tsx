@@ -1,3 +1,5 @@
+// path: apps/web/src/features/role-company-manager/components/CompanyManagerScopedViewClient.tsx
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -6,6 +8,7 @@ import MetricsControlsStrip from "@/shared/surfaces/MetricsControlsStrip";
 import MetricsExecutiveKpiStrip from "@/shared/surfaces/MetricsExecutiveKpiStrip";
 import MetricsRiskStrip from "@/shared/surfaces/MetricsRiskStrip";
 import MetricsTeamPerformanceTableClient from "@/shared/surfaces/MetricsTeamPerformanceTableClient";
+import MetricsTechDrillDrawer from "@/shared/surfaces/MetricsTechDrillDrawer";
 import {
   buildScopedRows,
   mapTeamRows,
@@ -17,6 +20,11 @@ import {
 } from "@/shared/lib/metrics/scopedComputations";
 import { buildExecutiveKpis } from "@/shared/domain/metrics/buildExecutiveKpis";
 
+import type { KpiBandKey } from "@/shared/kpis/core/types";
+import type {
+  InspectionMetricCell,
+  WorkforceInspectionPayload,
+} from "@/shared/kpis/contracts/inspectionTypes";
 import type { MetricsSurfacePayload } from "@/shared/types/metrics/surfacePayload";
 import type {
   MetricsExecutiveRuntimeRubricRow,
@@ -96,6 +104,61 @@ function buildRubricMap(rows: MetricsExecutiveRuntimeRubricRow[]) {
   return map as Map<string, any[]>;
 }
 
+function buildInspectionContext(row: {
+  tech_id?: string | null;
+  office_label?: string | null;
+  contractor_name?: string | null;
+  affiliation_type?: string | null;
+}) {
+  const parts = [
+    String(row.tech_id ?? "").trim(),
+    String(row.office_label ?? "").trim(),
+    String(row.contractor_name ?? "").trim(),
+    String(row.affiliation_type ?? "").trim(),
+  ].filter(Boolean);
+
+  return parts.join(" • ") || "Technician Detail";
+}
+
+function normalizeBandKey(value: string | null | undefined): KpiBandKey {
+  if (value === "EXCEEDS") return "EXCEEDS";
+  if (value === "MEETS") return "MEETS";
+  if (value === "NEEDS_IMPROVEMENT") return "NEEDS_IMPROVEMENT";
+  if (value === "MISSES") return "MISSES";
+  return "NO_DATA";
+}
+
+function orderInspectionMetrics(
+  metrics: Array<{
+    kpi_key: string;
+    label: string;
+    value: number | null;
+    value_display: string | null;
+    band_key: string;
+  }>,
+  orderedKpiKeys: string[]
+): InspectionMetricCell[] {
+  const orderMap = new Map<string, number>(
+    orderedKpiKeys.map((kpiKey, index) => [kpiKey, index])
+  );
+
+  return [...metrics]
+    .sort((a, b) => {
+      const aOrder = orderMap.get(a.kpi_key) ?? 999;
+      const bOrder = orderMap.get(b.kpi_key) ?? 999;
+
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return a.label.localeCompare(b.label);
+    })
+    .map((metric) => ({
+      kpi_key: metric.kpi_key,
+      label: metric.label,
+      value: metric.value,
+      value_display: metric.value_display,
+      band_key: normalizeBandKey(metric.band_key),
+    }));
+}
+
 export default function CompanyManagerScopedViewClient({ payload }: Props) {
   const [controls, setControls] = useState<MetricsControlsValue>({
     office_label: null,
@@ -106,6 +169,11 @@ export default function CompanyManagerScopedViewClient({ payload }: Props) {
   });
 
   const allRows = useMemo(() => mapTeamRows(payload), [payload]);
+
+  const orderedKpiKeys = useMemo(
+    () => payload.team_table.columns.map((column) => column.kpi_key),
+    [payload.team_table.columns]
+  );
 
   const officeOptions = useMemo(() => {
     return Array.from(
@@ -225,18 +293,15 @@ export default function CompanyManagerScopedViewClient({ payload }: Props) {
         support: trendItem.support ?? null,
 
         trend_scope_code: trendItem.comparison_scope_code,
-        trend_comparison_value_display:
-          trendItem.comparison_value_display,
+        trend_comparison_value_display: trendItem.comparison_value_display,
         trend_variance_display: trendItem.variance_display,
         trend_state: trendItem.comparison_state,
 
         contrast_scope_code: runtime.comparison_scope_code,
         contrast_comparison_value_display:
           contrastItem?.comparison_value_display ?? "—",
-        contrast_variance_display:
-          contrastItem?.variance_display ?? null,
-        contrast_state:
-          contrastItem?.comparison_state ?? "neutral",
+        contrast_variance_display: contrastItem?.variance_display ?? null,
+        contrast_state: contrastItem?.comparison_state ?? "neutral",
       };
     });
   }, [payload, scopedRows, hasExecutiveSlice]);
@@ -248,7 +313,10 @@ export default function CompanyManagerScopedViewClient({ payload }: Props) {
     });
   }, [payload.risk_insights, scopedRows]);
 
-  const scopedWorkMix = useMemo(() => buildScopedWorkMix(scopedRows), [scopedRows]);
+  const scopedWorkMix = useMemo(
+    () => buildScopedWorkMix(scopedRows),
+    [scopedRows]
+  );
 
   const workMixContent = scopedWorkMix ? (
     <div className="space-y-4">
@@ -296,6 +364,48 @@ export default function CompanyManagerScopedViewClient({ payload }: Props) {
   ) : (
     <div className="text-sm text-muted-foreground">No work mix available.</div>
   );
+
+  async function loadInspectionPayload(args: {
+    row: any;
+    column: { kpi_key: string; label: string };
+    metric: any;
+    range?: "FM" | "PREVIOUS" | "3FM" | "12FM";
+  }): Promise<WorkforceInspectionPayload | null> {
+    const personId = String(args.row?.person_id ?? "").trim();
+    const techId = String(args.row?.tech_id ?? "").trim();
+    const kpiKey = String(args.column?.kpi_key ?? "").trim();
+
+    if (!personId || !techId || !kpiKey) return null;
+
+    const params = new URLSearchParams();
+    params.set("person_id", personId);
+    params.set("tech_id", techId);
+    params.set("kpi_key", kpiKey);
+    params.set("full_name", String(args.row?.full_name ?? "Unknown"));
+    params.set("context", buildInspectionContext(args.row));
+    params.set("title", String(args.column?.label ?? kpiKey));
+    params.set("value_display", String(args.metric?.value_display ?? ""));
+    params.set("value", String(args.metric?.metric_value ?? ""));
+    params.set("band_key", String(args.metric?.render_band_key ?? "NO_DATA"));
+    params.set(
+      "range",
+      String(args.range ?? payload.filters.active_range ?? "FM")
+    );
+
+    if (args.row?.contractor_name) {
+      params.set("contractor_name", String(args.row.contractor_name));
+    }
+
+    const response = await fetch(`/api/metrics/inspection?${params.toString()}`, {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    if (!response.ok) return null;
+
+    const json = await response.json();
+    return json?.ok ? (json.payload as WorkforceInspectionPayload) : null;
+  }
 
   return (
     <div className="space-y-4">
@@ -347,8 +457,39 @@ export default function CompanyManagerScopedViewClient({ payload }: Props) {
             report_order: column.report_order,
           }))}
           rows={scopedRows}
+          range={payload.filters.active_range}
           workMixTitle="Work Mix"
           workMixContent={workMixContent}
+          loadInspectionPayload={loadInspectionPayload}
+          renderInspectionDrawer={({
+            open,
+            onClose,
+            row,
+            column,
+            metrics,
+          }) => (
+            <MetricsTechDrillDrawer
+              open={open}
+              onClose={onClose}
+              name={String(row.full_name ?? row.tech_id ?? "Unknown Tech")}
+              context={buildInspectionContext(row as any)}
+              metrics={orderInspectionMetrics(metrics, orderedKpiKeys)}
+              selectedKpi={column.kpi_key}
+              loadPayload={async (kpiKey) => {
+                return loadInspectionPayload({
+                  row,
+                  column: {
+                    kpi_key: kpiKey,
+                    label: column.label,
+                  },
+                  metric:
+                    (row as any).metrics?.find((m: any) => m.metric_key === kpiKey) ??
+                    null,
+                  range: payload.filters.active_range,
+                });
+              }}
+            />
+          )}
         />
       ) : null}
     </div>

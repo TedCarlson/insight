@@ -37,6 +37,8 @@ export type TeamRowClient = {
     metric_value: number | null;
     render_band_key?: string | null;
     weighted_points?: number | null;
+    numerator?: number | null;
+    denominator?: number | null;
   }>;
 };
 
@@ -175,6 +177,8 @@ export function mapTeamRows(payload: MetricsSurfacePayload): TeamRowClient[] {
         metric_value: metric.value,
         render_band_key: metric.band_key,
         weighted_points: metric.weighted_points,
+        numerator: metric.numerator ?? null,
+        denominator: metric.denominator ?? null,
       })),
     };
   });

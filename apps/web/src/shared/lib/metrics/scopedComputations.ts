@@ -8,8 +8,8 @@ import type {
   MetricsParticipationSignalKpi,
   MetricsPriorityKpiOverlay,
   MetricsRiskInsightKpiMovement,
-  MetricsRiskInsights,
   MetricsRiskInsightPerformer,
+  MetricsRiskInsights,
   MetricsTopPriorityOverlay,
   MetricsTopPriorityOverlayRow,
 } from "@/shared/types/metrics/surfacePayload";
@@ -48,6 +48,41 @@ function metricMap(row: TeamRowClient) {
   return new Map(row.metrics.map((metric) => [metric.metric_key, metric]));
 }
 
+function resolveFtrMetricKey(rows: TeamRowClient[]): string | null {
+  const sampleMetrics = rows.flatMap((row) => row.metrics);
+
+  const exact = sampleMetrics.find((metric) => metric.metric_key === "ftr_rate");
+  if (exact) return exact.metric_key;
+
+  const fuzzy = sampleMetrics.find((metric) => {
+    const key = String(metric.metric_key ?? "").toLowerCase();
+    const label = String(metric.label ?? "").toLowerCase();
+    return key.includes("ftr") || label.includes("ftr");
+  });
+
+  return fuzzy?.metric_key ?? null;
+}
+
+function hasPositiveFtrContactJobs(
+  row: TeamRowClient,
+  ftrMetricKey: string | null
+): boolean {
+  if (!ftrMetricKey) return true;
+
+  const ftrMetric =
+    row.metrics.find((metric) => metric.metric_key === ftrMetricKey) ?? null;
+
+  const denominator = ftrMetric?.denominator;
+  return typeof denominator === "number" && Number.isFinite(denominator)
+    ? denominator > 0
+    : false;
+}
+
+function filterEligibleRows(rows: TeamRowClient[]): TeamRowClient[] {
+  const ftrMetricKey = resolveFtrMetricKey(rows);
+  return rows.filter((row) => hasPositiveFtrContactJobs(row, ftrMetricKey));
+}
+
 function filterOverlayRows(
   rows: MetricsTopPriorityOverlayRow[] | undefined,
   scopedTechIds: Set<string>
@@ -60,39 +95,6 @@ function filterParticipationOverlayRows(
   scopedTechIds: Set<string>
 ) {
   return (rows ?? []).filter((row) => scopedTechIds.has(row.tech_id));
-}
-
-function compareRowsForPerformance(a: TeamRowClient, b: TeamRowClient) {
-  const riskA =
-    typeof a.risk_count === "number" && Number.isFinite(a.risk_count)
-      ? a.risk_count
-      : 0;
-  const riskB =
-    typeof b.risk_count === "number" && Number.isFinite(b.risk_count)
-      ? b.risk_count
-      : 0;
-
-  if (riskA !== riskB) return riskA - riskB;
-
-  const rankA =
-    typeof a.rank === "number" && Number.isFinite(a.rank) ? a.rank : 999999;
-  const rankB =
-    typeof b.rank === "number" && Number.isFinite(b.rank) ? b.rank : 999999;
-
-  if (rankA !== rankB) return rankA - rankB;
-
-  const compA =
-    typeof a.composite_score === "number" && Number.isFinite(a.composite_score)
-      ? a.composite_score
-      : -1;
-  const compB =
-    typeof b.composite_score === "number" && Number.isFinite(b.composite_score)
-      ? b.composite_score
-      : -1;
-
-  if (compA !== compB) return compB - compA;
-
-  return String(a.full_name ?? "").localeCompare(String(b.full_name ?? ""));
 }
 
 function buildPerformer(
@@ -155,11 +157,11 @@ export function buildScopedWorkMix(rows: TeamRowClient[]) {
 }
 
 function buildScopedParticipationSignal(args: {
-  scopedRows: TeamRowClient[];
+  eligibleRows: TeamRowClient[];
   priorityKpis: MetricsRiskInsightKpiMovement[];
   sourceSignal?: MetricsParticipationSignal | null;
 }): MetricsParticipationSignal | null {
-  const eligibleCount = args.scopedRows.length;
+  const eligibleCount = args.eligibleRows.length;
   if (!eligibleCount || !args.priorityKpis.length) return null;
 
   const sourceByKpi = new Map(
@@ -167,7 +169,7 @@ function buildScopedParticipationSignal(args: {
   );
 
   const by_kpi: MetricsParticipationSignalKpi[] = args.priorityKpis.map((kpi) => {
-    const participatingCount = args.scopedRows.reduce((sum, row) => {
+    const participatingCount = args.eligibleRows.reduce((sum, row) => {
       const metric = row.metrics.find((item) => item.metric_key === kpi.kpi_key);
       return sum + (isPassBand(metric?.render_band_key) ? 1 : 0);
     }, 0);
@@ -202,7 +204,7 @@ function buildScopedParticipationSignal(args: {
 }
 
 function buildScopedPriorityKpis(args: {
-  scopedRows: TeamRowClient[];
+  eligibleRows: TeamRowClient[];
   source: MetricsRiskInsights;
   scopedTechIds: Set<string>;
 }): MetricsRiskInsightKpiMovement[] {
@@ -227,7 +229,7 @@ function buildScopedPriorityKpis(args: {
     .map((kpi) => {
       const techIds: string[] = [];
 
-      const missCount = args.scopedRows.reduce((sum, row) => {
+      const missCount = args.eligibleRows.reduce((sum, row) => {
         const techId = String(row.tech_id ?? "").trim();
         if (!techId) return sum;
 
@@ -260,7 +262,7 @@ function buildScopedPriorityKpis(args: {
 }
 
 function buildScopedParticipation(args: {
-  scopedRows: TeamRowClient[];
+  eligibleRows: TeamRowClient[];
   priorityKpis: MetricsRiskInsightKpiMovement[];
 }) {
   const topThree = args.priorityKpis.slice(0, 3).map((kpi) => kpi.kpi_key);
@@ -270,7 +272,7 @@ function buildScopedParticipation(args: {
   const meets1TechIds: string[] = [];
   const meets0TechIds: string[] = [];
 
-  for (const row of args.scopedRows) {
+  for (const row of args.eligibleRows) {
     const metricsByKey = metricMap(row);
 
     let passCount = 0;
@@ -315,10 +317,10 @@ function buildScopedParticipation(args: {
   };
 }
 
-function buildScopedPerformers(args: { scopedRows: TeamRowClient[] }) {
+function buildScopedPerformers(args: { eligibleRows: TeamRowClient[] }) {
   const riskCountByTech = new Map<string, number>();
 
-  for (const row of args.scopedRows) {
+  for (const row of args.eligibleRows) {
     const techId = String(row.tech_id ?? "").trim();
     if (!techId) continue;
 
@@ -329,36 +331,34 @@ function buildScopedPerformers(args: { scopedRows: TeamRowClient[] }) {
     riskCountByTech.set(techId, riskCount);
   }
 
-  // ✅ TRUE SORT — MATCH TABLE (composite DESC, rank ASC fallback)
-  const sorted = [...args.scopedRows].sort((a, b) => {
+  const sorted = [...args.eligibleRows].sort((a, b) => {
     const compA =
-      typeof a.composite_score === "number" ? a.composite_score : -1;
+      typeof a.composite_score === "number" && Number.isFinite(a.composite_score)
+        ? a.composite_score
+        : -1;
     const compB =
-      typeof b.composite_score === "number" ? b.composite_score : -1;
+      typeof b.composite_score === "number" && Number.isFinite(b.composite_score)
+        ? b.composite_score
+        : -1;
 
     if (compA !== compB) return compB - compA;
 
     const rankA =
-      typeof a.rank === "number" ? a.rank : 999999;
+      typeof a.rank === "number" && Number.isFinite(a.rank) ? a.rank : 999999;
     const rankB =
-      typeof b.rank === "number" ? b.rank : 999999;
+      typeof b.rank === "number" && Number.isFinite(b.rank) ? b.rank : 999999;
 
     return rankA - rankB;
   });
 
-  // ✅ SIZE RULES (your rule — locked)
   const count = sorted.length;
   const limit = count >= 10 ? 5 : count >= 5 ? 3 : 1;
 
   return {
     riskCountByTech,
-
-    // ✅ TRUE TOP (highest composite)
     top_performers: sorted
       .slice(0, limit)
       .map((row) => buildPerformer(row, riskCountByTech)),
-
-    // ✅ TRUE BOTTOM (lowest composite)
     bottom_performers: [...sorted]
       .reverse()
       .slice(0, limit)
@@ -425,14 +425,14 @@ export function buildScopedRiskInsights(args: {
 }): MetricsRiskInsights | null {
   if (!args.source) return null;
 
+  const eligibleRows = filterEligibleRows(args.scopedRows);
+
   const scopedTechIds = new Set(
-    args.scopedRows
-      .map((row) => String(row.tech_id ?? "").trim())
-      .filter(Boolean)
+    eligibleRows.map((row) => String(row.tech_id ?? "").trim()).filter(Boolean)
   );
 
   const scopedPriorityKpis = buildScopedPriorityKpis({
-    scopedRows: args.scopedRows,
+    eligibleRows,
     source: args.source,
     scopedTechIds,
   });
@@ -440,18 +440,18 @@ export function buildScopedRiskInsights(args: {
   const scopedTopPriority = scopedPriorityKpis[0] ?? null;
 
   const scopedParticipation = buildScopedParticipation({
-    scopedRows: args.scopedRows,
+    eligibleRows,
     priorityKpis: scopedPriorityKpis,
   });
 
   const scopedParticipationSignal = buildScopedParticipationSignal({
-    scopedRows: args.scopedRows,
+    eligibleRows,
     priorityKpis: scopedPriorityKpis.slice(0, 3),
     sourceSignal: args.source.participation_signal ?? null,
   });
 
   const performers = buildScopedPerformers({
-    scopedRows: args.scopedRows,
+    eligibleRows,
   });
 
   const scopedTopPriorityOverlay = buildScopedTopPriorityOverlay({

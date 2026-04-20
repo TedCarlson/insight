@@ -23,6 +23,8 @@ export type MetricsTeamCell = {
   value_display?: string | null;
   render_band_key?: string | null;
   weighted_points?: number | null;
+  numerator?: number | null;
+  denominator?: number | null;
 };
 
 export type MetricsTeamRow = {
@@ -107,6 +109,39 @@ type Props = {
 };
 
 /* -------------------------------- helpers -------------------------------- */
+
+function resolveFtrMetricKey(rows: MetricsTeamRow[]): string | null {
+  const sample = rows.flatMap((r) => r.metrics);
+
+  const exact = sample.find((m) => m.metric_key === "ftr_rate");
+  if (exact) return exact.metric_key;
+
+  const fuzzy = sample.find((m) => {
+    const key = String(m.metric_key ?? "").toLowerCase();
+    const label = String(m.label ?? "").toLowerCase();
+    return key.includes("ftr") || label.includes("ftr");
+  });
+
+  return fuzzy?.metric_key ?? null;
+}
+
+function hasPositiveFtrJobs(
+  row: MetricsTeamRow,
+  ftrKey: string | null
+) {
+  if (!ftrKey) return false; // safer: if we can't find FTR, don't include
+
+  const metric = row.metrics.find((m) => m.metric_key === ftrKey);
+  if (!metric) return false;
+
+  const denominator = metric.denominator;
+
+  return (
+    typeof denominator === "number" &&
+    Number.isFinite(denominator) &&
+    denominator > 0
+  );
+}
 
 function formatComposite(value: number | null | undefined) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "—";
@@ -338,10 +373,15 @@ export default function MetricsTeamPerformanceTable({
   const [activePanel, setActivePanel] = useState<"work_mix" | "parity" | "help" | null>(null);
   const [selectedMetric, setSelectedMetric] = useState<SelectedMetricTarget | null>(null);
 
-  const sortedRows = useMemo(
-    () => sortRows(rows, sortKey, sortDirection),
-    [rows, sortKey, sortDirection]
-  );
+  const sortedRows = useMemo(() => {
+    const ftrKey = resolveFtrMetricKey(rows);
+
+    const eligibleRows = rows.filter((row) =>
+      hasPositiveFtrJobs(row, ftrKey)
+    );
+
+    return sortRows(eligibleRows, sortKey, sortDirection);
+  }, [rows, sortKey, sortDirection]);
 
   const activeDrillMetrics = useMemo<MetricsInspectionMetricCell[]>(() => {
     if (!selectedMetric) return [];

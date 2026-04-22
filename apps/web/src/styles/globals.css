@@ -169,3 +169,10 @@ a {
     @apply ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 }
+
+.font-identifier {
+  font-family: var(--font-identifier), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}

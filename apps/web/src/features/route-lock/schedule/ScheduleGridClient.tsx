@@ -373,7 +373,7 @@ export function ScheduleGridClient({
     });
   }, [rows, search, routeNameById]);
 
-  const filteredTotals = useMemo<ScheduleTotals>(() => {
+    const filteredTotals = useMemo<ScheduleTotals>(() => {
     const perDay: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
     let totalDaysOn = 0;
 
@@ -397,6 +397,10 @@ export function ScheduleGridClient({
       totalUnits,
     };
   }, [viewRows, defaults.hoursPerDay, defaults.unitsPerHour]);
+
+  const unscheduledRowsCount = useMemo(() => {
+    return rows.filter((r) => allDaysOff(r.days)).length;
+  }, [rows]);
 
   const filterActive = search.trim().length > 0;
   const commitLabel = stageAll ? "Commit changes (ALL)" : `Commit changes (${dirtyRows.length})`;
@@ -584,23 +588,25 @@ export function ScheduleGridClient({
       </div>
 
       <div className="border-b border-[var(--to-border)] px-3 py-2 bg-[var(--to-surface)]">
-        <div className="mb-2 flex items-center justify-between gap-3 text-xs text-[var(--to-ink-muted)]">
-          <div>
-            Visible rows: <span className="font-medium text-[var(--to-ink)]">{viewRows.length}</span>
-            {filterActive ? (
-              <>
-                {" "}
-                of <span className="font-medium text-[var(--to-ink)]">{rows.length}</span>
-              </>
-            ) : null}
-          </div>
-          {filterActive ? (
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4 text-sm text-[var(--to-ink-muted)]">
             <div>
-              Filter active: <span className="font-medium text-[var(--to-ink)]">{search.trim()}</span>
+              Visible rows:{" "}
+              <span className="font-medium text-[var(--to-ink)]">{viewRows.length}</span>
+              {filterActive ? (
+                <>
+                  {" "}
+                  of <span className="font-medium text-[var(--to-ink)]">{rows.length}</span>
+                </>
+              ) : null}
             </div>
-          ) : null}
-        </div>
 
+            <div>
+              Unscheduled rows:{" "}
+              <span className="font-medium text-[var(--to-ink)]">{unscheduledRowsCount}</span>
+            </div>
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <div className="min-w-[40rem]">
             <div
@@ -691,7 +697,7 @@ export function ScheduleGridClient({
 
               return (
                 <DataTableRow key={r.assignmentId} gridStyle={gridStyle} className="items-center">
-                  <div className="whitespace-nowrap">{r.techId}</div>
+                  <div className="whitespace-nowrap font-identifier">{r.techId}</div>
 
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 min-w-0">

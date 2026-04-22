@@ -184,6 +184,11 @@ function fmtCooldown(seconds: number) {
   return `${mm}:${String(ss).padStart(2, "0")}`;
 }
 
+function fmtPct(part: number, whole: number) {
+  if (!whole) return "0%";
+  return `${Math.round((part / whole) * 100)}%`;
+}
+
 export function ScheduleGridClient({
   technicians,
   routes,
@@ -222,7 +227,7 @@ export function ScheduleGridClient({
   // Stage All
   const [stageAll, setStageAll] = useState(false);
   const [stageAllCooldownUntil, setStageAllCooldownUntil] = useState<number | null>(null);
-  const [cooldownTick, setCooldownTick] = useState(0); // used only to repaint countdown text
+  const [, setCooldownTick] = useState(0); // repaint countdown text only
 
   const stageAllMsLeft = stageAllCooldownUntil ? Math.max(0, stageAllCooldownUntil - Date.now()) : 0;
   const isStageAllCooling = stageAllMsLeft > 0;
@@ -246,10 +251,16 @@ export function ScheduleGridClient({
     baselineRef.current = snap;
 
     setSaveMsg("");
-
-    // month change / data rehydrate should not carry a staged-all intent across loads
     setStageAll(false);
   }, [technicians, scheduleByAssignment]);
+
+  const routeNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const route of routes) {
+      map.set(String(route.route_id ?? ""), String(route.route_name ?? ""));
+    }
+    return map;
+  }, [routes]);
 
   const totals = useMemo<ScheduleTotals>(() => {
     const perDay: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
@@ -283,7 +294,6 @@ export function ScheduleGridClient({
   const dirtyRows = useMemo(() => {
     const base = baselineRef.current ?? {};
     return rows.filter((r) => {
-      // delete trigger = dirty
       if (r.deleteArmed) return true;
 
       const b = base[r.assignmentId];
@@ -292,15 +302,104 @@ export function ScheduleGridClient({
     });
   }, [rows]);
 
-  // Commit set:
-  // - stageAll includes everyone EXCEPT delete-armed rows (those are handled by purge endpoint)
-  // - dirty-only includes delete-armed rows + baseline edits
   const commitRows = useMemo(() => {
     const source = stageAll ? rows : dirtyRows;
     return source;
   }, [stageAll, rows, dirtyRows]);
 
   const canCommit = !isSaving && (stageAll || dirtyRows.length > 0);
+
+  function setRoute(assignmentId: string, nextRouteId: string) {
+    setRows((prev) => prev.map((r) => (r.assignmentId === assignmentId ? { ...r, routeId: nextRouteId } : r)));
+  }
+
+  function toggleDay(assignmentId: string, day: DayKey) {
+    setRows((prev) =>
+      prev.map((r) => (r.assignmentId === assignmentId ? { ...r, days: { ...r.days, [day]: !r.days[day] } } : r))
+    );
+  }
+
+  function toggleAllDays(assignmentId: string) {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.assignmentId !== assignmentId) return r;
+        const isAllOff = allDaysOff(r.days);
+        return {
+          ...r,
+          days: setAllDays(isAllOff ? true : false),
+        };
+      })
+    );
+  }
+
+  function toggleDeleteArmed(assignmentId: string) {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.assignmentId !== assignmentId) return r;
+        if (!r.notOnRoster) return r;
+        return { ...r, deleteArmed: !r.deleteArmed };
+      })
+    );
+  }
+
+  const viewRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = !q
+      ? rows
+      : rows.filter((r) => {
+          const tech = String(r.techId ?? "").toLowerCase();
+          const name = String(r.name ?? "").toLowerCase();
+          const co = String(r.coName ?? "").toLowerCase();
+          const routeId = String(r.routeId ?? "").toLowerCase();
+          const routeName = String(routeNameById.get(String(r.routeId ?? "")) ?? "").toLowerCase();
+
+          return (
+            tech.includes(q) ||
+            name.includes(q) ||
+            co.includes(q) ||
+            routeId.includes(q) ||
+            routeName.includes(q)
+          );
+        });
+
+    return [...filtered].sort((a, b) => {
+      const ak = techSortKey(String(a.techId ?? ""));
+      const bk = techSortKey(String(b.techId ?? ""));
+      // @ts-ignore
+      if (ak < bk) return -1;
+      // @ts-ignore
+      if (ak > bk) return 1;
+      return String(a.name ?? "").localeCompare(String(b.name ?? ""));
+    });
+  }, [rows, search, routeNameById]);
+
+  const filteredTotals = useMemo<ScheduleTotals>(() => {
+    const perDay: Record<DayKey, number> = { sun: 0, mon: 0, tue: 0, wed: 0, thu: 0, fri: 0, sat: 0 };
+    let totalDaysOn = 0;
+
+    for (const r of viewRows) {
+      for (const d of DAYS) {
+        if (r.days[d.key]) {
+          perDay[d.key] += 1;
+          totalDaysOn += 1;
+        }
+      }
+    }
+
+    const totalHours = totalDaysOn * defaults.hoursPerDay;
+    const totalUnits = totalHours * defaults.unitsPerHour;
+
+    return {
+      techs: viewRows.length,
+      perDay,
+      totalDaysOn,
+      totalHours,
+      totalUnits,
+    };
+  }, [viewRows, defaults.hoursPerDay, defaults.unitsPerHour]);
+
+  const filterActive = search.trim().length > 0;
+  const commitLabel = stageAll ? "Commit changes (ALL)" : `Commit changes (${dirtyRows.length})`;
 
   async function purgeOneTech(techId: string) {
     const res = await fetch("/api/route-lock/schedule/delete-tech", {
@@ -327,12 +426,10 @@ export function ScheduleGridClient({
 
     setIsSaving(true);
     try {
-      // 1) purge first (one row at a time)
       const purgeRows = commitRows.filter((r) => r.deleteArmed);
       for (const r of purgeRows) {
         await purgeOneTech(r.techId);
 
-        // remove the orphan row immediately from the current grid to "tighten shape"
         setRows((prev) => prev.filter((x) => x.assignmentId !== r.assignmentId));
 
         toast.push({
@@ -343,7 +440,6 @@ export function ScheduleGridClient({
         });
       }
 
-      // 2) then upsert remaining schedule edits
       const upsertRows = commitRows.filter((r) => !r.deleteArmed);
 
       if (upsertRows.length > 0) {
@@ -392,7 +488,6 @@ export function ScheduleGridClient({
             json?.sweep?.rows_deleted
         );
 
-        // update baseline snapshot to current in-memory rows (for non-purged)
         const nextBase: Record<string, { routeId: string; days: Record<DayKey, boolean> }> = {};
         for (const r of rows) {
           if (r.deleteArmed) continue;
@@ -400,7 +495,6 @@ export function ScheduleGridClient({
         }
         baselineRef.current = nextBase;
 
-        // Stage All cooldown ONLY when it was used for this commit
         if (stageAll) {
           setStageAll(false);
           setStageAllCooldownUntil(Date.now() + 60_000);
@@ -414,7 +508,6 @@ export function ScheduleGridClient({
         });
       }
 
-      // Always refresh after purge/upsert to adopt roster truth + new baseline shape
       router.refresh();
     } catch (e: any) {
       const msg = String(e?.message ?? "Commit failed");
@@ -425,8 +518,6 @@ export function ScheduleGridClient({
     }
   }
 
-  // Columns:
-  // TechId | Name | Add/Remove | Route | 7 Days | Stats | Delete
   const gridStyle: CSSProperties = useMemo(
     () => ({
       gridTemplateColumns: "6rem minmax(14rem,1fr) 5.75rem 11rem repeat(7, 5.25rem) minmax(16rem, 0.9fr) 5.25rem",
@@ -434,85 +525,22 @@ export function ScheduleGridClient({
     []
   );
 
-  function setRoute(assignmentId: string, nextRouteId: string) {
-    setRows((prev) => prev.map((r) => (r.assignmentId === assignmentId ? { ...r, routeId: nextRouteId } : r)));
-  }
-
-  function toggleDay(assignmentId: string, day: DayKey) {
-    setRows((prev) =>
-      prev.map((r) => (r.assignmentId === assignmentId ? { ...r, days: { ...r.days, [day]: !r.days[day] } } : r))
-    );
-  }
-
-  function toggleAllDays(assignmentId: string) {
-    setRows((prev) =>
-      prev.map((r) => {
-        if (r.assignmentId !== assignmentId) return r;
-        const isAllOff = allDaysOff(r.days);
-        return {
-          ...r,
-          days: setAllDays(isAllOff ? true : false),
-        };
-      })
-    );
-  }
-
-  function toggleDeleteArmed(assignmentId: string) {
-    setRows((prev) =>
-      prev.map((r) => {
-        if (r.assignmentId !== assignmentId) return r;
-        if (!r.notOnRoster) return r; // safety
-        return { ...r, deleteArmed: !r.deleteArmed };
-      })
-    );
-  }
-
-  const viewRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const filtered = !q
-      ? rows
-      : rows.filter((r) => {
-          const tech = String(r.techId ?? "").toLowerCase();
-          const name = String(r.name ?? "").toLowerCase();
-          const co = String(r.coName ?? "").toLowerCase();
-          return tech.includes(q) || name.includes(q) || co.includes(q);
-        });
-
-    return [...filtered].sort((a, b) => {
-      const ak = techSortKey(String(a.techId ?? ""));
-      const bk = techSortKey(String(b.techId ?? ""));
-      // @ts-ignore
-      if (ak < bk) return -1;
-      // @ts-ignore
-      if (ak > bk) return 1;
-      return String(a.name ?? "").localeCompare(String(b.name ?? ""));
-    });
-  }, [rows, search]);
+  const summaryGridStyle: CSSProperties = useMemo(
+    () => ({
+      gridTemplateColumns: "12rem repeat(7, minmax(4.75rem, 1fr))",
+    }),
+    []
+  );
 
   return (
     <Card>
-      {/* Top controls */}
       <div className="flex flex-col gap-2 p-3 border-b border-[var(--to-border)]">
         <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <div className="text-xs text-[var(--to-ink-muted)]">Schedule Changes</div>
-            <div className="text-sm font-medium">
-              {stageAll ? (
-                <span className="inline-flex items-center gap-2">
-                  <span>ALL</span>
-                  <span className="text-xs text-[var(--to-ink-muted)]">({rows.length})</span>
-                </span>
-              ) : (
-                dirtyRows.length
-              )}
-            </div>
-          </div>
-
           <div className="flex flex-col gap-1">
             <div className="text-xs text-[var(--to-ink-muted)]">Search</div>
             <input
               className="to-input h-8 text-xs w-[min(320px,60vw)]"
-              placeholder="tech id, name, company…"
+              placeholder="tech id, name, company, route…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -547,7 +575,7 @@ export function ScheduleGridClient({
               onClick={commitChanges}
               aria-disabled={isSaving || !canCommit}
             >
-              {isSaving ? "Committing…" : "Commit changes"}
+              {isSaving ? "Committing…" : commitLabel}
             </button>
           </div>
         </div>
@@ -555,9 +583,82 @@ export function ScheduleGridClient({
         {saveMsg ? <div className="text-sm text-[var(--to-ink-muted)]">{saveMsg}</div> : null}
       </div>
 
-      {/* Scroll container: header + body + footer */}
+      <div className="border-b border-[var(--to-border)] px-3 py-2 bg-[var(--to-surface)]">
+        <div className="mb-2 flex items-center justify-between gap-3 text-xs text-[var(--to-ink-muted)]">
+          <div>
+            Visible rows: <span className="font-medium text-[var(--to-ink)]">{viewRows.length}</span>
+            {filterActive ? (
+              <>
+                {" "}
+                of <span className="font-medium text-[var(--to-ink)]">{rows.length}</span>
+              </>
+            ) : null}
+          </div>
+          {filterActive ? (
+            <div>
+              Filter active: <span className="font-medium text-[var(--to-ink)]">{search.trim()}</span>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="overflow-x-auto">
+          <div className="min-w-[40rem]">
+            <div
+              className="grid items-center gap-x-3 gap-y-1 text-xs font-medium text-[var(--to-ink-muted)]"
+              style={summaryGridStyle}
+            >
+              <div />
+              {DAYS.map((d) => (
+                <div key={`summary-head-${d.key}`} className="text-center">
+                  {d.label}
+                </div>
+              ))}
+            </div>
+
+            <div
+              className="grid items-center gap-x-3 gap-y-1 py-1 text-sm border-t border-[var(--to-border)]"
+              style={summaryGridStyle}
+            >
+              <div className="font-medium text-[var(--to-ink)]">All Scheduled</div>
+              {DAYS.map((d) => (
+                <div key={`all-${d.key}`} className="text-center font-medium">
+                  {totals.perDay[d.key]}
+                </div>
+              ))}
+            </div>
+
+            {filterActive ? (
+              <>
+                <div
+                  className="grid items-center gap-x-3 gap-y-1 py-1 text-sm border-t border-[var(--to-border)]"
+                  style={summaryGridStyle}
+                >
+                  <div className="font-medium text-[var(--to-ink)]">Filtered Scheduled</div>
+                  {DAYS.map((d) => (
+                    <div key={`filtered-${d.key}`} className="text-center font-medium">
+                      {filteredTotals.perDay[d.key]}
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  className="grid items-center gap-x-3 gap-y-1 py-1 text-sm border-t border-[var(--to-border)]"
+                  style={summaryGridStyle}
+                >
+                  <div className="font-medium text-[var(--to-ink)]">Filtered % of All</div>
+                  {DAYS.map((d) => (
+                    <div key={`pct-${d.key}`} className="text-center font-medium">
+                      {fmtPct(filteredTotals.perDay[d.key], totals.perDay[d.key])}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
       <div className={cls("relative", "max-h-[calc(100vh-16rem)]", "overflow-auto")}>
-        {/* Sticky header */}
         <div className="sticky top-0 z-20 bg-[var(--to-surface)] border-b border-[var(--to-border)]">
           <DataTable layout="fixed" gridStyle={gridStyle}>
             <DataTableHeader gridStyle={gridStyle}>
@@ -576,7 +677,6 @@ export function ScheduleGridClient({
           </DataTable>
         </div>
 
-        {/* Body */}
         <DataTable layout="fixed" gridStyle={gridStyle}>
           <DataTableBody zebra>
             {viewRows.map((r) => {
@@ -673,25 +773,6 @@ export function ScheduleGridClient({
             })}
           </DataTableBody>
         </DataTable>
-
-        {/* Sticky footer (totals row) */}
-        <div className="sticky bottom-0 z-20 bg-[var(--to-surface)] border-t border-[var(--to-border)]">
-          <DataTableRow gridStyle={gridStyle} className="items-center">
-            <div className="whitespace-nowrap font-medium"></div>
-            <div className="min-w-0 font-medium"></div>
-            <div className="whitespace-nowrap font-medium"></div>
-            <div className="min-w-0 font-medium">Scheduled Totals</div>
-
-            {DAYS.map((d) => (
-              <div key={d.key} className="text-center">
-                <span className="text-sm font-medium">{totals.perDay[d.key]}</span>
-              </div>
-            ))}
-
-            <div />
-            <div />
-          </DataTableRow>
-        </div>
       </div>
     </Card>
   );

@@ -1,22 +1,33 @@
 // path: apps/web/src/app/(app)/company-supervisor/page.tsx
 
-import CompanySupervisorPageShell from "@/features/role-company-supervisor/pages/CompanySupervisorPageShell";
+import { redirect } from "next/navigation";
 
-type ReportClassType = "NSR" | "SMART";
+type PageProps = {
+  searchParams?: Promise<{
+    range?: string;
+    class_type?: string;
+  }>;
+};
 
-export default async function Page(props: {
-  searchParams?: Promise<{ class_type?: string; range?: string }>;
-}) {
-  const searchParams = (await props.searchParams) ?? {};
-  const rawClass = String(searchParams.class_type ?? "NSR").toUpperCase();
+function normalizeClassType(value: string | undefined): "NSR" | "SMART" {
+  return String(value ?? "NSR").trim().toUpperCase() === "SMART"
+    ? "SMART"
+    : "NSR";
+}
 
-  const class_type: ReportClassType =
-    rawClass === "SMART" ? "SMART" : "NSR";
+function normalizeRange(value: string | undefined): "FM" | "PREVIOUS" | "3FM" | "12FM" {
+  const upper = String(value ?? "FM").trim().toUpperCase();
+  if (upper === "PREVIOUS") return "PREVIOUS";
+  if (upper === "3FM") return "3FM";
+  if (upper === "12FM") return "12FM";
+  return "FM";
+}
 
-  return (
-    <CompanySupervisorPageShell
-      class_type={class_type}
-      range={searchParams.range}
-    />
-  );
+export default async function Page(props: PageProps) {
+  const searchParams = await props.searchParams;
+
+  const class_type = normalizeClassType(searchParams?.class_type);
+  const range = normalizeRange(searchParams?.range);
+
+  redirect(`/company-supervisor/metrics?class_type=${class_type}&range=${range}`);
 }

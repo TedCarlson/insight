@@ -289,13 +289,22 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={closeDrawer}
-                className="rounded-lg border px-3 py-1.5 text-sm"
-              >
-                Close
-              </button>
+              <div className="flex gap-2">
+                <a
+                  href={`/company-manager/people/${selected.person_id}`}
+                  className="rounded-lg border px-3 py-1.5 text-sm"
+                >
+                  Person Record
+                </a>
+
+                <button
+                  type="button"
+                  onClick={closeDrawer}
+                  className="rounded-lg border px-3 py-1.5 text-sm"
+                >
+                  Close
+                </button>
+              </div>
             </div>
 
             <div className="mt-5 rounded-2xl border p-4">

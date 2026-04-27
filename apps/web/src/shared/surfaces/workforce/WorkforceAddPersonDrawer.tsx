@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 
 export type WorkforcePersonSearchRow = {
   person_id: string;
+  person_status: string | null;
   full_name: string | null;
   tech_id: string | null;
   position_title: string | null;
@@ -24,11 +25,19 @@ type Props = {
   onStageAdd: (row: WorkforcePersonSearchRow) => void;
 };
 
+function canStageAdd(row: WorkforcePersonSearchRow) {
+  return !row.is_in_workforce && row.person_status === "active";
+}
+
 function statusLabel(row: WorkforcePersonSearchRow) {
   if (row.is_in_workforce) {
     return row.active_here_label
       ? `Active here: ${row.active_here_label}`
       : "Active in this workforce";
+  }
+
+  if (row.person_status && row.person_status !== "active") {
+    return `Person status: ${row.person_status}`;
   }
 
   if (row.active_elsewhere_label) {
@@ -45,10 +54,14 @@ function statusLabel(row: WorkforcePersonSearchRow) {
 }
 
 function statusTone(row: WorkforcePersonSearchRow) {
-  if (row.is_in_workforce) return "bg-muted text-muted-foreground";
+  if (row.is_in_workforce || row.person_status !== "active") {
+    return "bg-muted text-muted-foreground";
+  }
+
   if (row.active_elsewhere_label) {
     return "border-[var(--to-info)] bg-[color-mix(in_oklab,var(--to-info)_10%,white)]";
   }
+
   return "border-[var(--to-success)] bg-[color-mix(in_oklab,var(--to-success)_10%,white)]";
 }
 
@@ -196,21 +209,21 @@ export function WorkforceAddPersonDrawer({
                   </div>
                 </div>
 
-                {row.is_in_workforce ? (
-                  <button
-                    type="button"
-                    disabled
-                    className="rounded-xl border bg-muted px-3 py-2 text-xs text-muted-foreground"
-                  >
-                    Already Here
-                  </button>
-                ) : (
+                {canStageAdd(row) ? (
                   <button
                     type="button"
                     onClick={() => onStageAdd(row)}
                     className="rounded-xl border border-[var(--to-accent)] bg-[color-mix(in_oklab,var(--to-accent)_10%,white)] px-3 py-2 text-xs"
                   >
                     Stage Add
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="rounded-xl border bg-muted px-3 py-2 text-xs text-muted-foreground"
+                  >
+                    {row.is_in_workforce ? "Already Here" : "Not Eligible"}
                   </button>
                 )}
               </div>

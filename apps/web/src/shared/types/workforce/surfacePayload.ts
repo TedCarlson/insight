@@ -26,6 +26,26 @@ export type WorkforceSliceModel = {
   seatTypes: WorkforceSliceOption[];
 };
 
+export type WorkforceEditOption = {
+  value: string;
+  label: string;
+  helper?: string | null;
+};
+
+export type WorkforceReportsToOption = WorkforceEditOption & {
+  assignment_id: string;
+  person_id: string;
+  affiliation: string | null;
+  position_title: string | null;
+  seat_type: WorkforceSeatType;
+};
+
+export type WorkforceEditOptions = {
+  positions: WorkforceEditOption[];
+  offices: WorkforceEditOption[];
+  reportsTo: WorkforceReportsToOption[];
+};
+
 export type WorkforceSelectedPerson = {
   person_id: string;
   display_name: string;
@@ -67,6 +87,8 @@ export type WorkforceSurfacePayload = {
   };
 
   slices: WorkforceSliceModel;
+
+  editOptions?: WorkforceEditOptions;
 
   selected?: {
     row: WorkforceRow;

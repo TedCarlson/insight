@@ -1,0 +1,95 @@
+import type {
+  WorkforceRow,
+  WorkforceSeatType,
+  WorkforceTabKey,
+} from "@/shared/types/workforce/workforce.types";
+
+export type WorkforceDraft = {
+  position_title: string | null;
+  office_id: string | null;
+  reports_to_assignment_id: string | null;
+  seat_type: WorkforceSeatType;
+  start_date: string | null;
+};
+
+export function badgeTone(seatType: WorkforceSeatType) {
+  if (seatType === "FIELD") return "border-[var(--to-success)] bg-[color-mix(in_oklab,var(--to-success)_10%,white)]";
+  if (seatType === "LEADERSHIP") return "border-[var(--to-primary)] bg-[color-mix(in_oklab,var(--to-primary)_10%,white)]";
+  if (seatType === "SUPPORT") return "border-[var(--to-warning)] bg-[color-mix(in_oklab,var(--to-warning)_10%,white)]";
+  return "border-[var(--to-info)] bg-[color-mix(in_oklab,var(--to-info)_10%,white)]";
+}
+
+export function tabLabel(key: WorkforceTabKey) {
+  if (key === "ALL") return "All";
+  if (key === "FIELD") return "Field";
+  if (key === "LEADERSHIP") return "Leadership";
+  if (key === "INCOMPLETE") return "Incomplete";
+  if (key === "SUPPORT") return "Support";
+  return "Travel Techs";
+}
+
+export function identityLabel(row: WorkforceRow) {
+  const lead = row.preferred_name ?? row.first_name ?? row.display_name;
+
+  if (!row.tech_id) return lead;
+
+  if (row.tech_id.startsWith("UNASSIGNED-")) {
+    return lead;
+  }
+
+  return `${lead} • ${row.tech_id}`;
+}
+
+export function buildDraft(row: WorkforceRow): WorkforceDraft {
+  return {
+    position_title: row.position_title,
+    office_id: row.office_id,
+    reports_to_assignment_id: row.reports_to_assignment_id,
+    seat_type: row.seat_type,
+    start_date: row.start_date,
+  };
+}
+
+export function buildChangeSet(selected: WorkforceRow, draft: WorkforceDraft) {
+  const changes: Record<string, unknown> = {};
+
+  if (selected.position_title !== draft.position_title) {
+    changes.position_title = draft.position_title;
+  }
+
+  if (selected.office_id !== draft.office_id) {
+    changes.office_id = draft.office_id;
+  }
+
+  if (selected.reports_to_assignment_id !== draft.reports_to_assignment_id) {
+    changes.reports_to_assignment_id = draft.reports_to_assignment_id;
+  }
+
+  if (selected.seat_type !== draft.seat_type) {
+    changes.seat_type = draft.seat_type;
+  }
+
+  if (selected.start_date !== draft.start_date) {
+    changes.start_date = draft.start_date;
+  }
+
+  return changes;
+}
+
+export function isDraftDirty(
+  selected: WorkforceRow | null,
+  draft: WorkforceDraft | null
+) {
+  if (!selected || !draft) return false;
+  return Object.keys(buildChangeSet(selected, draft)).length > 0;
+}
+
+export function quickCopyText(row: WorkforceRow) {
+  return `${row.display_name} • Tech ID: ${row.tech_id ?? "N/A"}
+Mobile:      ${row.mobile ?? "—"}
+NT Login:    ${row.nt_login ?? "—"}
+CSG:         ${row.csg ?? "—"}
+Email:       ${row.email ?? "—"}
+Affiliation: ${row.affiliation ?? "—"}
+Reports To:  ${row.reports_to_name ?? "—"}`;
+}

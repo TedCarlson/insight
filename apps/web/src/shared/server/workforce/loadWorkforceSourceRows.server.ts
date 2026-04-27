@@ -24,6 +24,8 @@ type WorkforceCurrentViewRow = {
   affiliation: string | null;
 
   position_title: string | null;
+  role_type: string | null;
+
   office_id: string | null;
   office_name: string | null;
 
@@ -45,13 +47,8 @@ function splitName(fullName: string | null | undefined): {
 } {
   const parts = String(fullName ?? "").trim().split(/\s+/).filter(Boolean);
 
-  if (parts.length === 0) {
-    return { first_name: null, last_name: null };
-  }
-
-  if (parts.length === 1) {
-    return { first_name: parts[0] ?? null, last_name: null };
-  }
+  if (parts.length === 0) return { first_name: null, last_name: null };
+  if (parts.length === 1) return { first_name: parts[0] ?? null, last_name: null };
 
   return {
     first_name: parts[0] ?? null,
@@ -66,7 +63,6 @@ function overlapsAsOfDate(args: {
 }) {
   const startOk = !args.start_date || args.start_date <= args.as_of_date;
   const endOk = !args.end_date || args.end_date >= args.as_of_date;
-
   return startOk && endOk;
 }
 
@@ -106,6 +102,7 @@ export async function loadWorkforceSourceRows(args: {
       affiliation_code,
       affiliation,
       position_title,
+      role_type,
       office_id,
       office_name,
       reports_to_assignment_id,
@@ -121,9 +118,7 @@ export async function loadWorkforceSourceRows(args: {
     .eq("pc_org_id", args.pc_org_id)
     .order("full_name", { ascending: true });
 
-  if (error) {
-    throw new Error(error.message);
-  }
+  if (error) throw new Error(error.message);
 
   return ((data ?? []) as WorkforceCurrentViewRow[])
     .filter((row) =>
@@ -164,6 +159,7 @@ export async function loadWorkforceSourceRows(args: {
         csg: row.csg ?? null,
 
         position_title: row.position_title ?? null,
+        role_type: row.role_type ?? null,
         affiliation: row.affiliation ?? null,
 
         start_date: row.start_date ?? null,
@@ -174,10 +170,10 @@ export async function loadWorkforceSourceRows(args: {
         is_primary: row.is_primary === true,
 
         is_active: activeAsOf,
-        is_travel_tech: false,
+        is_travel_tech: row.role_type === "TRAVEL",
 
-        is_field: null,
-        is_leadership: null,
+        is_field: row.role_type === "FIELD",
+        is_leadership: row.role_type === "LEADERSHIP",
         is_incomplete: activeAsOf ? row.is_incomplete === true : false,
 
         schedule: null,

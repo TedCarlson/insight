@@ -54,7 +54,7 @@ export async function getCompanyManagerWorkforceSurfacePayload(
     as_of_date,
   });
 
-  return buildWorkforceSurfacePayload({
+  return await buildWorkforceSurfacePayload({
     rows: sourceRows,
   });
 }

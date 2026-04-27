@@ -1,5 +1,6 @@
 // path: apps/web/src/shared/server/workforce/buildWorkforceSurfacePayload.server.ts
 
+import { supabaseServer } from "@/shared/data/supabase/server";
 import { buildDisplayName } from "./buildDisplayName";
 import type { WorkforceSurfacePayload } from "@/shared/types/workforce/surfacePayload";
 import type {
@@ -35,6 +36,7 @@ export type WorkforceSourceRow = {
   csg?: string | null;
 
   position_title?: string | null;
+  role_type?: string | null;
   affiliation?: string | null;
 
   start_date?: string | null;
@@ -84,6 +86,13 @@ function normalizeSchedule(
 }
 
 function classifySeatType(row: WorkforceSourceRow): WorkforceSeatType {
+  const roleType = clean(row.role_type)?.toUpperCase();
+
+  if (roleType === "TRAVEL") return "TRAVEL";
+  if (roleType === "FIELD") return "FIELD";
+  if (roleType === "LEADERSHIP") return "LEADERSHIP";
+  if (roleType === "SUPPORT") return "SUPPORT";
+
   const title = clean(row.position_title)?.toLowerCase() ?? "";
 
   if (row.is_travel_tech) return "TRAVEL";
@@ -100,11 +109,7 @@ function classifySeatType(row: WorkforceSourceRow): WorkforceSeatType {
     return "LEADERSHIP";
   }
 
-  if (
-    title.includes("technician") ||
-    title.includes("drop bury") ||
-    title.includes("field")
-  ) {
+  if (title.includes("technician") || title.includes("field")) {
     return "FIELD";
   }
 
@@ -113,30 +118,16 @@ function classifySeatType(row: WorkforceSourceRow): WorkforceSeatType {
 
 function buildSearchableText(row: WorkforceRow): string {
   return [
-    row.assignment_id,
-    row.person_id,
-    row.workspace_id,
-    row.pc_org_id,
-    row.tech_id,
-    row.full_name,
-    row.legal_name,
-    row.first_name,
-    row.preferred_name,
-    row.last_name,
     row.display_name,
-    row.office_id,
+    row.tech_id,
     row.office,
-    row.reports_to_assignment_id,
-    row.reports_to_person_id,
     row.reports_to_name,
+    row.position_title,
     row.mobile,
+    row.email,
     row.nt_login,
     row.csg,
-    row.position_title,
     row.affiliation,
-    row.assignment_status,
-    row.person_status,
-    row.seat_type,
   ]
     .filter(Boolean)
     .join(" ")
@@ -212,30 +203,65 @@ function toWorkforceRow(row: WorkforceSourceRow): WorkforceRow {
   };
 }
 
-function buildTabs(rows: WorkforceRow[]): WorkforceSurfacePayload["tabs"] {
-  return [
-    { key: "ALL", label: "All", count: rows.length },
-    {
-      key: "FIELD",
-      label: "Field",
-      count: rows.filter((row) => row.seat_type === "FIELD").length,
-    },
-    {
-      key: "LEADERSHIP",
-      label: "Leadership",
-      count: rows.filter((row) => row.seat_type === "LEADERSHIP").length,
-    },
-    {
-      key: "INCOMPLETE",
-      label: "Incomplete",
-      count: rows.filter((row) => row.is_incomplete).length,
-    },
-    {
-      key: "TRAVEL",
-      label: "Travel Techs",
-      count: rows.filter((row) => row.is_travel_tech).length,
-    },
-  ];
+function uniqueOptions(values: (string | null | undefined)[]) {
+  const set = new Set<string>();
+
+  for (const value of values) {
+    const next = clean(value);
+    if (!next) continue;
+    set.add(next);
+  }
+
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+async function loadPositionOptions() {
+  const sb = await supabaseServer();
+
+  const { data, error } = await sb
+    .from("assignment")
+    .select("position_title")
+    .not("position_title", "is", null);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return uniqueOptions((data ?? []).map((row) => row.position_title)).map(
+    (value) => ({
+      value,
+      label: value,
+    })
+  );
+}
+
+function buildOfficeOptions(rows: WorkforceRow[]) {
+  const byId = new Map<string, string>();
+
+  for (const row of rows) {
+    if (!row.office_id || !row.office) continue;
+    byId.set(row.office_id, row.office);
+  }
+
+  return Array.from(byId.entries())
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function buildReportsToOptions(rows: WorkforceRow[]) {
+  return rows
+    .filter((row) => row.seat_type === "LEADERSHIP" && row.is_active)
+    .map((row) => ({
+      value: row.assignment_id,
+      label: row.display_name,
+      helper: [row.position_title, row.affiliation].filter(Boolean).join(" • "),
+      assignment_id: row.assignment_id,
+      person_id: row.person_id,
+      affiliation: row.affiliation,
+      position_title: row.position_title,
+      seat_type: row.seat_type,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
 }
 
 function buildSliceOptions(
@@ -255,9 +281,9 @@ function buildSliceOptions(
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-export function buildWorkforceSurfacePayload(args: {
+export async function buildWorkforceSurfacePayload(args: {
   rows: WorkforceSourceRow[];
-}): WorkforceSurfacePayload {
+}): Promise<WorkforceSurfacePayload> {
   const rows = (args.rows ?? []).map(toWorkforceRow);
 
   const field = rows.filter((row) => row.seat_type === "FIELD").length;
@@ -268,9 +294,17 @@ export function buildWorkforceSurfacePayload(args: {
   const incomplete = rows.filter((row) => row.is_incomplete).length;
   const travel = rows.filter((row) => row.is_travel_tech).length;
 
+  const positions = await loadPositionOptions();
+
   return {
     rows,
-    tabs: buildTabs(rows),
+    tabs: [
+      { key: "ALL", label: "All", count: rows.length },
+      { key: "FIELD", label: "Field", count: field },
+      { key: "LEADERSHIP", label: "Leadership", count: leadership },
+      { key: "INCOMPLETE", label: "Incomplete", count: incomplete },
+      { key: "TRAVEL", label: "Travel Techs", count: travel },
+    ],
     summary: {
       total: rows.length,
       field,
@@ -285,6 +319,11 @@ export function buildWorkforceSurfacePayload(args: {
       positions: buildSliceOptions(rows, (row) => row.position_title),
       affiliations: buildSliceOptions(rows, (row) => row.affiliation),
       seatTypes: buildSliceOptions(rows, (row) => row.seat_type),
+    },
+    editOptions: {
+      positions,
+      offices: buildOfficeOptions(rows),
+      reportsTo: buildReportsToOptions(rows),
     },
   };
 }

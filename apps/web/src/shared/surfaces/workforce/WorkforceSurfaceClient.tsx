@@ -280,7 +280,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                     <td className="px-3 py-3">
                       {resolveAffiliationLabel(row)}
                     </td>
-                    
+
                     <td className="px-3 py-3">
                       <span
                         className={[
@@ -568,6 +568,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
           setAddDrawerOpen(false);
           setStagedPerson(row);
         }}
+        affiliations={payload.editOptions?.affiliations ?? []}
       />
 
       <WorkforceStagedPersonDrawer

@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/Card";
+import { PeopleIntakeDrawer } from "@/shared/surfaces/people/PeopleIntakeDrawer";
 
 export type WorkforcePersonSearchRow = {
   person_id: string;
@@ -18,11 +19,17 @@ export type WorkforcePersonSearchRow = {
   active_elsewhere_label: string | null;
 };
 
+type AffiliationOption = {
+  affiliation_id: string;
+  affiliation_label: string;
+};
+
 type Props = {
   pcOrgId: string | null;
   open: boolean;
   onClose: () => void;
   onStageAdd: (row: WorkforcePersonSearchRow) => void;
+  affiliations?: AffiliationOption[];
 };
 
 function canStageAdd(row: WorkforcePersonSearchRow) {
@@ -70,11 +77,13 @@ export function WorkforceAddPersonDrawer({
   open,
   onClose,
   onStageAdd,
+  affiliations = [],
 }: Props) {
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<WorkforcePersonSearchRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [intakeOpen, setIntakeOpen] = useState(false);
 
   const canSearch = Boolean(pcOrgId);
 
@@ -118,8 +127,29 @@ export function WorkforceAddPersonDrawer({
   }, [open, canSearch, pcOrgId, query]);
 
   const showCreateNew = useMemo(() => {
-    return query.trim().length >= 2 && !loading && rows.length === 0 && !error;
-  }, [query, loading, rows.length, error]);
+    return query.trim().length >= 2 && !loading;
+  }, [query, loading]);
+
+  function handleCreated(person: {
+    person_id: string;
+    full_name: string;
+    tech_id: string | null;
+  }) {
+    setIntakeOpen(false);
+
+    onStageAdd({
+      person_id: person.person_id,
+      person_status: "active",
+      full_name: person.full_name,
+      tech_id: person.tech_id,
+      position_title: "Technician",
+      is_in_workforce: false,
+      assignment_id: null,
+      active_assignment_count: 0,
+      active_here_label: null,
+      active_elsewhere_label: null,
+    });
+  }
 
   if (!open) return null;
 
@@ -239,15 +269,22 @@ export function WorkforceAddPersonDrawer({
               </div>
               <button
                 type="button"
-                disabled
-                className="mt-3 rounded-xl border bg-muted px-3 py-2 text-xs text-muted-foreground"
+                onClick={() => setIntakeOpen(true)}
+                className="mt-3 rounded-xl border border-[var(--to-accent)] bg-[color-mix(in_oklab,var(--to-accent)_10%,white)] px-3 py-2 text-xs hover:bg-[color-mix(in_oklab,var(--to-accent)_18%,white)]"
               >
-                Create New Person Pending
+                Create New Person
               </button>
             </div>
           ) : null}
         </div>
       </aside>
+
+      <PeopleIntakeDrawer
+        open={intakeOpen}
+        onClose={() => setIntakeOpen(false)}
+        onCreated={handleCreated}
+        affiliations={affiliations}
+      />
     </div>
   );
 }

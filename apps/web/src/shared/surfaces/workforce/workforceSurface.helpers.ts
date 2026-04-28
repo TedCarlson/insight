@@ -99,12 +99,12 @@ export function isDraftDirty(
   return Object.keys(buildChangeSet(selected, draft)).length > 0;
 }
 
-export function quickCopyText(row: WorkforceRow) {
+export function quickCopyText(row: WorkforceRow, affiliationLabel?: string | null) {
   return `${row.display_name} • Tech ID: ${row.tech_id ?? "N/A"}
 Mobile:      ${row.mobile ?? "—"}
 NT Login:    ${row.nt_login ?? "—"}
 CSG:         ${row.csg ?? "—"}
 Email:       ${row.email ?? "—"}
-Affiliation: ${row.affiliation ?? "—"}
+Affiliation: ${affiliationLabel ?? row.affiliation ?? "—"}
 Reports To:  ${row.reports_to_name ?? "—"}`;
 }

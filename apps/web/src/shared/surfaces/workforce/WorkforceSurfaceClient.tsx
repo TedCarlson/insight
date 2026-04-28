@@ -172,6 +172,12 @@ export function WorkforceSurfaceClient({ payload }: Props) {
   }
 
   const dirty = isDraftDirty(selected, draft);
+  const selectedAffiliationLabel =
+  selected?.affiliation_id
+    ? payload.editOptions?.affiliations?.find(
+        (option) => option.affiliation_id === selected.affiliation_id
+      )?.affiliation_label ?? null
+    : null;
 
   return (
     <div className="space-y-4">
@@ -316,7 +322,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                 <button
                   type="button"
                   onClick={() =>
-                    navigator.clipboard.writeText(quickCopyText(selected))
+                    navigator.clipboard.writeText(quickCopyText(selected, selectedAffiliationLabel))
                   }
                   className="rounded-lg border px-3 py-1.5 text-xs"
                 >
@@ -325,7 +331,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
               </div>
 
               <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-muted/40 p-3 text-xs leading-5">
-                {quickCopyText(selected)}
+                {quickCopyText(selected, selectedAffiliationLabel)}
               </pre>
             </div>
 

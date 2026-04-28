@@ -77,6 +77,18 @@ export function WorkforceSurfaceClient({ payload }: Props) {
     setSaving(false);
   }
 
+  function resolveAffiliationLabel(row: WorkforceRow) {
+    if (!row.affiliation_id) return row.affiliation ?? "—";
+
+    return (
+      payload.editOptions?.affiliations?.find(
+        (option) => option.affiliation_id === row.affiliation_id
+      )?.affiliation_label ??
+      row.affiliation ??
+      "—"
+    );
+  }
+
   function createFromStaged(person: WorkforcePersonSearchRow) {
     setStagedPerson(null);
     setSaveError(null);
@@ -115,7 +127,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
 
       position_title: person.position_title ?? "Technician",
       affiliation: null,
-      
+
 
       start_date: null,
       end_date: null,
@@ -173,11 +185,11 @@ export function WorkforceSurfaceClient({ payload }: Props) {
 
   const dirty = isDraftDirty(selected, draft);
   const selectedAffiliationLabel =
-  selected?.affiliation_id
-    ? payload.editOptions?.affiliations?.find(
+    selected?.affiliation_id
+      ? payload.editOptions?.affiliations?.find(
         (option) => option.affiliation_id === selected.affiliation_id
       )?.affiliation_label ?? null
-    : null;
+      : null;
 
   return (
     <div className="space-y-4">
@@ -236,6 +248,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                   <th className="px-4 py-3 text-left">Identity</th>
                   <th className="px-3 py-3 text-left">Office</th>
                   <th className="px-3 py-3 text-left">Reports To</th>
+                  <th className="px-3 py-3 text-left">Affiliation</th>
                   <th className="px-3 py-3 text-left">Seat</th>
                 </tr>
               </thead>
@@ -264,6 +277,10 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                       )}
                     </td>
 
+                    <td className="px-3 py-3">
+                      {resolveAffiliationLabel(row)}
+                    </td>
+                    
                     <td className="px-3 py-3">
                       <span
                         className={[

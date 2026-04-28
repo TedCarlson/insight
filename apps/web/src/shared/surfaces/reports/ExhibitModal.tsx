@@ -77,8 +77,10 @@ function buildExhibitRows(
   for (const row of rows.filter(isTechnician)) {
     const type: ExhibitType = isMduDrop(row) ? "MDU / DROP" : "FULFILLMENT";
     const workerClass = getWorkerClass(row, affiliations);
-    const area = row.affiliation ?? "Unassigned";
-    const key = `${type}::${workerClass}::${area}`;
+    const meta = getAffiliationMeta(row, affiliations);
+    const area = meta?.affiliation_label ?? row.affiliation ?? "Unassigned";
+    const affiliationKey = row.affiliation_id ?? area;
+    const key = `${type}::${workerClass}::${affiliationKey}`;
 
     const existing =
       map.get(key) ??
@@ -176,7 +178,7 @@ export default function ExhibitModal({
     const anchor = document.createElement("a");
 
     anchor.href = url;
-    anchor.download = `Exhibit I - ${regionLabel} - ${reportMonthLabel}.csv`;
+    anchor.download = `Exhibit - ${regionLabel} - ${reportMonthLabel}.csv`;
     anchor.click();
 
     URL.revokeObjectURL(url);
@@ -191,7 +193,7 @@ export default function ExhibitModal({
     win.document.write(`
       <html>
         <head>
-          <title>Exhibit I - ${regionLabel} - ${reportMonthLabel}</title>
+          <title>Exhibit - ${regionLabel} - ${reportMonthLabel}</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; }
             table { border-collapse: collapse; width: 100%; }
@@ -217,7 +219,7 @@ export default function ExhibitModal({
             <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
               Workforce Report
             </div>
-            <h2 className="mt-1 text-lg font-semibold">Exhibit I</h2>
+            <h2 className="mt-1 text-lg font-semibold">Exhibit</h2>
             <div className="mt-1 text-sm text-muted-foreground">
               {regionLabel} • {reportMonthLabel}
             </div>
@@ -285,7 +287,7 @@ export default function ExhibitModal({
                       {displayCount(row.contractor)}
                     </td>
                     <td className="border px-3 py-2 text-right">
-                      {displayCount(row.w2 + row.contractor)}
+                      
                     </td>
                   </tr>
                 );

@@ -294,7 +294,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
 
               <div className="flex gap-2">
                 <a
-                  href={`/company-manager/people/${selected.person_id}`}
+                  href={`/company-manager/people/${selected.person_id}?returnTo=/company-manager/workforce`}
                   className="rounded-lg border px-3 py-1.5 text-sm"
                 >
                   Person Record

@@ -1,28 +1,45 @@
-// path: apps/web/src/app/(app)/company-manager/people/[person_id]/page.tsx
+import { supabaseAdmin } from "@/shared/data/supabase/admin";
+import { PersonRecordClient } from "@/shared/surfaces/people/PersonRecordClient";
+import type { PeopleEditorRow } from "@/shared/surfaces/people/PeopleEditorDrawer";
 
 type Props = {
   params: Promise<{
     person_id: string;
   }>;
+  searchParams?: Promise<{
+    returnTo?: string;
+  }>;
 };
 
-export default async function CompanyManagerPersonRecordPage({ params }: Props) {
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export default async function CompanyManagerPersonRecordPage({
+  params,
+  searchParams,
+}: Props) {
   const { person_id } = await params;
+  const search = searchParams ? await searchParams : {};
+  const returnTo = search.returnTo ?? "/company-manager/people";
+
+  const sb = await supabaseAdmin();
+
+  const { data, error } = await sb.rpc("people_record_get", {
+    p_person_id: person_id,
+  });
+
+  const person = Array.isArray(data)
+    ? (data[0] as PeopleEditorRow | undefined)
+    : null;
 
   return (
-    <main className="space-y-4 p-6">
-      <section className="rounded-2xl border bg-background p-5">
-        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          People
-        </div>
-        <h1 className="mt-1 text-xl font-semibold">Person Record</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Person editor pending. This route is now wired for:
-        </p>
-        <div className="mt-3 rounded-xl bg-muted/40 p-3 text-xs">
-          {person_id}
-        </div>
-      </section>
+    <main className="p-6">
+      <PersonRecordClient
+        person={person ?? null}
+        error={error?.message ?? null}
+        returnTo={returnTo}
+      />
     </main>
   );
 }

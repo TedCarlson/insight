@@ -1,6 +1,8 @@
 // path: apps/web/src/features/role-company-manager/pages/CompanyManagerWorkforcePageShell.tsx
 
 import { Card } from "@/components/ui/Card";
+import { supabaseServer } from "@/shared/data/supabase/server";
+import { ExhibitLauncher } from "@/shared/surfaces/reports/ExhibitLauncher";
 import { WorkforceSurfaceClient } from "@/shared/surfaces/workforce/WorkforceSurfaceClient";
 import { getCompanyManagerWorkforceSurfacePayload } from "../lib/getCompanyManagerWorkforceSurfacePayload.server";
 
@@ -14,10 +16,54 @@ type Props = {
   as_of_date?: string;
 };
 
-export default async function CompanyManagerWorkforcePageShell(props: Props) {
-  const payload = await getCompanyManagerWorkforceSurfacePayload({
-    as_of_date: props.as_of_date ?? null,
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function fiscalMonthLabel(asOfDate: string) {
+  const date = new Date(`${asOfDate}T00:00:00`);
+  const fiscalMonthDate =
+    date.getDate() >= 22
+      ? new Date(date.getFullYear(), date.getMonth() + 1, 1)
+      : new Date(date.getFullYear(), date.getMonth(), 1);
+
+  return fiscalMonthDate.toLocaleString("en-US", {
+    month: "long",
+    year: "numeric",
   });
+}
+
+async function loadRegionLabel(pcOrgId: string | null) {
+  if (!pcOrgId) return "Region";
+
+  const sb = await supabaseServer();
+
+  const { data: org } = await sb
+    .from("pc_org")
+    .select("region_id, pc_org_name")
+    .eq("pc_org_id", pcOrgId)
+    .maybeSingle();
+
+  if (!org?.region_id) return org?.pc_org_name ?? "Region";
+
+  const { data: region } = await sb
+    .from("region_admin_v")
+    .select("region_name")
+    .eq("region_id", org.region_id)
+    .maybeSingle();
+
+  return region?.region_name ?? org.pc_org_name ?? "Region";
+}
+
+export default async function CompanyManagerWorkforcePageShell(props: Props) {
+  const asOfDate = props.as_of_date ?? todayIso();
+
+  const payload = await getCompanyManagerWorkforceSurfacePayload({
+    as_of_date: asOfDate,
+  });
+
+  const regionLabel = await loadRegionLabel(payload.rows[0]?.pc_org_id ?? null);
+  const reportMonthLabel = fiscalMonthLabel(asOfDate);
 
   return (
     <div className="space-y-4 p-4">
@@ -39,17 +85,29 @@ export default async function CompanyManagerWorkforcePageShell(props: Props) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
-            {payload.tabs.map((tab) => (
-              <div key={tab.key} className="rounded-xl border bg-card px-3 py-2.5">
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  {tab.label}
-                </div>
-                <div className="mt-1 text-xl font-semibold leading-none">
-                  {tab.count}
-                </div>
-              </div>
-            ))}
+          <div className="flex flex-wrap gap-2">
+            <ExhibitLauncher
+              rows={payload.rows}
+              affiliations={payload.editOptions?.affiliations ?? []}
+              regionLabel={regionLabel}
+              reportMonthLabel={reportMonthLabel}
+            />
+
+            <button
+              type="button"
+              disabled
+              className="rounded-xl border bg-muted/30 px-4 py-2 text-sm text-muted-foreground"
+            >
+              Onboarding
+            </button>
+
+            <button
+              type="button"
+              disabled
+              className="rounded-xl border bg-muted/30 px-4 py-2 text-sm text-muted-foreground"
+            >
+              Org Chart
+            </button>
           </div>
         </div>
       </Card>

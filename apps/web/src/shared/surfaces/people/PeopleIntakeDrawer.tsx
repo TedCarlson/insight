@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export type PeopleIntakeCreatedPerson = {
   person_id: string;
@@ -12,12 +12,26 @@ export type PeopleIntakeCreatedPerson = {
   mobile: string | null;
   nt_login: string | null;
   csg: string | null;
-  affiliation_id: string | null;
+  prospecting_affiliation_id: string | null;
 };
 
 type AffiliationOption = {
   affiliation_id: string;
   affiliation_label: string;
+};
+
+type DuplicateMatch = {
+  person_id: string;
+  full_name: string | null;
+  status: string | null;
+  tech_id: string | null;
+  mobile: string | null;
+  email: string | null;
+  nt_login: string | null;
+  csg: string | null;
+  active_assignment_count: number | null;
+  active_orgs: string | null;
+  match_reasons: string[];
 };
 
 type Props = {
@@ -41,7 +55,7 @@ export function PeopleIntakeDrawer({
   const [draft, setDraft] = useState({
     full_name: "",
     tech_id: "",
-    affiliation_id: "",
+    prospecting_affiliation_id: "",
     mobile: "",
     email: "",
     nt_login: "",
@@ -50,6 +64,71 @@ export function PeopleIntakeDrawer({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duplicateLoading, setDuplicateLoading] = useState(false);
+  const [duplicateMatches, setDuplicateMatches] = useState<DuplicateMatch[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const hasSignal =
+      draft.full_name.trim().length >= 3 ||
+      draft.tech_id.trim().length >= 2 ||
+      draft.mobile.trim().length >= 4 ||
+      draft.email.trim().length >= 4 ||
+      draft.nt_login.trim().length >= 2;
+
+    if (!hasSignal) return;
+
+    let cancelled = false;
+
+    async function checkDuplicates() {
+      setDuplicateLoading(true);
+
+      const params = new URLSearchParams();
+      if (clean(draft.full_name)) params.set("q", draft.full_name.trim());
+      if (clean(draft.tech_id)) params.set("tech_id", draft.tech_id.trim());
+      if (clean(draft.mobile)) params.set("mobile", draft.mobile.trim());
+      if (clean(draft.email)) params.set("email", draft.email.trim());
+      if (clean(draft.nt_login)) params.set("nt_login", draft.nt_login.trim());
+
+      const res = await fetch(
+        `/api/people/duplicate-check?${params.toString()}`
+      );
+      const json = await res.json().catch(() => null);
+
+      if (cancelled) return;
+
+      if (!res.ok) {
+        setDuplicateMatches([]);
+        setDuplicateLoading(false);
+        return;
+      }
+
+      setDuplicateMatches(json?.matches ?? []);
+      setDuplicateLoading(false);
+    }
+
+    const timer = window.setTimeout(checkDuplicates, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    open,
+    draft.full_name,
+    draft.tech_id,
+    draft.mobile,
+    draft.email,
+    draft.nt_login,
+  ]);
+
+  const hasDuplicateSignal =
+    draft.full_name.trim().length >= 3 ||
+    draft.tech_id.trim().length >= 2 ||
+    draft.mobile.trim().length >= 4 ||
+    draft.email.trim().length >= 4 ||
+    draft.nt_login.trim().length >= 2;
 
   if (!open) return null;
 
@@ -65,7 +144,7 @@ export function PeopleIntakeDrawer({
       body: JSON.stringify({
         full_name: clean(draft.full_name),
         tech_id: clean(draft.tech_id),
-        affiliation_id: clean(draft.affiliation_id),
+        prospecting_affiliation_id: clean(draft.prospecting_affiliation_id),
         mobile: clean(draft.mobile),
         email: clean(draft.email),
         nt_login: clean(draft.nt_login),
@@ -87,7 +166,7 @@ export function PeopleIntakeDrawer({
       person_id: json.person_id,
       full_name: draft.full_name.trim(),
       tech_id: clean(draft.tech_id),
-      affiliation_id: clean(draft.affiliation_id),
+      prospecting_affiliation_id: clean(draft.prospecting_affiliation_id),
       mobile: clean(draft.mobile),
       email: clean(draft.email),
       nt_login: clean(draft.nt_login),
@@ -97,12 +176,14 @@ export function PeopleIntakeDrawer({
     setDraft({
       full_name: "",
       tech_id: "",
-      affiliation_id: "",
+      prospecting_affiliation_id: "",
       mobile: "",
       email: "",
       nt_login: "",
       csg: "",
     });
+
+    setDuplicateMatches([]);
   }
 
   return (
@@ -129,6 +210,53 @@ export function PeopleIntakeDrawer({
             Close
           </button>
         </div>
+
+        {hasDuplicateSignal && (duplicateMatches.length > 0 || duplicateLoading) ? (
+          <div className="mt-5 rounded-2xl border border-[var(--to-warning)] bg-[color-mix(in_oklab,var(--to-warning)_8%,white)] p-4">
+            <div className="text-sm font-semibold">Possible Existing Matches</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              This is a heads-up only. You can still create the person if this is not a duplicate.
+            </div>
+
+            <div className="mt-3 space-y-2">
+              {duplicateLoading ? (
+                <div className="text-xs text-muted-foreground">
+                  Checking for similar records…
+                </div>
+              ) : null}
+
+              {duplicateMatches.map((match) => (
+                <div
+                  key={match.person_id}
+                  className="rounded-xl border bg-background/70 p-3 text-xs"
+                >
+                  <div className="font-semibold">
+                    {match.full_name ?? "Unknown Person"}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    Tech: {match.tech_id ?? "—"} • NT: {match.nt_login ?? "—"} •{" "}
+                    Mobile: {match.mobile ?? "—"}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    Status: {match.status ?? "—"} • Assignments:{" "}
+                    {match.active_assignment_count ?? 0}
+                    {match.active_orgs ? ` • ${match.active_orgs}` : ""}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {match.match_reasons.map((reason) => (
+                      <span
+                        key={reason}
+                        className="rounded-full border px-2 py-0.5 text-[10px]"
+                      >
+                        {reason}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-5 rounded-2xl border p-4">
           <div className="text-sm font-semibold">Identity</div>
@@ -159,9 +287,12 @@ export function PeopleIntakeDrawer({
             <label className="grid gap-1 text-sm">
               Prospecting Affiliation
               <select
-                value={draft.affiliation_id}
+                value={draft.prospecting_affiliation_id}
                 onChange={(e) =>
-                  setDraft({ ...draft, affiliation_id: e.target.value })
+                  setDraft({
+                    ...draft,
+                    prospecting_affiliation_id: e.target.value,
+                  })
                 }
                 className="h-10 rounded-xl border px-3"
               >

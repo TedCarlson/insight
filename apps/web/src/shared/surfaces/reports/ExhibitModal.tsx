@@ -34,11 +34,13 @@ function isTechnician(row: WorkforceRow) {
     row.seat_type !== "LEADERSHIP" &&
     row.seat_type !== "SUPPORT" &&
     row.seat_type !== "FMLA" &&
-    title.includes("technician")
+    (row.seat_type === "DROP_BURY" || title.includes("technician"))
   );
 }
 
 function isMduDrop(row: WorkforceRow) {
+  if (row.seat_type === "DROP_BURY") return true;
+
   const text = `${row.position_title ?? ""} ${row.affiliation ?? ""}`.toLowerCase();
   return text.includes("mdu") || text.includes("drop");
 }
@@ -310,7 +312,7 @@ export default function ExhibitModal({
 
               <tr className="font-semibold">
                 <td className="border px-3 py-2" colSpan={2}>
-                  MDU / Drops Total
+                  MDU / DROP
                 </td>
                 <td className="border px-3 py-2 text-right">
                   {displayCount(mduTotal.w2)}

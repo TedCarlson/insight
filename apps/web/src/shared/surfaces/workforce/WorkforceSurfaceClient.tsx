@@ -19,6 +19,7 @@ import {
   isDraftDirty,
   quickCopyText,
   tabLabel,
+  WORKFORCE_SEAT_OPTIONS,
   type WorkforceDraft,
 } from "./workforceSurface.helpers";
 import { WorkforceAssignmentHistoryCard } from "./WorkforceAssignmentHistoryCard";
@@ -32,6 +33,20 @@ type Props = {
   payload: WorkforceSurfacePayload;
   mode?: "manager" | "supervisor" | "admin";
 };
+
+function buildTabs(payload: WorkforceSurfacePayload) {
+  const tabs = [...payload.tabs];
+  const hasDropBuryTab = tabs.some((tab) => tab.key === "DROP_BURY");
+  const dropBuryCount = payload.rows.filter(
+    (row) => row.seat_type === "DROP_BURY"
+  ).length;
+
+  if (!hasDropBuryTab && dropBuryCount > 0) {
+    tabs.push({ key: "DROP_BURY", label: tabLabel("DROP_BURY"), count: dropBuryCount });
+  }
+
+  return tabs;
+}
 
 export function WorkforceSurfaceClient({ payload }: Props) {
   const router = useRouter();
@@ -47,6 +62,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
     useState<WorkforcePersonSearchRow | null>(null);
 
   const pcOrgId = payload.rows[0]?.pc_org_id ?? null;
+  const tabs = useMemo(() => buildTabs(payload), [payload]);
 
   const filtered = useMemo(() => {
     let rows = payload.rows;
@@ -128,7 +144,6 @@ export function WorkforceSurfaceClient({ payload }: Props) {
       position_title: person.position_title ?? "Technician",
       affiliation: null,
 
-
       start_date: null,
       end_date: null,
 
@@ -187,8 +202,8 @@ export function WorkforceSurfaceClient({ payload }: Props) {
   const selectedAffiliationLabel =
     selected?.affiliation_id
       ? payload.editOptions?.affiliations?.find(
-        (option) => option.affiliation_id === selected.affiliation_id
-      )?.affiliation_label ?? null
+          (option) => option.affiliation_id === selected.affiliation_id
+        )?.affiliation_label ?? null
       : null;
 
   return (
@@ -196,7 +211,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
       <Card className="p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap gap-2">
-            {payload.tabs.map((t) => (
+            {tabs.map((t) => (
               <button
                 key={t.key}
                 type="button"
@@ -339,7 +354,9 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                 <button
                   type="button"
                   onClick={() =>
-                    navigator.clipboard.writeText(quickCopyText(selected, selectedAffiliationLabel))
+                    navigator.clipboard.writeText(
+                      quickCopyText(selected, selectedAffiliationLabel)
+                    )
                   }
                   className="rounded-lg border px-3 py-1.5 text-xs"
                 >
@@ -385,13 +402,20 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                     }
                     className="h-10 rounded-xl border px-3"
                   >
-                    <option value="FIELD">Field</option>
-                    <option value="LEADERSHIP">Leadership</option>
-                    <option value="SUPPORT">Support</option>
-                    <option value="TRAVEL">Travel Tech</option>
-                    {selected.assignment_id !== "NEW" ? (
-                      <option value="FMLA">FMLA</option>
-                    ) : null}
+                    {WORKFORCE_SEAT_OPTIONS.map((option) => {
+                      if (
+                        selected.assignment_id === "NEW" &&
+                        option.value === "FMLA"
+                      ) {
+                        return null;
+                      }
+
+                      return (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      );
+                    })}
                   </select>
                 </label>
 
@@ -430,9 +454,14 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                   >
                     <option value="">Select affiliation…</option>
                     {(payload.editOptions?.affiliations ?? []).map((option) => (
-                      <option key={option.affiliation_id} value={option.affiliation_id}>
+                      <option
+                        key={option.affiliation_id}
+                        value={option.affiliation_id}
+                      >
                         {option.affiliation_label}
-                        {option.affiliation_code ? ` • ${option.affiliation_code}` : ""}
+                        {option.affiliation_code
+                          ? ` • ${option.affiliation_code}`
+                          : ""}
                       </option>
                     ))}
                   </select>

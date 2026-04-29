@@ -4,7 +4,13 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/shared/data/supabase/admin";
 import { supabaseServer } from "@/shared/data/supabase/server";
 
-type SeatType = "FIELD" | "LEADERSHIP" | "SUPPORT" | "TRAVEL" | "FMLA";
+type SeatType =
+  | "FIELD"
+  | "LEADERSHIP"
+  | "SUPPORT"
+  | "TRAVEL"
+  | "DROP_BURY"
+  | "FMLA";
 
 type RequestBody = {
   assignment_id: string;
@@ -27,6 +33,7 @@ function isSeatType(value: unknown): value is SeatType {
     value === "LEADERSHIP" ||
     value === "SUPPORT" ||
     value === "TRAVEL" ||
+    value === "DROP_BURY" ||
     value === "FMLA"
   );
 }

@@ -40,6 +40,14 @@ type SupervisorOption = {
 type ReportClassType = "NSR" | "SMART";
 type MetricsRangeKey = "FM" | "PREVIOUS" | "3FM" | "12FM";
 
+const EMPTY_CONTROLS: MetricsControlsValue = {
+  office_label: null,
+  affiliation_type: null,
+  contractor_name: null,
+  reports_to_person_id: null,
+  team_scope_mode: "ROLLUP",
+};
+
 function formatPercent(value: number | null | undefined) {
   if (typeof value !== "number" || !Number.isFinite(value)) return "—";
   return `${(value * 100).toFixed(1)}%`;
@@ -48,9 +56,9 @@ function formatPercent(value: number | null | undefined) {
 function hasActiveExecutiveSlice(controls: MetricsControlsValue): boolean {
   return Boolean(
     controls.office_label ||
-    controls.affiliation_type ||
-    controls.contractor_name ||
-    controls.reports_to_person_id
+      controls.affiliation_type ||
+      controls.contractor_name ||
+      controls.reports_to_person_id
   );
 }
 
@@ -111,6 +119,62 @@ function toRangeLabel(rangeKey: MetricsRangeKey): string {
   return "Previous 12FM";
 }
 
+function uniqueSorted(values: Array<string | null | undefined>): string[] {
+  return Array.from(
+    new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+function normalizeLabel(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function buildSupervisorOptions(rows: ReturnType<typeof mapTeamRows>) {
+  const byValue = new Map<string, string>();
+
+  for (const row of rows) {
+    const value = String(row.reports_to_person_id ?? "").trim();
+    if (!value) continue;
+
+    const label = String(row.reports_to_label ?? "").trim() || value;
+    if (!byValue.has(value)) byValue.set(value, label);
+  }
+
+  return [...byValue.entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([value, label]) => ({ value, label }));
+}
+
+function buildDefaultSupervisorControls(args: {
+  rep_full_name: string | null | undefined;
+  supervisorOptions: SupervisorOption[];
+}): MetricsControlsValue {
+  const repName = normalizeLabel(args.rep_full_name);
+
+  const matchedByName = repName
+    ? args.supervisorOptions.find(
+        (option) => normalizeLabel(option.label) === repName
+      )
+    : undefined;
+
+  const fallbackSingle =
+    args.supervisorOptions.length === 1 ? args.supervisorOptions[0] : undefined;
+
+  const selected = matchedByName ?? fallbackSingle ?? null;
+
+  if (!selected) return EMPTY_CONTROLS;
+
+  return {
+    office_label: null,
+    affiliation_type: null,
+    contractor_name: null,
+    reports_to_person_id: selected.value,
+    team_scope_mode: "ROLLUP",
+  };
+}
+
 export default function CompanySupervisorScopedViewClient({
   payload,
   classType,
@@ -118,18 +182,11 @@ export default function CompanySupervisorScopedViewClient({
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [controls, setControls] = useState<MetricsControlsValue>({
-    office_label: null,
-    affiliation_type: null,
-    contractor_name: null,
-    reports_to_person_id: null,
-    team_scope_mode: "ROLLUP",
-  });
+  const [manualControls, setManualControls] =
+    useState<MetricsControlsValue | null>(null);
 
   const currentClass =
-    normalizeClassType(searchParams.get("class_type")) ??
-    classType ??
-    "NSR";
+    normalizeClassType(searchParams.get("class_type")) ?? classType ?? "NSR";
 
   const currentRange = normalizeRangeType(
     searchParams.get("range"),
@@ -138,66 +195,70 @@ export default function CompanySupervisorScopedViewClient({
 
   const allRows = useMemo(() => mapTeamRows(payload), [payload]);
 
-  const officeOptions = useMemo(() => {
-    return Array.from(
-      new Set(allRows.map((row) => row.office_label).filter(Boolean))
-    ).sort() as string[];
+  const allSupervisorOptions = useMemo<SupervisorOption[]>(() => {
+    return buildSupervisorOptions(allRows);
   }, [allRows]);
+
+  const defaultControls = useMemo(() => {
+    return buildDefaultSupervisorControls({
+      rep_full_name: payload.header.rep_full_name,
+      supervisorOptions: allSupervisorOptions,
+    });
+  }, [payload.header.rep_full_name, allSupervisorOptions]);
+
+  const controls = manualControls ?? defaultControls;
+
+  const officeOptions = useMemo(() => {
+    return uniqueSorted(allRows.map((row) => row.office_label));
+  }, [allRows]);
+
+  const rowsForAffiliationOptions = useMemo(() => {
+    return controls.office_label
+      ? allRows.filter((row) => row.office_label === controls.office_label)
+      : allRows;
+  }, [allRows, controls.office_label]);
 
   const affiliationOptions = useMemo(() => {
-    return Array.from(
-      new Set(allRows.map((row) => row.affiliation_type).filter(Boolean))
-    ).sort() as string[];
-  }, [allRows]);
+    return uniqueSorted(
+      rowsForAffiliationOptions.map((row) => row.affiliation_type)
+    );
+  }, [rowsForAffiliationOptions]);
+
+  const rowsForContractorOptions = useMemo(() => {
+    return rowsForAffiliationOptions.filter((row) => {
+      if (
+        controls.affiliation_type &&
+        row.affiliation_type !== controls.affiliation_type
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [rowsForAffiliationOptions, controls.affiliation_type]);
 
   const contractorOptions = useMemo(() => {
-    return Array.from(
-      new Set(
-        allRows
-          .map((row) => row.contractor_name)
-          .filter((value): value is string => Boolean(value))
-      )
-    ).sort();
-  }, [allRows]);
+    return uniqueSorted(
+      rowsForContractorOptions.map((row) => row.contractor_name)
+    );
+  }, [rowsForContractorOptions]);
+
+  const rowsForSupervisorOptions = useMemo(() => {
+    return rowsForContractorOptions.filter((row) => {
+      if (
+        controls.contractor_name &&
+        row.contractor_name !== controls.contractor_name
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [rowsForContractorOptions, controls.contractor_name]);
 
   const supervisorOptions = useMemo<SupervisorOption[]>(() => {
-    const byValue = new Map<string, string>();
-
-    // build lookup of person_id -> full_name
-    const nameByPersonId = new Map<string, string>();
-
-    for (const row of allRows) {
-      const personId = String(row.person_id ?? "").trim();
-      const name = String(row.full_name ?? "").trim();
-      if (personId && name) {
-        nameByPersonId.set(personId, name);
-      }
-    }
-
-    for (const row of allRows) {
-      const value = String(row.reports_to_person_id ?? "").trim();
-      if (!value) continue;
-
-      const resolvedName = nameByPersonId.get(value);
-      const fallbackLabel =
-        String(row.reports_to_label ?? "").trim() || value;
-
-      const label = resolvedName || fallbackLabel;
-
-      if (!byValue.has(value)) {
-        byValue.set(value, label);
-      }
-    }
-
-    return [...byValue.entries()]
-      .sort((a, b) => a[1].localeCompare(b[1]))
-      .map(([value, label]) => ({ value, label }));
-  }, [allRows]);
-
-  const showOffice = officeOptions.length > 1;
-  const showAffiliation = affiliationOptions.length > 1;
-  const showContractor = contractorOptions.length > 1;
-  const showSupervisor = supervisorOptions.length > 1;
+    return buildSupervisorOptions(rowsForSupervisorOptions);
+  }, [rowsForSupervisorOptions]);
 
   const { showTeamScope } = useSupervisorTeamControls(allRows, controls);
 
@@ -207,6 +268,7 @@ export default function CompanySupervisorScopedViewClient({
 
   const { scopeLabel, headerModel } = useSupervisorHeaderScope({
     controls,
+    allRows,
     scopedRows,
     header: payload.header,
   });
@@ -225,7 +287,7 @@ export default function CompanySupervisorScopedViewClient({
 
   const baseExecutiveItems = useMemo(() => {
     return payload.executive_strip?.base?.items ?? [];
-  }, [payload]);
+  }, [payload.executive_strip]);
 
   const scopedExecutiveItems = useMemo(() => {
     if (!hasExecutiveSlice) return [];
@@ -247,6 +309,11 @@ export default function CompanySupervisorScopedViewClient({
   const scopedWorkMix = useMemo(() => {
     return buildScopedWorkMix(scopedRows);
   }, [scopedRows]);
+
+  const showOffice = officeOptions.length > 1;
+  const showAffiliation = affiliationOptions.length > 1;
+  const showContractor = contractorOptions.length > 1;
+  const showSupervisor = supervisorOptions.length > 1;
 
   const workMixContent = scopedWorkMix ? (
     <div className="space-y-4">
@@ -340,16 +407,15 @@ export default function CompanySupervisorScopedViewClient({
         showSupervisor={showSupervisor}
         showTeamScope={showTeamScope}
         value={controls}
-        onChange={setControls}
-        onReset={() =>
-          setControls({
-            office_label: null,
-            affiliation_type: null,
-            contractor_name: null,
-            reports_to_person_id: null,
-            team_scope_mode: "ROLLUP",
-          })
-        }
+        onChange={(next) => {
+          setManualControls({
+            ...next,
+            team_scope_mode: next.reports_to_person_id
+              ? next.team_scope_mode
+              : "ROLLUP",
+          });
+        }}
+        onReset={() => setManualControls(null)}
       />
 
       {payload.permissions.can_view_exec_strip ? (
@@ -377,7 +443,7 @@ export default function CompanySupervisorScopedViewClient({
             report_order: column.report_order,
           }))}
           rows={scopedRows}
-          range={payload.filters.active_range}
+          range={currentRange}
           classType={currentClass}
           workMixTitle="Work Mix"
           workMixContent={workMixContent}

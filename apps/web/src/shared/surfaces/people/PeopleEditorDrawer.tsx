@@ -16,20 +16,30 @@ export type PeopleEditorRow = {
   email: string | null;
   nt_login: string | null;
   csg: string | null;
+  prospecting_affiliation_id: string | null;
+  affiliation_code: string | null;
+  affiliation: string | null;
   active_assignment_count: number;
   active_orgs: string | null;
+};
+
+type AffiliationOption = {
+  affiliation_id: string;
+  affiliation_label: string;
 };
 
 type Props = {
   person: PeopleEditorRow | null;
   onClose: () => void;
   onSaved: () => void;
+  affiliations?: AffiliationOption[];
 };
 
 type InnerProps = {
   person: PeopleEditorRow;
   onClose: () => void;
   onSaved: () => void;
+  affiliations: AffiliationOption[];
 };
 
 function clean(value: string) {
@@ -37,7 +47,12 @@ function clean(value: string) {
   return next ? next : null;
 }
 
-export function PeopleEditorDrawer({ person, onClose, onSaved }: Props) {
+export function PeopleEditorDrawer({
+  person,
+  onClose,
+  onSaved,
+  affiliations = [],
+}: Props) {
   if (!person) return null;
 
   return (
@@ -46,11 +61,17 @@ export function PeopleEditorDrawer({ person, onClose, onSaved }: Props) {
       person={person}
       onClose={onClose}
       onSaved={onSaved}
+      affiliations={affiliations}
     />
   );
 }
 
-function PeopleEditorDrawerInner({ person: p, onClose, onSaved }: InnerProps) {
+function PeopleEditorDrawerInner({
+  person: p,
+  onClose,
+  onSaved,
+  affiliations,
+}: InnerProps) {
   const [draft, setDraft] = useState(() => ({
     full_name: p.full_name ?? "",
     legal_name: p.legal_name ?? "",
@@ -62,6 +83,7 @@ function PeopleEditorDrawerInner({ person: p, onClose, onSaved }: InnerProps) {
     email: p.email ?? "",
     nt_login: p.nt_login ?? "",
     csg: p.csg ?? "",
+    prospecting_affiliation_id: p.prospecting_affiliation_id ?? "",
   }));
 
   const [saving, setSaving] = useState(false);
@@ -88,6 +110,7 @@ function PeopleEditorDrawerInner({ person: p, onClose, onSaved }: InnerProps) {
         email: clean(draft.email),
         nt_login: clean(draft.nt_login),
         csg: clean(draft.csg),
+        prospecting_affiliation_id: clean(draft.prospecting_affiliation_id),
       }),
     });
 
@@ -176,6 +199,30 @@ function PeopleEditorDrawerInner({ person: p, onClose, onSaved }: InnerProps) {
                 <option value="inactive">Inactive</option>
                 <option value="onboarding">Onboarding</option>
                 <option value="onboarding_closed">Onboarding Closed</option>
+              </select>
+            </label>
+
+            <label className="grid gap-1 text-sm">
+              Prospecting Affiliation
+              <select
+                value={draft.prospecting_affiliation_id}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    prospecting_affiliation_id: e.target.value,
+                  })
+                }
+                className="h-10 rounded-xl border px-3"
+              >
+                <option value="">Select affiliation…</option>
+                {affiliations.map((option) => (
+                  <option
+                    key={option.affiliation_id}
+                    value={option.affiliation_id}
+                  >
+                    {option.affiliation_label}
+                  </option>
+                ))}
               </select>
             </label>
           </div>
@@ -267,6 +314,14 @@ function PeopleEditorDrawerInner({ person: p, onClose, onSaved }: InnerProps) {
             <div>
               <dt className="text-muted-foreground">Active Orgs</dt>
               <dd>{p.active_orgs ?? "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Current Prospecting Affiliation</dt>
+              <dd>{p.affiliation ?? "—"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Affiliation Code</dt>
+              <dd>{p.affiliation_code ?? "—"}</dd>
             </div>
           </dl>
         </div>

@@ -4,16 +4,23 @@ import { useRouter } from "next/navigation";
 import { PeopleEditorDrawer, type PeopleEditorRow } from "./PeopleEditorDrawer";
 import { Card } from "@/components/ui/Card";
 
+type AffiliationOption = {
+  affiliation_id: string;
+  affiliation_label: string;
+};
+
 type Props = {
   person: PeopleEditorRow | null;
   error?: string | null;
   returnTo?: string;
+  affiliations?: AffiliationOption[];
 };
 
 export function PersonRecordClient({
   person,
   error,
   returnTo = "/company-manager/people",
+  affiliations = [],
 }: Props) {
   const router = useRouter();
 
@@ -57,7 +64,12 @@ export function PersonRecordClient({
         ) : null}
       </Card>
 
-      <PeopleEditorDrawer person={person} onClose={goBack} onSaved={goBack} />
+      <PeopleEditorDrawer
+        person={person}
+        onClose={goBack}
+        onSaved={goBack}
+        affiliations={affiliations}
+      />
     </div>
   );
 }

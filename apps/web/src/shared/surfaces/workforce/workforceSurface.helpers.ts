@@ -1,3 +1,5 @@
+// path: apps/web/src/shared/surfaces/workforce/workforceSurface.helpers.ts
+
 import type {
   WorkforceRow,
   WorkforceSeatType,
@@ -13,15 +15,39 @@ export type WorkforceDraft = {
   start_date: string | null;
 };
 
+export const WORKFORCE_SEAT_OPTIONS: Array<{
+  value: WorkforceSeatType;
+  label: string;
+}> = [
+  { value: "FIELD", label: "Field" },
+  { value: "LEADERSHIP", label: "Leadership" },
+  { value: "SUPPORT", label: "Support" },
+  { value: "TRAVEL", label: "Travel Tech" },
+  { value: "DROP_BURY", label: "Drop Bury" },
+  { value: "FMLA", label: "FMLA" },
+];
+
 export function badgeTone(seatType: WorkforceSeatType) {
-  if (seatType === "FIELD")
+  if (seatType === "FIELD") {
     return "border-[var(--to-success)] bg-[color-mix(in_oklab,var(--to-success)_10%,white)]";
-  if (seatType === "LEADERSHIP")
+  }
+
+  if (seatType === "LEADERSHIP") {
     return "border-[var(--to-primary)] bg-[color-mix(in_oklab,var(--to-primary)_10%,white)]";
-  if (seatType === "SUPPORT")
+  }
+
+  if (seatType === "SUPPORT") {
     return "border-[var(--to-warning)] bg-[color-mix(in_oklab,var(--to-warning)_10%,white)]";
-  if (seatType === "FMLA")
+  }
+
+  if (seatType === "DROP_BURY") {
+    return "border-[var(--to-info)] bg-[color-mix(in_oklab,var(--to-info)_12%,white)]";
+  }
+
+  if (seatType === "FMLA") {
     return "border-[var(--to-danger)] bg-[color-mix(in_oklab,var(--to-danger)_10%,white)]";
+  }
+
   return "border-[var(--to-info)] bg-[color-mix(in_oklab,var(--to-info)_10%,white)]";
 }
 
@@ -31,6 +57,7 @@ export function tabLabel(key: WorkforceTabKey) {
   if (key === "LEADERSHIP") return "Leadership";
   if (key === "INCOMPLETE") return "Incomplete";
   if (key === "SUPPORT") return "Support";
+  if (key === "DROP_BURY") return "Drop Bury";
   if (key === "FMLA") return "FMLA";
   return "Travel Techs";
 }
@@ -99,7 +126,10 @@ export function isDraftDirty(
   return Object.keys(buildChangeSet(selected, draft)).length > 0;
 }
 
-export function quickCopyText(row: WorkforceRow, affiliationLabel?: string | null) {
+export function quickCopyText(
+  row: WorkforceRow,
+  affiliationLabel?: string | null
+) {
   return `${row.display_name} • Tech ID: ${row.tech_id ?? "N/A"}
 Mobile:      ${row.mobile ?? "—"}
 NT Login:    ${row.nt_login ?? "—"}

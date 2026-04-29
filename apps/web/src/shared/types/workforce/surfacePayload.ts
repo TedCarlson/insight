@@ -92,6 +92,7 @@ export type WorkforceSurfacePayload = {
     support: number;
     incomplete: number;
     travel: number;
+    drop_bury: number;
     fmla: number;
   };
 

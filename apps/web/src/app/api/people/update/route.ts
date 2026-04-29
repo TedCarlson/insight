@@ -18,6 +18,7 @@ type RequestBody = {
   csg?: string | null;
   mobile?: string | null;
   email?: string | null;
+  prospecting_affiliation_id?: string | null;
 };
 
 function clean(value: unknown): string | null {
@@ -81,6 +82,7 @@ export async function POST(req: Request) {
     p_csg_id: clean(body.csg),
     p_mobile: clean(body.mobile),
     p_email: clean(body.email),
+    p_prospecting_affiliation_id: clean(body.prospecting_affiliation_id),
   });
 
   if (error) {

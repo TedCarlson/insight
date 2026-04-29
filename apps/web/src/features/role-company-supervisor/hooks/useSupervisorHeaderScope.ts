@@ -1,3 +1,5 @@
+// path: apps/web/src/features/role-company-supervisor/hooks/useSupervisorHeaderScope.ts
+
 "use client";
 
 import { useMemo } from "react";
@@ -11,6 +13,7 @@ import type { MetricsSurfacePayload } from "@/shared/types/metrics/surfacePayloa
 
 type Args = {
   controls: MetricsControlsValue;
+  allRows: TeamRowClient[];
   scopedRows: TeamRowClient[];
   header: MetricsSurfacePayload["header"];
 };
@@ -33,13 +36,16 @@ export function useSupervisorHeaderScope(args: Args): Result {
     return buildScopeLabel(args.controls);
   }, [args.controls]);
 
+  const totalHeadcount = args.allRows.length;
+  const scopeHeadcount = scopeLabel ? args.scopedRows.length : null;
+
   const headerModel = useMemo<MetricsSmartHeaderModel>(() => {
     return {
       ...args.header,
-      total_headcount: args.header.total_headcount ?? 0,
-      scope_headcount: scopeLabel ? args.scopedRows.length : null,
+      total_headcount: totalHeadcount,
+      scope_headcount: scopeHeadcount,
     };
-  }, [args.header, args.scopedRows.length, scopeLabel]);
+  }, [args.header, totalHeadcount, scopeHeadcount]);
 
   return {
     scopeLabel,

@@ -136,12 +136,14 @@ function dedupeAssignmentsByPerson(
       passthrough.push(row);
       continue;
     }
+
     const list = byPerson.get(personId) ?? [];
     list.push(row);
     byPerson.set(personId, list);
   }
 
   const deduped = [...passthrough];
+
   for (const group of byPerson.values()) {
     const preferred = choosePreferredAssignment(group);
     if (preferred) deduped.push(preferred);
@@ -204,7 +206,7 @@ function uniqueByTech(rows: CompanyManagerScopeAssignmentRow[]) {
   const out = new Map<string, CompanyManagerScopeAssignmentRow>();
 
   for (const row of rows) {
-    const techId = row.tech_id ? String(row.tech_id) : null;
+    const techId = row.tech_id ? String(row.tech_id).trim() : null;
     if (!techId) continue;
     if (!out.has(techId)) out.set(techId, row);
   }
@@ -430,6 +432,7 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
   ).filter((a) => isActiveWindow(a, today));
 
   const assignmentsById = new Map<string, CompanyManagerScopeAssignmentRow>();
+
   for (const row of allOrgAssignments) {
     const assignmentId = String(row.assignment_id ?? "");
     if (!assignmentId) continue;
@@ -514,6 +517,7 @@ export async function resolveCompanyManagerScope(): Promise<CompanyManagerScopeR
     : { data: [] as CompanyManagerScopePersonRow[] };
 
   const people_by_id = new Map<string, CompanyManagerScopePersonRow>();
+
   for (const row of (peopleRes.data ?? []) as CompanyManagerScopePersonRow[]) {
     people_by_id.set(String(row.person_id), row);
   }

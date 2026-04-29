@@ -24,6 +24,10 @@ import { buildScopedExecutiveStrip } from "@/shared/lib/metrics/buildScopedExecu
 
 import type { MetricsSurfacePayload } from "@/shared/types/metrics/surfacePayload";
 
+import RollupReportOverlay, {
+  type RollupReportPayload,
+} from "@/shared/components/metrics/RollupReportOverlay";
+
 import { useSupervisorTeamControls } from "../hooks/useSupervisorTeamControls";
 import { useSupervisorHeaderScope } from "../hooks/useSupervisorHeaderScope";
 
@@ -97,7 +101,7 @@ function buildExecutiveComparisonSubtitle(
   return parts.length ? parts.join(" • ") : null;
 }
 
-function normalizeClassType(value: string | null): ReportClassType {
+function normalizeClassType(value: string | null | undefined): ReportClassType {
   return value === "SMART" ? "SMART" : "NSR";
 }
 
@@ -126,9 +130,7 @@ function uniqueSorted(values: Array<string | null | undefined>): string[] {
 }
 
 function normalizeLabel(value: string | null | undefined) {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase();
+  return String(value ?? "").trim().toLowerCase();
 }
 
 function buildSupervisorOptions(rows: ReturnType<typeof mapTeamRows>) {
@@ -185,8 +187,15 @@ export default function CompanySupervisorScopedViewClient({
   const [manualControls, setManualControls] =
     useState<MetricsControlsValue | null>(null);
 
-  const currentClass =
-    normalizeClassType(searchParams.get("class_type")) ?? classType ?? "NSR";
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportPayload, setReportPayload] =
+    useState<RollupReportPayload | null>(null);
+
+  const currentClass = normalizeClassType(
+    searchParams.get("class_type") ?? classType
+  );
 
   const currentRange = normalizeRangeType(
     searchParams.get("range"),
@@ -315,6 +324,38 @@ export default function CompanySupervisorScopedViewClient({
   const showContractor = contractorOptions.length > 1;
   const showSupervisor = supervisorOptions.length > 1;
 
+  async function openRollupReport() {
+    setReportOpen(true);
+    setReportLoading(true);
+    setReportError(null);
+
+    try {
+      const params = new URLSearchParams();
+      params.set("class_type", currentClass);
+      params.set("range", currentRange);
+
+      const res = await fetch(
+        `/api/metrics-rollup-report?${params.toString()}`,
+        { method: "GET" }
+      );
+
+      const json = await res.json();
+
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error ?? "Unable to build rollup report");
+      }
+
+      setReportPayload(json.data as RollupReportPayload);
+    } catch (err) {
+      setReportPayload(null);
+      setReportError(
+        err instanceof Error ? err.message : "Unable to build rollup report"
+      );
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
   const workMixContent = scopedWorkMix ? (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -406,6 +447,9 @@ export default function CompanySupervisorScopedViewClient({
         showContractor={showContractor}
         showSupervisor={showSupervisor}
         showTeamScope={showTeamScope}
+        reportActionLabel={reportLoading ? "Building Report..." : "Rollup Report"}
+        reportActionDisabled={reportLoading}
+        onReportAction={openRollupReport}
         value={controls}
         onChange={(next) => {
           setManualControls({
@@ -449,6 +493,14 @@ export default function CompanySupervisorScopedViewClient({
           workMixContent={workMixContent}
         />
       ) : null}
+
+      <RollupReportOverlay
+        open={reportOpen}
+        loading={reportLoading}
+        payload={reportPayload}
+        error={reportError}
+        onClose={() => setReportOpen(false)}
+      />
     </div>
   );
 }

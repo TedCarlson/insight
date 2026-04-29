@@ -1,4 +1,4 @@
-// path: apps/web/src/features/role-company-manager/server/buildCompanyManagerRollupReportPayload.server.ts
+// path: apps/web/src/shared/server/metrics/reports/buildRollupReportPayload.server.ts
 
 import {
   mapTeamRows,
@@ -7,31 +7,33 @@ import {
 import { buildScopedExecutiveStrip } from "@/shared/lib/metrics/buildScopedExecutiveStrip";
 import type { MetricsSurfacePayload } from "@/shared/types/metrics/surfacePayload";
 
-type TeamClass = "ITG" | "BP";
-type ReportClass = "NSR" | "SMART";
-type ReportRange = "FM" | "PREVIOUS" | "3FM" | "12FM";
+export type RollupTeamClass = "ITG" | "BP";
+export type RollupReportClass = "NSR" | "SMART";
+export type RollupReportRange = "FM" | "PREVIOUS" | "3FM" | "12FM";
 
-type SupervisorRollupRow = {
+export type RollupKpi = {
+  kpi_key: string;
+  label: string;
+  value: number | null;
+  value_display: string;
+  band_key: string | null;
+};
+
+export type SupervisorRollupRow = {
   supervisor_person_id: string;
   supervisor_name: string;
-  team_class: TeamClass;
+  team_class: RollupTeamClass;
   rollup_hc: number;
   composite_score: number | null;
   rank: number;
-  kpis: Array<{
-    kpi_key: string;
-    label: string;
-    value: number | null;
-    value_display: string;
-    band_key: string | null;
-  }>;
+  kpis: RollupKpi[];
 };
 
-export type ManagerRollupReportPayload = {
+export type RollupReportPayload = {
   header: {
     generated_at: string;
-    class_type: ReportClass;
-    range: ReportRange;
+    class_type: RollupReportClass;
+    range: RollupReportRange;
     org_display: string | null;
   };
   segments: {
@@ -45,13 +47,23 @@ type RowWithChain = TeamRowClient & {
   supervisor_chain_person_ids?: unknown;
   leader_name?: string | null;
   leader_title?: string | null;
-  team_class?: TeamClass | null;
+  team_class?: RollupTeamClass | null;
 };
 
 type SupervisorOption = {
   supervisor_person_id: string;
   supervisor_name: string;
 };
+
+function isValidHcRow(row: TeamRowClient) {
+  const techId = cleanString(row.tech_id);
+  if (!techId || techId.startsWith("UNASSIGNED-")) return false;
+
+  const metric = findMetric(row, "ftr_contact_jobs");
+  const value = readNumeric(metric?.denominator ?? metric?.metric_value);
+
+  return value != null && value > 0;
+}
 
 function cleanString(value: unknown) {
   const next = String(value ?? "").trim();
@@ -92,7 +104,7 @@ function getSupervisorChainIds(row: TeamRowClient) {
   return chain;
 }
 
-function getRowTeamClass(row: TeamRowClient): TeamClass | null {
+function getRowTeamClass(row: TeamRowClient): RollupTeamClass | null {
   const unsafeRow = row as RowWithChain;
   const explicit = cleanString(unsafeRow.team_class)?.toUpperCase();
 
@@ -124,9 +136,11 @@ function getUniqueSupervisors(rows: TeamRowClient[]): SupervisorOption[] {
   const ids = new Set<string>();
 
   for (const row of rows) {
+    const directId = getDirectSupervisorId(row);
+    if (directId) ids.add(directId);
+
     for (const id of getSupervisorChainIds(row)) {
-      if (!id) continue;
-      ids.add(id);
+      if (id) ids.add(id);
     }
   }
 
@@ -173,14 +187,23 @@ function isOneHopBpReportToManager(
   return getRowTeamClass(row) === "BP";
 }
 
-function getRowsForSupervisor(args: {
+/**
+ * Segment behavior #1 and #2:
+ * ITG/BP sections use chain rollup behavior.
+ */
+function getChainRowsForSupervisor(args: {
   payload: MetricsSurfacePayload;
   rows: TeamRowClient[];
   supervisor: SupervisorOption;
 }) {
   const supervisorId = args.supervisor.supervisor_person_id;
 
-  if (isManagerSupervisor({ payload: args.payload, supervisor: args.supervisor })) {
+  if (
+    isManagerSupervisor({
+      payload: args.payload,
+      supervisor: args.supervisor,
+    })
+  ) {
     return args.rows.filter(
       (row) =>
         isDirectReportTo(row, supervisorId) ||
@@ -193,10 +216,23 @@ function getRowsForSupervisor(args: {
   );
 }
 
+/**
+ * Segment behavior #3:
+ * All Supervisors uses direct-only ownership so HC does not stack chain rollups.
+ */
+function getDirectRowsForSupervisor(args: {
+  rows: TeamRowClient[];
+  supervisor: SupervisorOption;
+}) {
+  return args.rows.filter((row) =>
+    isDirectReportTo(row, args.supervisor.supervisor_person_id)
+  );
+}
+
 function inferTeamClass(args: {
   supervisor_person_id: string;
   rows: TeamRowClient[];
-}): TeamClass {
+}): RollupTeamClass {
   const directRows = args.rows.filter((row) =>
     isDirectReportTo(row, args.supervisor_person_id)
   );
@@ -226,7 +262,7 @@ function getDefinitionOrder(payload: MetricsSurfacePayload): string[] {
 
 function getVisibleKpiKeys(args: {
   payload: MetricsSurfacePayload;
-  class_type: ReportClass;
+  class_type: RollupReportClass;
 }) {
   const ordered = getDefinitionOrder(args.payload);
   const limit = args.class_type === "SMART" ? 7 : 4;
@@ -360,6 +396,44 @@ function buildKpis(args: {
   });
 }
 
+function buildSupervisorRow(args: {
+  payload: MetricsSurfacePayload;
+  supervisor: SupervisorOption;
+  rows: TeamRowClient[];
+  visibleKpiKeys: string[];
+}): SupervisorRollupRow | null {
+  const { payload, supervisor, rows, visibleKpiKeys } = args;
+
+  if (!rows.length) return null;
+
+  const executiveItems = buildScopedExecutiveStrip({
+    runtime: payload.executive_strip?.runtime ?? null,
+    scopedRows: rows,
+    fallbackItems: payload.executive_strip?.scope?.items ?? [],
+  });
+
+  const hcRows = rows.filter(isValidHcRow);
+  
+  return {
+    supervisor_person_id: supervisor.supervisor_person_id,
+    supervisor_name: supervisor.supervisor_name,
+    team_class: inferTeamClass({
+      supervisor_person_id: supervisor.supervisor_person_id,
+      rows,
+    }),
+    rollup_hc: rows.length,
+    composite_score: computeComposite(rows),
+    rank: 0,
+    kpis: buildKpis({
+      payload,
+      
+      rows: hcRows,
+      executiveItems,
+      visibleKpiKeys,
+    }),
+  };
+}
+
 function rankRows(rows: SupervisorRollupRow[]) {
   return [...rows]
     .sort((a, b) => {
@@ -382,51 +456,45 @@ function rankRows(rows: SupervisorRollupRow[]) {
     }));
 }
 
-export function buildCompanyManagerRollupReportPayload(args: {
+export function buildRollupReportPayload(args: {
   payload: MetricsSurfacePayload;
-  class_type: ReportClass;
-  range: ReportRange;
-}): ManagerRollupReportPayload {
+  class_type: RollupReportClass;
+  range: RollupReportRange;
+}): RollupReportPayload {
   const { payload, class_type, range } = args;
 
   const allRows = mapTeamRows(payload);
   const supervisors = getUniqueSupervisors(allRows);
   const visibleKpiKeys = getVisibleKpiKeys({ payload, class_type });
 
-  const supervisorRows: SupervisorRollupRow[] = [];
+  const chainRows: SupervisorRollupRow[] = [];
+  const directRows: SupervisorRollupRow[] = [];
 
   for (const supervisor of supervisors) {
-    const rollupRows = getRowsForSupervisor({
+    const chainRow = buildSupervisorRow({
       payload,
-      rows: allRows,
       supervisor,
-    });
-
-    if (!rollupRows.length) continue;
-
-    const executiveItems = buildScopedExecutiveStrip({
-      runtime: payload.executive_strip?.runtime ?? null,
-      scopedRows: rollupRows,
-      fallbackItems: payload.executive_strip?.scope?.items ?? [],
-    });
-
-    supervisorRows.push({
-      supervisor_person_id: supervisor.supervisor_person_id,
-      supervisor_name: supervisor.supervisor_name,
-      team_class: inferTeamClass({
-        supervisor_person_id: supervisor.supervisor_person_id,
-        rows: rollupRows,
-      }),
-      rollup_hc: rollupRows.length,
-      composite_score: computeComposite(rollupRows),
-      rank: 0,
-      kpis: buildKpis({
+      rows: getChainRowsForSupervisor({
         payload,
-        rows: rollupRows,
-        executiveItems,
-        visibleKpiKeys,
+        rows: allRows,
+        supervisor,
       }),
+      visibleKpiKeys,
     });
+
+    if (chainRow) chainRows.push(chainRow);
+
+    const directRow = buildSupervisorRow({
+      payload,
+      supervisor,
+      rows: getDirectRowsForSupervisor({
+        rows: allRows,
+        supervisor,
+      }),
+      visibleKpiKeys,
+    });
+
+    if (directRow) directRows.push(directRow);
   }
 
   return {
@@ -438,12 +506,12 @@ export function buildCompanyManagerRollupReportPayload(args: {
     },
     segments: {
       itg_supervisors: rankRows(
-        supervisorRows.filter((row) => row.team_class === "ITG")
+        chainRows.filter((row) => row.team_class === "ITG")
       ),
       bp_supervisors: rankRows(
-        supervisorRows.filter((row) => row.team_class === "BP")
+        chainRows.filter((row) => row.team_class === "BP")
       ),
-      all_supervisors: rankRows(supervisorRows),
+      all_supervisors: rankRows(directRows),
     },
   };
 }

@@ -1,9 +1,9 @@
-// path: apps/web/src/app/api/company-manager/metrics-rollup-report/route.ts
+// path: apps/web/src/app/api/metrics-rollup-report/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 
 import { getCompanyManagerSurfacePayload } from "@/features/role-company-manager/lib/getCompanyManagerSurfacePayload.server";
-import { buildCompanyManagerRollupReportPayload } from "@/features/role-company-manager/server/buildCompanyManagerRollupReportPayload.server";
+import { buildRollupReportPayload } from "@/shared/server/metrics/reports/buildRollupReportPayload.server";
 
 function normalizeClassType(value: string | null): "NSR" | "SMART" {
   return value === "SMART" ? "SMART" : "NSR";
@@ -23,14 +23,12 @@ export async function GET(req: NextRequest) {
     const classType = normalizeClassType(url.searchParams.get("class_type"));
     const range = normalizeRange(url.searchParams.get("range"));
 
-    // 1. reuse existing manager payload (already workforce-correct)
     const surfacePayload = await getCompanyManagerSurfacePayload({
       profile_key: classType,
       range,
     });
 
-    // 2. build report payload (heavy logic here, not in UI)
-    const reportPayload = buildCompanyManagerRollupReportPayload({
+    const reportPayload = buildRollupReportPayload({
       payload: surfacePayload,
       class_type: classType,
       range,
@@ -40,13 +38,14 @@ export async function GET(req: NextRequest) {
       ok: true,
       data: reportPayload,
     });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("metrics-rollup-report error", err);
 
     return NextResponse.json(
       {
         ok: false,
-        error: err?.message ?? "Failed to build rollup report",
+        error:
+          err instanceof Error ? err.message : "Failed to build rollup report",
       },
       { status: 500 }
     );

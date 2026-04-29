@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/Card";
 import { getCompanyManagerWorkforceSurfacePayload } from "@/features/role-company-manager/lib/getCompanyManagerWorkforceSurfacePayload.server";
 import { supabaseServer } from "@/shared/data/supabase/server";
 import { ExhibitLauncher } from "@/shared/surfaces/reports/ExhibitLauncher";
+import { WorkforceReportLauncher } from "@/shared/surfaces/reports/WorkforceReportLauncher";
 import { WorkforceSurfaceClient } from "@/shared/surfaces/workforce/WorkforceSurfaceClient";
 import type { WorkforceAffiliationOption } from "@/shared/types/workforce/surfacePayload";
 import type { WorkforceRow } from "@/shared/types/workforce/workforce.types";
@@ -134,6 +135,11 @@ export default async function CompanySupervisorWorkforcePageShell(props: Props) 
             <ExhibitLauncher
               rows={payload.rows}
               affiliations={affiliations}
+              regionLabel={regionLabel}
+              reportMonthLabel={reportMonthLabel}
+            />
+
+            <WorkforceReportLauncher
               regionLabel={regionLabel}
               reportMonthLabel={reportMonthLabel}
             />

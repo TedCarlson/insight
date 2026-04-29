@@ -27,8 +27,8 @@ import type { MetricsSurfacePayload } from "@/shared/types/metrics/surfacePayloa
 import { useScopedTeamControls } from "../hooks/useScopedTeamControls";
 import { useManagerHeaderScope } from "../hooks/useManagerHeaderScope";
 import ManagerRollupReportOverlay, {
-  type ManagerRollupReportPayload,
-} from "./ManagerRollupReportOverlay";
+  type RollupReportPayload,
+} from "../../../shared/components/metrics/RollupReportOverlay";
 
 type Props = {
   payload: MetricsSurfacePayload;
@@ -142,7 +142,7 @@ export default function CompanyManagerScopedViewClient({ payload }: Props) {
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [reportPayload, setReportPayload] =
-    useState<ManagerRollupReportPayload | null>(null);
+    useState<RollupReportPayload | null>(null);
 
   const currentClass = normalizeClassType(searchParams.get("class_type"));
   const currentRange = normalizeRangeType(
@@ -339,7 +339,7 @@ export default function CompanyManagerScopedViewClient({ payload }: Props) {
       params.set("range", currentRange);
 
       const res = await fetch(
-        `/api/company-manager/metrics-rollup-report?${params.toString()}`,
+        `/api/metrics-rollup-report?${params.toString()}`,
         { method: "GET" }
       );
 
@@ -349,7 +349,7 @@ export default function CompanyManagerScopedViewClient({ payload }: Props) {
         throw new Error(json?.error ?? "Unable to build rollup report");
       }
 
-      setReportPayload(json.data as ManagerRollupReportPayload);
+      setReportPayload(json.data as RollupReportPayload);
     } catch (err) {
       setReportPayload(null);
       setReportError(

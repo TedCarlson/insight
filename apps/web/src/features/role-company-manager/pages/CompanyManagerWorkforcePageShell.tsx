@@ -8,6 +8,7 @@ import { WorkforceSurfaceClient } from "@/shared/surfaces/workforce/WorkforceSur
 import type { WorkforceAffiliationOption } from "@/shared/types/workforce/surfacePayload";
 import type { WorkforceRow } from "@/shared/types/workforce/workforce.types";
 import { getCompanyManagerWorkforceSurfacePayload } from "../lib/getCompanyManagerWorkforceSurfacePayload.server";
+import { OnboardingReportLauncher } from "@/shared/surfaces/reports/OnboardingReportLauncher";
 
 type WorkforceStatus = "ACTIVE" | "INACTIVE" | "ALL";
 
@@ -137,17 +138,15 @@ export default async function CompanyManagerWorkforcePageShell(props: Props) {
             />
 
             <WorkforceReportLauncher
+              rows={payload.rows}
               regionLabel={regionLabel}
               reportMonthLabel={reportMonthLabel}
             />
 
-            <button
-              type="button"
-              disabled
-              className="rounded-xl border bg-muted/30 px-4 py-2 text-sm text-muted-foreground"
-            >
-              Onboarding
-            </button>
+            <OnboardingReportLauncher
+              regionLabel={regionLabel}
+              reportMonthLabel={reportMonthLabel}
+            />
 
             <button
               type="button"

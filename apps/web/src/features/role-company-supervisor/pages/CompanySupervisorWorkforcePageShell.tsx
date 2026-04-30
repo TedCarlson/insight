@@ -140,6 +140,7 @@ export default async function CompanySupervisorWorkforcePageShell(props: Props) 
             />
 
             <WorkforceReportLauncher
+              rows={payload.rows}
               regionLabel={regionLabel}
               reportMonthLabel={reportMonthLabel}
             />

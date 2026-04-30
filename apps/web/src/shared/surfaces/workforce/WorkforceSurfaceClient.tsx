@@ -34,6 +34,13 @@ type Props = {
   mode?: "manager" | "supervisor" | "admin";
 };
 
+type ReportsToOption = {
+  assignment_id: string;
+  label: string;
+  position_title: string | null;
+  affiliation: string | null;
+};
+
 function buildTabs(payload: WorkforceSurfacePayload) {
   const tabs = [...payload.tabs];
   const hasDropBuryTab = tabs.some((tab) => tab.key === "DROP_BURY");
@@ -42,10 +49,88 @@ function buildTabs(payload: WorkforceSurfacePayload) {
   ).length;
 
   if (!hasDropBuryTab && dropBuryCount > 0) {
-    tabs.push({ key: "DROP_BURY", label: tabLabel("DROP_BURY"), count: dropBuryCount });
+    tabs.push({
+      key: "DROP_BURY",
+      label: tabLabel("DROP_BURY"),
+      count: dropBuryCount,
+    });
   }
 
   return tabs;
+}
+
+function hasDirectReports(rows: WorkforceRow[], assignmentId: string) {
+  return rows.some((row) => row.reports_to_assignment_id === assignmentId);
+}
+
+function isLeadershipTitle(value: string | null | undefined) {
+  const title = String(value ?? "").toLowerCase();
+
+  return (
+    title.includes("owner") ||
+    title.includes("supervisor") ||
+    title.includes("lead") ||
+    title.includes("manager")
+  );
+}
+
+function buildReportsToOptions(args: {
+  rows: WorkforceRow[];
+  selected: WorkforceRow;
+  draft: WorkforceDraft;
+}): ReportsToOption[] {
+  const { rows, selected, draft } = args;
+  const activeAffiliationId = draft.affiliation_id ?? selected.affiliation_id;
+
+  const affiliationOptions: ReportsToOption[] = [];
+  const companyOptions: ReportsToOption[] = [];
+
+  for (const row of rows) {
+    if (!row.assignment_id || row.assignment_id === selected.assignment_id) {
+      continue;
+    }
+
+    const sameAffiliation =
+      activeAffiliationId && row.affiliation_id === activeAffiliationId;
+
+    const isCompanyLeadership =
+      !row.affiliation_id && row.seat_type === "LEADERSHIP";
+
+    const isAffiliationLeader =
+      Boolean(sameAffiliation) &&
+      (row.seat_type === "LEADERSHIP" ||
+        isLeadershipTitle(row.position_title) ||
+        hasDirectReports(rows, row.assignment_id));
+
+    if (!isAffiliationLeader && !isCompanyLeadership) continue;
+
+    const option: ReportsToOption = {
+      assignment_id: row.assignment_id,
+      label: identityLabel(row),
+      position_title: row.position_title ?? null,
+      affiliation: row.affiliation ?? null,
+    };
+
+    if (isAffiliationLeader) {
+      affiliationOptions.push(option);
+      continue;
+    }
+
+    companyOptions.push(option);
+  }
+
+  const ordered = [
+    ...affiliationOptions.sort((a, b) => a.label.localeCompare(b.label)),
+    ...companyOptions.sort((a, b) => a.label.localeCompare(b.label)),
+  ];
+
+  const seen = new Set<string>();
+
+  return ordered.filter((option) => {
+    if (seen.has(option.assignment_id)) return false;
+    seen.add(option.assignment_id);
+    return true;
+  });
 }
 
 export function WorkforceSurfaceClient({ payload }: Props) {
@@ -79,6 +164,16 @@ export function WorkforceSurfaceClient({ payload }: Props) {
 
     return rows;
   }, [payload.rows, tab, search]);
+
+  const reportsToOptions = useMemo(() => {
+    if (!selected || !draft) return [];
+
+    return buildReportsToOptions({
+      rows: payload.rows,
+      selected,
+      draft,
+    });
+  }, [payload.rows, selected, draft]);
 
   function openRow(row: WorkforceRow) {
     setSelected(row);
@@ -169,6 +264,45 @@ export function WorkforceSurfaceClient({ payload }: Props) {
     });
   }
 
+  async function endAssignment() {
+    if (!selected || selected.assignment_id === "NEW") return;
+
+    const confirmed = window.confirm(
+      `End assignment for ${identityLabel(selected)} as of today?`
+    );
+
+    if (!confirmed) return;
+
+    setSaving(true);
+    setSaveError(null);
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const response = await fetch("/api/workforce/assignment/update", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        assignment_id: selected.assignment_id,
+        changes: {
+          end_date: today,
+        },
+      }),
+    });
+
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      setSaving(false);
+      setSaveError(result?.error ?? "Unable to end assignment.");
+      return;
+    }
+
+    closeDrawer();
+    router.refresh();
+  }
+
   async function commitDraft() {
     if (!selected || !draft || !isDraftDirty(selected, draft)) return;
 
@@ -202,8 +336,8 @@ export function WorkforceSurfaceClient({ payload }: Props) {
   const selectedAffiliationLabel =
     selected?.affiliation_id
       ? payload.editOptions?.affiliations?.find(
-          (option) => option.affiliation_id === selected.affiliation_id
-        )?.affiliation_label ?? null
+        (option) => option.affiliation_id === selected.affiliation_id
+      )?.affiliation_label ?? null
       : null;
 
   return (
@@ -292,9 +426,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                       )}
                     </td>
 
-                    <td className="px-3 py-3">
-                      {resolveAffiliationLabel(row)}
-                    </td>
+                    <td className="px-3 py-3">{resolveAffiliationLabel(row)}</td>
 
                     <td className="px-3 py-3">
                       <span
@@ -501,7 +633,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                     className="h-10 rounded-xl border px-3"
                   >
                     <option value="">Select leader…</option>
-                    {(payload.editOptions?.reportsTo ?? []).map((option) => (
+                    {reportsToOptions.map((option) => (
                       <option
                         key={option.assignment_id}
                         value={option.assignment_id}
@@ -576,6 +708,18 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                   <dt className="text-muted-foreground">End</dt>
                   <dd>{selected.end_date ?? "Active"}</dd>
                 </div>
+                {selected.assignment_id !== "NEW" ? (
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={endAssignment}
+                      disabled={saving}
+                      className="rounded-xl border border-[var(--to-danger)] bg-[color-mix(in_oklab,var(--to-danger)_8%,white)] px-3 py-2 text-sm text-[var(--to-danger)] disabled:opacity-50"
+                    >
+                      End Assignment
+                    </button>
+                  </div>
+                ) : null}
               </dl>
             </div>
 

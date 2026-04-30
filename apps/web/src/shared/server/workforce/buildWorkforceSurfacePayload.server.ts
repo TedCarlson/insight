@@ -11,6 +11,7 @@ import type {
   WorkforceScheduleDay,
   WorkforceSeatType,
 } from "@/shared/types/workforce/workforce.types";
+import { isActiveWorkforceRow } from "@/shared/lib/workforce/workforceEligibility";
 
 export type WorkforceSourceRow = {
   assignment_id: string;
@@ -280,9 +281,33 @@ function buildOfficeOptions(rows: WorkforceRow[]) {
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function hasDirectReports(rows: WorkforceRow[], assignmentId: string) {
+  return rows.some((row) => row.reports_to_assignment_id === assignmentId);
+}
+
+function isLeadershipTitle(value: string | null | undefined) {
+  const title = String(value ?? "").toLowerCase();
+
+  return (
+    title.includes("owner") ||
+    title.includes("supervisor") ||
+    title.includes("lead") ||
+    title.includes("manager") ||
+    title.includes("director")
+  );
+}
+
 function buildReportsToOptions(rows: WorkforceRow[]) {
   return rows
-    .filter((row) => row.seat_type === "LEADERSHIP" && row.is_active)
+    .filter((row) => {
+      if (!row.is_active) return false;
+
+      return (
+        row.seat_type === "LEADERSHIP" ||
+        isLeadershipTitle(row.position_title) ||
+        hasDirectReports(rows, row.assignment_id)
+      );
+    })
     .map((row) => ({
       value: row.assignment_id,
       label: row.display_name,
@@ -316,54 +341,60 @@ function buildSliceOptions(
 export async function buildWorkforceSurfacePayload(args: {
   rows: WorkforceSourceRow[];
 }): Promise<WorkforceSurfacePayload> {
-  const rows = (args.rows ?? []).map(toWorkforceRow);
+  const today = new Date().toISOString().slice(0, 10);
 
-  const field = rows.filter((row) => row.seat_type === "FIELD").length;
-  const leadership = rows.filter(
-    (row) => row.seat_type === "LEADERSHIP"
-  ).length;
-  const support = rows.filter((row) => row.seat_type === "SUPPORT").length;
-  const incomplete = rows.filter((row) => row.is_incomplete).length;
-  const travel = rows.filter((row) => row.seat_type === "TRAVEL").length;
-  const dropBury = rows.filter((row) => row.seat_type === "DROP_BURY").length;
-  const fmla = rows.filter((row) => row.seat_type === "FMLA").length;
+  const rows = (args.rows ?? [])
 
-  const positions = await loadPositionOptions();
-  const affiliations = await loadAffiliationOptions();
+    .map(toWorkforceRow)
 
-  return {
-    rows,
-    tabs: [
-      { key: "ALL", label: "All", count: rows.length },
-      { key: "FIELD", label: "Field", count: field },
-      { key: "LEADERSHIP", label: "Leadership", count: leadership },
-      { key: "INCOMPLETE", label: "Incomplete", count: incomplete },
-      { key: "TRAVEL", label: "Travel Techs", count: travel },
-      { key: "DROP_BURY", label: "Drop Bury", count: dropBury },
-      { key: "FMLA", label: "FMLA", count: fmla },
-    ],
-    summary: {
-      total: rows.length,
-      field,
-      leadership,
-      support,
-      incomplete,
-      travel,
-      drop_bury: dropBury,
-      fmla,
-    },
-    slices: {
-      offices: buildSliceOptions(rows, (row) => row.office),
-      reportsTo: buildSliceOptions(rows, (row) => row.reports_to_name),
-      positions: buildSliceOptions(rows, (row) => row.position_title),
-      affiliations: buildSliceOptions(rows, (row) => row.affiliation),
-      seatTypes: buildSliceOptions(rows, (row) => row.seat_type),
-    },
-    editOptions: {
-      positions,
-      offices: buildOfficeOptions(rows),
-      reportsTo: buildReportsToOptions(rows),
-      affiliations,
-    },
-  };
+    .filter((row) => isActiveWorkforceRow(row, today));
+
+const field = rows.filter((row) => row.seat_type === "FIELD").length;
+const leadership = rows.filter(
+  (row) => row.seat_type === "LEADERSHIP"
+).length;
+const support = rows.filter((row) => row.seat_type === "SUPPORT").length;
+const incomplete = rows.filter((row) => row.is_incomplete).length;
+const travel = rows.filter((row) => row.seat_type === "TRAVEL").length;
+const dropBury = rows.filter((row) => row.seat_type === "DROP_BURY").length;
+const fmla = rows.filter((row) => row.seat_type === "FMLA").length;
+
+const positions = await loadPositionOptions();
+const affiliations = await loadAffiliationOptions();
+
+return {
+  rows,
+  tabs: [
+    { key: "ALL", label: "All", count: rows.length },
+    { key: "FIELD", label: "Field", count: field },
+    { key: "LEADERSHIP", label: "Leadership", count: leadership },
+    { key: "INCOMPLETE", label: "Incomplete", count: incomplete },
+    { key: "TRAVEL", label: "Travel Techs", count: travel },
+    { key: "DROP_BURY", label: "Drop Bury", count: dropBury },
+    { key: "FMLA", label: "FMLA", count: fmla },
+  ],
+  summary: {
+    total: rows.length,
+    field,
+    leadership,
+    support,
+    incomplete,
+    travel,
+    drop_bury: dropBury,
+    fmla,
+  },
+  slices: {
+    offices: buildSliceOptions(rows, (row) => row.office),
+    reportsTo: buildSliceOptions(rows, (row) => row.reports_to_name),
+    positions: buildSliceOptions(rows, (row) => row.position_title),
+    affiliations: buildSliceOptions(rows, (row) => row.affiliation),
+    seatTypes: buildSliceOptions(rows, (row) => row.seat_type),
+  },
+  editOptions: {
+    positions,
+    offices: buildOfficeOptions(rows),
+    reportsTo: buildReportsToOptions(rows),
+    affiliations,
+  },
+};
 }

@@ -12,26 +12,41 @@ export type MetricsControlsValue = {
 
 export type TeamRowClient = {
   subject_key: string;
+
+  // identity
   person_id?: string | null;
   full_name?: string | null;
   tech_id?: string | null;
+
+  // 🔥 workforce spine (NEW — REQUIRED)
+  assignment_id?: string | null;
+  reports_to_assignment_id?: string | null;
+  affiliation_id?: string | null;
+  seat_type?: string | null;
+
+  // metrics
   composite_score?: number | null;
   rank?: number | null;
   jobs_display?: string | null;
   risk_count?: number | null;
+
   work_mix?: {
     total: number;
     installs: number;
     tcs: number;
     sros: number;
   } | null;
+
+  // dimensions
   office_label?: string | null;
   affiliation_type?: string | null;
   contractor_name?: string | null;
   reports_to_person_id?: string | null;
   reports_to_label?: string | null;
   co_code?: string | null;
+
   supervisor_chain_person_ids?: string[];
+
   metrics: Array<{
     metric_key: string;
     label?: string | null;
@@ -81,23 +96,39 @@ export function mapTeamRows(payload: MetricsSurfacePayload): TeamRowClient[] {
         row.row_key ??
         row.tech_id?.trim() ??
         `${row.full_name?.trim() || "unknown"}-${index}`,
+
+      // identity
       person_id: toNullableString(unsafeRow.person_id),
       full_name: row.full_name,
       tech_id: row.tech_id,
+
+      // 🔥 workforce spine (NOW WIRED)
+      assignment_id: toNullableString(unsafeRow.assignment_id),
+      reports_to_assignment_id: toNullableString(
+        unsafeRow.reports_to_assignment_id
+      ),
+      affiliation_id: toNullableString(unsafeRow.affiliation_id),
+      seat_type: toNullableString(unsafeRow.seat_type),
+
+      // metrics
       composite_score: row.composite_score,
       rank: row.rank,
       jobs_display: row.jobs_display ?? null,
       risk_count: row.risk_count ?? null,
       work_mix: row.work_mix ?? null,
+
+      // dimensions
       office_label: row.office_label ?? null,
       affiliation_type: row.affiliation_type ?? null,
       contractor_name: unsafeRow.contractor_name ?? null,
       reports_to_person_id: row.reports_to_person_id ?? null,
       reports_to_label: row.reports_to_label ?? null,
       co_code: row.co_code ?? null,
+
       supervisor_chain_person_ids: normalizeChain(
         unsafeRow.supervisor_chain_person_ids
       ),
+
       metrics: row.metrics.map((metric) => ({
         metric_key: metric.metric_key,
         label: metric.metric_key,
@@ -118,11 +149,13 @@ export function buildScopedRows(
   const firstClassRows = rows.filter((row) => {
     if (controls.office_label && row.office_label !== controls.office_label)
       return false;
+
     if (
       controls.affiliation_type &&
       row.affiliation_type !== controls.affiliation_type
     )
       return false;
+
     if (
       controls.contractor_name &&
       row.contractor_name !== controls.contractor_name
@@ -145,6 +178,7 @@ export function buildScopedRows(
 
   const affiliationRows = firstClassRows.filter((row) => {
     const chain = row.supervisor_chain_person_ids ?? [];
+
     const isInChain = chain.includes(supervisorId);
 
     const isDirect =

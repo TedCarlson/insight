@@ -23,6 +23,7 @@ type RequestBody = {
     affiliation_id?: string | null;
     reports_to_assignment_id?: string | null;
     start_date?: string | null;
+    end_date?: string | null;
     seat_type?: SeatType;
   };
 };
@@ -82,6 +83,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid seat_type" }, { status: 400 });
   }
 
+  if (
+    !isNew &&
+    changes.reports_to_assignment_id &&
+    changes.reports_to_assignment_id === assignment_id
+  ) {
+    return NextResponse.json(
+      { error: "Assignment cannot report to itself" },
+      { status: 400 }
+    );
+  }
+
   const { data, error } = await adminClient.rpc("workforce_update_assignment", {
     p_assignment_id: isNew ? null : assignment_id,
     p_person_id: isNew ? changes.person_id ?? null : null,
@@ -99,6 +111,7 @@ export async function POST(req: Request) {
     p_start_date: "start_date" in changes ? changes.start_date : null,
     p_role_type: "seat_type" in changes ? changes.seat_type : null,
     p_auth_user_id: user?.id ?? null,
+    p_end_date: "end_date" in changes ? changes.end_date : null,
   });
 
   if (error) {

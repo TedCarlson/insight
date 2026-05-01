@@ -1,6 +1,4 @@
-// RUN THIS
-// Replace the entire file:
-// apps/web/src/features/route-lock/calendar/lib/getRouteLockDays.server.ts
+// path: apps/web/src/features/route-lock/calendar/lib/getRouteLockDays.server.ts
 
 import { cache } from "react";
 
@@ -8,19 +6,22 @@ type Sb = any;
 
 export type FiscalMonthRow = {
   fiscal_month_id: string;
-  start_date: string; // YYYY-MM-DD
-  end_date: string; // YYYY-MM-DD (your fiscal_end_date)
+  start_date: string;
+  end_date: string;
   label?: string | null;
 };
 
 export type CalendarDayRow = {
-  date: string; // YYYY-MM-DD
+  date: string;
 
   quota_hours: number | null;
   quota_routes: number | null;
   quota_units: number | null;
 
-  scheduled_routes: number; // used as "capacity" in routes-mode
+  planned_field_count: number;
+  planned_travel_count: number;
+
+  scheduled_routes: number;
   scheduled_techs: number;
 
   total_headcount: number;
@@ -31,13 +32,19 @@ export type CalendarDayRow = {
   has_sv: boolean;
   has_check_in: boolean;
 
+  work_count: number;
+  bplow_count: number;
+  prjt_count: number;
+  trvl_count: number;
+  bptrl_count: number;
+
   actual_techs: number | null;
   actual_units: number | null;
   actual_hours: number | null;
   actual_jobs: number | null;
 };
 
-const DEBUG = false; // flip false when done
+const DEBUG = false;
 
 function n0(v: unknown): number {
   const x = Number(v);
@@ -45,7 +52,9 @@ function n0(v: unknown): number {
 }
 
 function safePct(numer: number, denom: number): number | null {
-  if (!Number.isFinite(numer) || !Number.isFinite(denom) || denom <= 0) return null;
+  if (!Number.isFinite(numer) || !Number.isFinite(denom) || denom <= 0) {
+    return null;
+  }
   return Math.round((numer / denom) * 100);
 }
 
@@ -67,49 +76,62 @@ function addDaysISO(iso: string, days: number): string {
 function eachDayISO(start: string, end: string): string[] {
   const out: string[] = [];
   let cur = start;
+
   while (cur <= end) {
     out.push(cur);
     cur = addDaysISO(cur, 1);
   }
+
   return out;
 }
 
-const resolveFiscalMonthById = cache(async (sb: Sb, fiscal_month_id: string): Promise<FiscalMonthRow | null> => {
-  const { data, error } = await sb
-    .from("fiscal_month_dim")
-    .select("fiscal_month_id,start_date,end_date,label")
-    .eq("fiscal_month_id", fiscal_month_id)
-    .maybeSingle();
+const resolveFiscalMonthById = cache(
+  async (sb: Sb, fiscal_month_id: string): Promise<FiscalMonthRow | null> => {
+    const { data, error } = await sb
+      .from("fiscal_month_dim")
+      .select("fiscal_month_id,start_date,end_date,label")
+      .eq("fiscal_month_id", fiscal_month_id)
+      .maybeSingle();
 
-  if (error || !data?.fiscal_month_id) return null;
-  return {
-    fiscal_month_id: String(data.fiscal_month_id),
-    start_date: String(data.start_date).slice(0, 10),
-    end_date: String(data.end_date).slice(0, 10),
-    label: data.label ?? null,
-  };
-});
+    if (error || !data?.fiscal_month_id) return null;
 
-const resolveFiscalMonthForDate = cache(async (sb: Sb, isoDate: string): Promise<FiscalMonthRow | null> => {
-  const { data, error } = await sb
-    .from("fiscal_month_dim")
-    .select("fiscal_month_id,start_date,end_date,label")
-    .lte("start_date", isoDate)
-    .gte("end_date", isoDate)
-    .order("start_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    return {
+      fiscal_month_id: String(data.fiscal_month_id),
+      start_date: String(data.start_date).slice(0, 10),
+      end_date: String(data.end_date).slice(0, 10),
+      label: data.label ?? null,
+    };
+  }
+);
 
-  if (error || !data?.fiscal_month_id) return null;
-  return {
-    fiscal_month_id: String(data.fiscal_month_id),
-    start_date: String(data.start_date).slice(0, 10),
-    end_date: String(data.end_date).slice(0, 10),
-    label: data.label ?? null,
-  };
-});
+const resolveFiscalMonthForDate = cache(
+  async (sb: Sb, isoDate: string): Promise<FiscalMonthRow | null> => {
+    const { data, error } = await sb
+      .from("fiscal_month_dim")
+      .select("fiscal_month_id,start_date,end_date,label")
+      .lte("start_date", isoDate)
+      .gte("end_date", isoDate)
+      .order("start_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-async function computeHeadcountByDay(sb: Sb, pc_org_id: string, start: string, end: string): Promise<Map<string, number>> {
+    if (error || !data?.fiscal_month_id) return null;
+
+    return {
+      fiscal_month_id: String(data.fiscal_month_id),
+      start_date: String(data.start_date).slice(0, 10),
+      end_date: String(data.end_date).slice(0, 10),
+      label: data.label ?? null,
+    };
+  }
+);
+
+async function computeHeadcountByDay(
+  sb: Sb,
+  pc_org_id: string,
+  start: string,
+  end: string
+): Promise<Map<string, number>> {
   const { data, error } = await sb
     .from("v_roster_active")
     .select("person_id,start_date,end_date")
@@ -120,9 +142,8 @@ async function computeHeadcountByDay(sb: Sb, pc_org_id: string, start: string, e
     return new Map();
   }
 
-  const days = eachDayISO(start, end);
   const out = new Map<string, number>();
-  for (const d of days) out.set(d, 0);
+  for (const d of eachDayISO(start, end)) out.set(d, 0);
 
   for (const r of (data ?? []) as any[]) {
     const s = String(r.start_date ?? "").slice(0, 10) || null;
@@ -131,8 +152,7 @@ async function computeHeadcountByDay(sb: Sb, pc_org_id: string, start: string, e
     const activeStart = s && s > start ? s : start;
     const activeEnd = e && e < end ? e : end;
 
-    if (!activeStart || !activeEnd) continue;
-    if (activeEnd < activeStart) continue;
+    if (!activeStart || !activeEnd || activeEnd < activeStart) continue;
 
     let cur = activeStart;
     while (cur <= activeEnd) {
@@ -149,11 +169,18 @@ async function computeScheduleAgg(
   pc_org_id: string,
   start: string,
   end: string
-): Promise<Map<string, { techs: Set<string>; routes: number }>> {
-  // ✅ CRITICAL: Supabase select() returns max 1000 rows unless you page.
-  // Your month has 1078 rows, so 03/21 is getting clipped.
+): Promise<
+  Map<
+    string,
+    {
+      techs: Set<string>;
+      routes: number;
+      field: number;
+      travel: number;
+    }
+  >
+> {
   const endExclusive = addDaysISO(end, 1);
-
   const pageSize = 1000;
   let from = 0;
   let all: any[] = [];
@@ -162,74 +189,64 @@ async function computeScheduleAgg(
     const to = from + pageSize - 1;
 
     const { data, error } = await sb
-      .from("schedule_day_fact")
-      .select("shift_date,tech_id")
+      .from("v_route_lock_schedule_enriched")
+      .select("shift_date,tech_id,role_type")
       .eq("pc_org_id", pc_org_id)
       .gte("shift_date", start)
       .lt("shift_date", endExclusive)
       .range(from, to);
 
     if (error) {
-      console.warn("schedule_day_fact query failed:", error.message);
+      console.warn("v_route_lock_schedule_enriched query failed:", error.message);
       return new Map();
     }
 
     const rows = (data ?? []) as any[];
     all = all.concat(rows);
 
-    if (rows.length < pageSize) break; // last page
+    if (rows.length < pageSize) break;
     from += pageSize;
   }
 
   if (DEBUG) {
-    let min: string | null = null;
-    let max: string | null = null;
-
-    for (const r of all) {
-      const d = String(r?.shift_date ?? "").slice(0, 10);
-      if (!d) continue;
-      if (min === null || d < min) min = d;
-      if (max === null || d > max) max = d;
-    }
-
-    const has0321 = all.some((r) => String(r?.shift_date ?? "").slice(0, 10) === "2026-03-21");
-    console.log("DEBUG SCHED QUERY", {
-      pc_org_id,
-      start,
-      end,
-      endExclusive,
-      rowCount: all.length,
-      min_shift_date: min,
-      max_shift_date: max,
-      firstRow: all[0] ?? null,
-      has_2026_03_21: has0321,
-    });
+    console.log("DEBUG SCHEDULE ROW COUNT", all.length);
   }
 
-  const byDay = new Map<string, { techs: Set<string>; routes: number }>();
+  const byDay = new Map<
+    string,
+    {
+      techs: Set<string>;
+      routes: number;
+      field: number;
+      travel: number;
+    }
+  >();
 
   for (const r of all) {
     const d = String(r.shift_date ?? "").slice(0, 10);
     if (!d) continue;
 
     const tech = String(r.tech_id ?? "").trim();
-    const cur = byDay.get(d) ?? { techs: new Set<string>(), routes: 0 };
+    const role = String(r.role_type ?? "FIELD").toUpperCase();
+
+    const cur = byDay.get(d) ?? {
+      techs: new Set<string>(),
+      routes: 0,
+      field: 0,
+      travel: 0,
+    };
 
     if (tech) cur.techs.add(tech);
 
-    // Planning capacity: routes == scheduled tech rows (tech-capacity in routes-mode)
     cur.routes += 1;
 
-    byDay.set(d, cur);
-  }
+    if (role === "TRAVEL") {
+      cur.travel += 1;
+    } else {
+      cur.field += 1;
+    }
 
-  if (DEBUG) {
-    const v = byDay.get("2026-03-21");
-    console.log("DEBUG 03-21 SCHEDULE AGG", {
-      found: !!v,
-      routes: v?.routes ?? 0,
-      techs: v?.techs.size ?? 0,
-    });
+    byDay.set(d, cur);
   }
 
   return byDay;
@@ -240,7 +257,16 @@ async function computeQuota(
   pc_org_id: string,
   start: string,
   end: string
-): Promise<Map<string, { quota_hours: number | null; quota_routes: number | null; quota_units: number | null }>> {
+): Promise<
+  Map<
+    string,
+    {
+      quota_hours: number | null;
+      quota_routes: number | null;
+      quota_units: number | null;
+    }
+  >
+> {
   const { data, error } = await sb
     .from("quota_day_fact")
     .select("shift_date,quota_hours,quota_units")
@@ -253,13 +279,24 @@ async function computeQuota(
     return new Map();
   }
 
-  const byDay = new Map<string, { quota_hours: number | null; quota_routes: number | null; quota_units: number | null }>();
+  const byDay = new Map<
+    string,
+    {
+      quota_hours: number | null;
+      quota_routes: number | null;
+      quota_units: number | null;
+    }
+  >();
 
   for (const r of (data ?? []) as any[]) {
     const d = String(r.shift_date ?? "").slice(0, 10);
     if (!d) continue;
 
-    const cur = byDay.get(d) ?? { quota_hours: 0, quota_routes: 0, quota_units: 0 };
+    const cur = byDay.get(d) ?? {
+      quota_hours: 0,
+      quota_routes: 0,
+      quota_units: 0,
+    };
 
     cur.quota_hours = (cur.quota_hours ?? 0) + n0(r.quota_hours);
     cur.quota_units = (cur.quota_units ?? 0) + n0(r.quota_units);
@@ -270,26 +307,95 @@ async function computeQuota(
   for (const [d, v] of byDay.entries()) {
     const hours = v.quota_hours ?? null;
     const routes = hours === null ? null : Math.ceil(hours / 8);
-    byDay.set(d, { quota_hours: hours, quota_units: v.quota_units ?? null, quota_routes: routes });
+
+    byDay.set(d, {
+      quota_hours: hours,
+      quota_units: v.quota_units ?? null,
+      quota_routes: routes,
+    });
   }
 
   return byDay;
 }
 
-async function computeShiftValidationPresence(sb: Sb, pc_org_id: string, start: string, end: string): Promise<Set<string>> {
+async function computeShiftValidationAgg(
+  sb: Sb,
+  pc_org_id: string,
+  start: string,
+  end: string
+): Promise<
+  Map<
+    string,
+    {
+      work: number;
+      bplow: number;
+      prjt: number;
+      trvl: number;
+      bptrl: number;
+      total: number;
+    }
+  >
+> {
   const { data, error } = await sb
     .from("shift_validation_day_fact")
-    .select("shift_date")
+    .select("shift_date,is_work,is_bplow,is_prjt,is_trvl,is_bptrl")
     .eq("pc_org_id", pc_org_id)
     .gte("shift_date", start)
     .lte("shift_date", end);
 
   if (error) {
-    console.warn("shift_validation_day_fact query failed:", error.message);
-    return new Set();
+    console.warn("shift_validation_day_fact agg failed:", error.message);
+    return new Map();
   }
 
-  return new Set<string>((data ?? []).map((r: any) => String(r?.shift_date ?? "").slice(0, 10)).filter(Boolean));
+  const byDay = new Map<
+    string,
+    {
+      work: number;
+      bplow: number;
+      prjt: number;
+      trvl: number;
+      bptrl: number;
+      total: number;
+    }
+  >();
+
+  for (const r of (data ?? []) as any[]) {
+    const d = String(r.shift_date ?? "").slice(0, 10);
+    if (!d) continue;
+
+    const cur =
+      byDay.get(d) ??
+      ({
+        work: 0,
+        bplow: 0,
+        prjt: 0,
+        trvl: 0,
+        bptrl: 0,
+        total: 0,
+      } satisfies {
+        work: number;
+        bplow: number;
+        prjt: number;
+        trvl: number;
+        bptrl: number;
+        total: number;
+      });
+
+    if (r.is_work) cur.work += 1;
+    if (r.is_bplow) cur.bplow += 1;
+    if (r.is_prjt) cur.prjt += 1;
+    if (r.is_trvl) cur.trvl += 1;
+    if (r.is_bptrl) cur.bptrl += 1;
+
+    if (r.is_work || r.is_bplow || r.is_prjt || r.is_trvl || r.is_bptrl) {
+      cur.total += 1;
+    }
+
+    byDay.set(d, cur);
+  }
+
+  return byDay;
 }
 
 async function computeCheckInActuals(
@@ -310,14 +416,22 @@ async function computeCheckInActuals(
     return new Map();
   }
 
-  const byDay = new Map<string, { techs: Set<string>; units: number; hours: number; jobs: number }>();
+  const byDay = new Map<
+    string,
+    { techs: Set<string>; units: number; hours: number; jobs: number }
+  >();
 
   for (const r of (data ?? []) as any[]) {
     const d = String(r.shift_date ?? "").slice(0, 10);
     if (!d) continue;
 
     const tech = String(r.tech_id ?? "").trim();
-    const cur = byDay.get(d) ?? { techs: new Set<string>(), units: 0, hours: 0, jobs: 0 };
+    const cur = byDay.get(d) ?? {
+      techs: new Set<string>(),
+      units: 0,
+      hours: 0,
+      jobs: 0,
+    };
 
     if (tech) cur.techs.add(tech);
     cur.units += n0(r.actual_units);
@@ -330,34 +444,59 @@ async function computeCheckInActuals(
   return byDay;
 }
 
-export async function getRouteLockDaysForFiscalMonth(sb: Sb, pc_org_id: string, fiscal_month_id: string) {
+export async function getRouteLockDaysForFiscalMonth(
+  sb: Sb,
+  pc_org_id: string,
+  fiscal_month_id: string
+) {
   const fm = await resolveFiscalMonthById(sb, fiscal_month_id);
-  if (!fm) return { ok: false as const, error: "Could not resolve fiscal month (fiscal_month_dim by id)" };
+
+  if (!fm) {
+    return {
+      ok: false as const,
+      error: "Could not resolve fiscal month (fiscal_month_dim by id)",
+    };
+  }
 
   const start = fm.start_date;
   const end = fm.end_date;
-
   const days = eachDayISO(start, end);
 
-  const [headcountByDay, scheduleByDay, quotaByDay, svSet, actualByDay] = await Promise.all([
-    computeHeadcountByDay(sb, pc_org_id, start, end),
-    computeScheduleAgg(sb, pc_org_id, start, end),
-    computeQuota(sb, pc_org_id, start, end),
-    computeShiftValidationPresence(sb, pc_org_id, start, end),
-    computeCheckInActuals(sb, pc_org_id, start, end),
-  ]);
+  const [headcountByDay, scheduleByDay, quotaByDay, svByDay, actualByDay] =
+    await Promise.all([
+      computeHeadcountByDay(sb, pc_org_id, start, end),
+      computeScheduleAgg(sb, pc_org_id, start, end),
+      computeQuota(sb, pc_org_id, start, end),
+      computeShiftValidationAgg(sb, pc_org_id, start, end),
+      computeCheckInActuals(sb, pc_org_id, start, end),
+    ]);
 
   const out: CalendarDayRow[] = days.map((d) => {
     const sched = scheduleByDay.get(d);
     const scheduled_routes = sched?.routes ?? 0;
     const scheduled_techs = sched?.techs.size ?? 0;
 
-    const quota = quotaByDay.get(d) ?? { quota_hours: null, quota_routes: null, quota_units: null };
+    const quota = quotaByDay.get(d) ?? {
+      quota_hours: null,
+      quota_routes: null,
+      quota_units: null,
+    };
+
+    const sv = svByDay.get(d);
+    const work_count = sv?.work ?? 0;
+    const bplow_count = sv?.bplow ?? 0;
+    const prjt_count = sv?.prjt ?? 0;
+    const trvl_count = sv?.trvl ?? 0;
+    const bptrl_count = sv?.bptrl ?? 0;
+    const has_sv = (sv?.total ?? 0) > 0;
 
     const total_headcount = headcountByDay.get(d) ?? 0;
-    const util_pct = safePct(scheduled_techs, total_headcount);
+    const util_base = has_sv ? work_count + bplow_count + prjt_count : scheduled_techs;
+    const util_pct = safePct(util_base, total_headcount);
 
-    const delta_forecast = quota.quota_routes === null ? null : scheduled_routes - quota.quota_routes;
+    const capacity_routes = has_sv ? work_count + bplow_count + prjt_count : scheduled_routes;
+    const delta_forecast =
+      quota.quota_routes === null ? null : capacity_routes - quota.quota_routes;
 
     const actual = actualByDay.get(d);
     const has_check_in = !!actual && actual.techs.size > 0;
@@ -369,6 +508,9 @@ export async function getRouteLockDaysForFiscalMonth(sb: Sb, pc_org_id: string, 
       quota_routes: quota.quota_routes,
       quota_units: quota.quota_units,
 
+      planned_field_count: sched?.field ?? scheduled_techs,
+      planned_travel_count: sched?.travel ?? 0,
+
       scheduled_routes,
       scheduled_techs,
 
@@ -377,8 +519,14 @@ export async function getRouteLockDaysForFiscalMonth(sb: Sb, pc_org_id: string, 
 
       delta_forecast,
 
-      has_sv: svSet.has(d),
+      has_sv,
       has_check_in,
+
+      work_count,
+      bplow_count,
+      prjt_count,
+      trvl_count,
+      bptrl_count,
 
       actual_techs: has_check_in ? actual!.techs.size : null,
       actual_units: has_check_in ? actual!.units : null,
@@ -393,7 +541,13 @@ export async function getRouteLockDaysForFiscalMonth(sb: Sb, pc_org_id: string, 
 export async function getRouteLockDaysForCurrentFiscalMonth(sb: Sb, pc_org_id: string) {
   const today = todayInNY();
   const fm = await resolveFiscalMonthForDate(sb, today);
-  if (!fm) return { ok: false as const, error: "Could not resolve fiscal month (fiscal_month_dim)" };
+
+  if (!fm) {
+    return {
+      ok: false as const,
+      error: "Could not resolve fiscal month (fiscal_month_dim)",
+    };
+  }
 
   return getRouteLockDaysForFiscalMonth(sb, pc_org_id, fm.fiscal_month_id);
 }
@@ -401,7 +555,10 @@ export async function getRouteLockDaysForCurrentFiscalMonth(sb: Sb, pc_org_id: s
 export async function getRouteLockDaysForNextFiscalMonth(sb: Sb, pc_org_id: string) {
   const today = todayInNY();
   const cur = await resolveFiscalMonthForDate(sb, today);
-  if (!cur) return { ok: false as const, error: "Could not resolve current fiscal month" };
+
+  if (!cur) {
+    return { ok: false as const, error: "Could not resolve current fiscal month" };
+  }
 
   const { data, error } = await sb
     .from("fiscal_month_dim")
@@ -411,7 +568,9 @@ export async function getRouteLockDaysForNextFiscalMonth(sb: Sb, pc_org_id: stri
     .limit(1)
     .maybeSingle();
 
-  if (error || !data?.fiscal_month_id) return { ok: false as const, error: "Could not resolve next fiscal month" };
+  if (error || !data?.fiscal_month_id) {
+    return { ok: false as const, error: "Could not resolve next fiscal month" };
+  }
 
   return getRouteLockDaysForFiscalMonth(sb, pc_org_id, String(data.fiscal_month_id));
 }
@@ -419,7 +578,10 @@ export async function getRouteLockDaysForNextFiscalMonth(sb: Sb, pc_org_id: stri
 export async function getRouteLockDaysForPrevFiscalMonth(sb: Sb, pc_org_id: string) {
   const today = todayInNY();
   const cur = await resolveFiscalMonthForDate(sb, today);
-  if (!cur) return { ok: false as const, error: "Could not resolve current fiscal month" };
+
+  if (!cur) {
+    return { ok: false as const, error: "Could not resolve current fiscal month" };
+  }
 
   const { data, error } = await sb
     .from("fiscal_month_dim")
@@ -429,7 +591,9 @@ export async function getRouteLockDaysForPrevFiscalMonth(sb: Sb, pc_org_id: stri
     .limit(1)
     .maybeSingle();
 
-  if (error || !data?.fiscal_month_id) return { ok: false as const, error: "Could not resolve previous fiscal month" };
+  if (error || !data?.fiscal_month_id) {
+    return { ok: false as const, error: "Could not resolve previous fiscal month" };
+  }
 
   return getRouteLockDaysForFiscalMonth(sb, pc_org_id, String(data.fiscal_month_id));
 }

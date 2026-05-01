@@ -135,9 +135,10 @@ export async function POST(req: Request) {
     const assignmentIds = Array.from(new Set(clean.map((r) => r.assignment_id!).filter(Boolean)));
 
     const { data: allowedAssignments, error: allowedErr } = await admin
-      .from("assignment")
+      .from("route_lock_roster_v")
       .select("assignment_id")
       .eq("pc_org_id", guard.pc_org_id)
+      .eq("assignment_active", true)
       .in("assignment_id", assignmentIds);
 
     if (allowedErr) return NextResponse.json({ ok: false, error: allowedErr.message }, { status: 500 });

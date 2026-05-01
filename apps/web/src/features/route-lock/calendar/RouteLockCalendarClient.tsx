@@ -1,3 +1,5 @@
+// path: apps/web/src/features/route-lock/calendar/RouteLockCalendarClient.tsx
+
 "use client";
 
 import Link from "next/link";
@@ -8,17 +10,17 @@ type Fiscal = { start_date: string; end_date: string; label?: string | null };
 
 type Day = {
   date: string;
-
   quota_hours: number | null;
   quota_routes: number | null;
   quota_units: number | null;
 
   scheduled_routes: number;
   scheduled_techs: number;
+  planned_field_count?: number | null;
+  planned_travel_count?: number | null;
 
   total_headcount: number;
   util_pct: number | null;
-
   delta_forecast: number | null;
 
   has_sv: boolean;
@@ -28,20 +30,21 @@ type Day = {
   actual_units: number | null;
   actual_hours: number | null;
   actual_jobs: number | null;
+
+  work_count?: number | null;
+  bplow_count?: number | null;
+  prjt_count?: number | null;
+  trvl_count?: number | null;
+  bptrl_count?: number | null;
 };
 
 type UnitMode = "routes" | "hours" | "units";
 type DayState = "planned" | "built" | "actual";
-type LockVerdict = "MET" | "MISS" | "NEAR" | "NA";
-type LockMeta = { verdict: LockVerdict; note?: "Routes+Units" | "Units needed" };
+type LockVerdict = "MET" | "MISS" | "NA";
 
 function weekdayShort(iso: string): string {
   const d = new Date(`${iso}T00:00:00Z`);
   return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getUTCDay()];
-}
-
-function dayNum(iso: string): string {
-  return iso.slice(8, 10);
 }
 
 function n(v: unknown): number | null {
@@ -50,17 +53,37 @@ function n(v: unknown): number | null {
   return Number.isFinite(x) ? x : null;
 }
 
-function fmt(mode: UnitMode, v: number | null): string {
+function count(v: unknown): number {
+  return n(v) ?? 0;
+}
+
+function fmt(v: number | null): string {
   if (v === null) return "—";
-  if (mode === "routes") return String(Math.round(v));
   return String(Math.round(v * 10) / 10);
 }
 
-function fmtDelta(mode: UnitMode, v: number | null): string {
+function fmtWhole(v: number | null): string {
   if (v === null) return "—";
-  const rounded = mode === "routes" ? Math.round(v) : Math.round(v * 10) / 10;
+  return String(Math.round(v));
+}
+
+function fmtDelta(v: number | null): string {
+  if (v === null) return "—";
+  const rounded = Math.round(v * 10) / 10;
   if (rounded === 0) return "0";
   return rounded > 0 ? `+${rounded}` : String(rounded);
+}
+
+function fmtPct(v: number | null): string {
+  if (v === null) return "—";
+  return `${Math.round(v * 10) / 10}%`;
+}
+
+function safePct(num: number, den: number | null): number | null {
+  if (!den) return null;
+  const p = (num / den) * 100;
+  if (!Number.isFinite(p)) return null;
+  return Math.round(p * 10) / 10;
 }
 
 function stateForDay(d: Day): DayState {
@@ -69,103 +92,57 @@ function stateForDay(d: Day): DayState {
   return "planned";
 }
 
-function chipLabel(state: DayState): string {
+function stateLabel(state: DayState): string {
   if (state === "actual") return "Actual";
   if (state === "built") return "Built";
   return "Planned";
 }
 
-function safePct(num: number, den: number): number | null {
-  if (!den) return null;
-  const p = num / den;
-  if (!Number.isFinite(p)) return null;
-  return Math.round(p * 1000) / 10;
+function multiplier(mode: UnitMode): number {
+  if (mode === "hours") return 8;
+  if (mode === "units") return 96;
+  return 1;
 }
 
-function pillClassPlannedBuilt(deltaRoutes: number | null) {
-  if (deltaRoutes === null) return "bg-[var(--to-surface-2)] border-[var(--to-border)]";
-  if (deltaRoutes === 0) return "bg-[var(--to-surface-2)] border-[var(--to-border)]";
-  if (deltaRoutes >= 1 && deltaRoutes <= 2) return "bg-[rgba(16,185,129,0.16)] border-[rgba(16,185,129,0.35)]";
-  if (deltaRoutes > 2) return "bg-[rgba(234,179,8,0.18)] border-[rgba(234,179,8,0.40)]";
-  return "bg-[rgba(239,68,68,0.20)] border-[rgba(239,68,68,0.45)]";
+function quotaForMode(d: Day, mode: UnitMode): number | null {
+  if (mode === "routes") return n(d.quota_routes);
+  if (mode === "hours") return n(d.quota_hours);
+  return n(d.quota_units) ?? (n(d.quota_hours) === null ? null : count(d.quota_hours) * 12);
 }
 
-function pillClassActual(verdict: LockVerdict) {
-  if (verdict === "MET") return "bg-[rgba(16,185,129,0.16)] border-[rgba(16,185,129,0.35)]";
-  if (verdict === "NEAR") return "bg-[rgba(234,179,8,0.18)] border-[rgba(234,179,8,0.40)]";
-  if (verdict === "MISS") return "bg-[rgba(239,68,68,0.20)] border-[rgba(239,68,68,0.45)]";
-  return "bg-[var(--to-surface-2)] border-[var(--to-border)]";
+function deltaTone(delta: number | null) {
+  if (delta === null || delta === 0) return "text-[var(--to-ink-muted)]";
+  if (delta > 0) return "text-[rgba(16,185,129,0.95)]";
+  return "text-[rgba(239,68,68,0.95)]";
 }
 
-function verdictTextClass(verdict: LockVerdict) {
+function verdictTone(verdict: LockVerdict) {
   if (verdict === "MET") return "text-[rgba(16,185,129,0.95)]";
-  if (verdict === "NEAR") return "text-[rgba(234,179,8,0.95)]";
   if (verdict === "MISS") return "text-[rgba(239,68,68,0.95)]";
   return "text-[var(--to-ink-muted)]";
 }
 
-function deltaTextClassPlannedBuilt(deltaRoutes: number | null) {
-  if (deltaRoutes === null) return "text-[var(--to-ink-muted)]";
-  if (deltaRoutes === 0) return "text-[var(--to-ink-muted)]";
-  if (deltaRoutes >= 1 && deltaRoutes <= 2) return "text-[rgba(16,185,129,0.95)]";
-  if (deltaRoutes > 2) return "text-[rgba(234,179,8,0.95)]";
-  return "text-[rgba(239,68,68,0.95)]";
-}
+function computeVerdict(args: {
+  lockRoutes: number | null;
+  quotaRoutes: number | null;
+  actualUnits: number | null;
+  quotaUnits: number | null;
+}): LockVerdict {
+  const { lockRoutes, quotaRoutes, actualUnits, quotaUnits } = args;
 
-function computeActualLock(d: Day): LockMeta {
-  const quotaRoutes = n(d.quota_routes);
-  if (quotaRoutes === null) return { verdict: "NA" };
+  if (quotaRoutes === null || lockRoutes === null) return "NA";
+  if (lockRoutes >= quotaRoutes) return "MET";
 
-  const actualRoutes = n(d.actual_techs);
-  if (actualRoutes === null) return { verdict: "NA" };
-
-  if (actualRoutes >= quotaRoutes) return { verdict: "MET" };
-
-  const within10Pct = actualRoutes >= quotaRoutes * 0.9;
-
-  const quotaUnits = n(d.quota_units) ?? (n(d.quota_hours) === null ? null : (n(d.quota_hours) as number) * 12);
-  const actualUnits = n(d.actual_units);
-
-  if (within10Pct && quotaUnits !== null && actualUnits !== null) {
-    if (actualUnits >= quotaUnits) return { verdict: "MET", note: "Routes+Units" };
+  if (
+    lockRoutes >= quotaRoutes * 0.9 &&
+    quotaUnits !== null &&
+    actualUnits !== null &&
+    actualUnits >= quotaUnits
+  ) {
+    return "MET";
   }
 
-  return { verdict: "MISS" };
-}
-
-function valueForMode(args: { mode: UnitMode; state: DayState; d: Day }) {
-  const { mode, state, d } = args;
-
-  const quotaUnits = n(d.quota_units) ?? (n(d.quota_hours) === null ? null : (n(d.quota_hours) as number) * 12);
-
-  if (mode === "routes") {
-    const quota = n(d.quota_routes);
-    const sch = state === "actual" ? n(d.actual_techs) : n(d.scheduled_routes);
-    const delta = quota === null || sch === null ? null : sch - quota;
-    return { sch, quota, delta };
-  }
-
-  if (mode === "hours") {
-    const quota = n(d.quota_hours);
-    const sch =
-      state === "actual"
-        ? n(d.actual_hours)
-        : n(d.scheduled_routes) === null
-          ? null
-          : (n(d.scheduled_routes) as number) * 8;
-    const delta = quota === null || sch === null ? null : sch - quota;
-    return { sch, quota, delta };
-  }
-
-  const quota = quotaUnits;
-  const sch =
-    state === "actual"
-      ? n(d.actual_units)
-      : n(d.scheduled_routes) === null
-        ? null
-        : (n(d.scheduled_routes) as number) * 8 * 12;
-  const delta = quota === null || sch === null ? null : sch - quota;
-  return { sch, quota, delta };
+  return "MISS";
 }
 
 export function RouteLockCalendarClient(props: {
@@ -178,37 +155,115 @@ export function RouteLockCalendarClient(props: {
 }) {
   const [mode, setMode] = useState<UnitMode>("routes");
 
-  const byWeek = useMemo(() => {
-    const days = props.days;
-    if (!days.length) return [];
+  const fiscalLabel =
+    props.fiscal.label ?? `Fiscal ${props.fiscal.start_date} → ${props.fiscal.end_date}`;
 
-    const start = new Date(`${days[0].date}T00:00:00Z`);
-    const pad = start.getUTCDay();
-    const padded: Array<Day | null> = Array.from({ length: pad }).map(() => null);
+  const rows = useMemo(() => {
+    const m = multiplier(mode);
 
-    const all = [...padded, ...days];
+    return props.days.map((d) => {
+      const state = stateForDay(d);
 
-    const weeks: Array<Array<Day | null>> = [];
-    for (let i = 0; i < all.length; i += 7) weeks.push(all.slice(i, i + 7));
-    return weeks;
-  }, [props.days]);
+      const work = count(d.work_count);
+      const bplow = count(d.bplow_count);
+      const prjt = count(d.prjt_count);
+      const trvl = count(d.trvl_count);
+      const bptrl = count(d.bptrl_count);
 
-  const fiscalLabel = props.fiscal.label ?? `Fiscal ${props.fiscal.start_date} → ${props.fiscal.end_date}`;
+      const quotaRoutes = n(d.quota_routes);
+      const quota = quotaForMode(d, mode);
+      const quotaUnits =
+        n(d.quota_units) ??
+        (n(d.quota_hours) === null ? null : count(d.quota_hours) * 12);
+
+      const plannedFieldRoutes = count(d.planned_field_count ?? d.scheduled_routes);
+      const plannedTravelRoutes = count(d.planned_travel_count);
+      const plannedTotalRoutes = plannedFieldRoutes + plannedTravelRoutes;
+
+      const plannedLockRoutes = plannedFieldRoutes;
+      const plannedRunRoutes = plannedTotalRoutes;
+
+      const builtLockRoutes = work + bplow + prjt;
+      const builtRunRoutes = work + bplow + prjt + trvl + bptrl;
+
+      const actualTechs = n(d.actual_techs);
+      const actualLockRoutes =
+        actualTechs === null ? null : actualTechs - trvl - bptrl + bplow + prjt;
+      const actualRunRoutes =
+        actualTechs === null ? null : actualTechs + bplow + prjt;
+
+      const activeLockRoutes =
+        state === "actual"
+          ? actualLockRoutes
+          : state === "built"
+            ? builtLockRoutes
+            : plannedLockRoutes;
+
+      const activeRunRoutes =
+        state === "actual"
+          ? actualRunRoutes
+          : state === "built"
+            ? builtRunRoutes
+            : plannedRunRoutes;
+
+      const activeLock = activeLockRoutes === null ? null : activeLockRoutes * m;
+      const activeRun = activeRunRoutes === null ? null : activeRunRoutes * m;
+
+      const net = quota === null || activeLock === null ? null : activeLock - quota;
+      const runRatePct = safePct(activeRun ?? activeLock ?? 0, quota);
+
+      const verdict = computeVerdict({
+        lockRoutes: activeLockRoutes,
+        quotaRoutes,
+        actualUnits: state === "actual" ? n(d.actual_units) : null,
+        quotaUnits,
+      });
+
+      return {
+        day: d,
+        state,
+        quota,
+        plannedLock: plannedLockRoutes * m,
+        plannedTravel: plannedTravelRoutes * m,
+        plannedRun: plannedRunRoutes * m,
+        builtLock: builtLockRoutes * m,
+        builtRun: builtRunRoutes * m,
+        actualLock: actualLockRoutes === null ? null : actualLockRoutes * m,
+        actualRun: actualRunRoutes === null ? null : actualRunRoutes * m,
+        activeLock,
+        activeRun,
+        net,
+        runRatePct,
+        work,
+        bplow,
+        prjt,
+        trvl,
+        bptrl,
+        verdict,
+      };
+    });
+  }, [props.days, mode]);
 
   return (
     <div className="space-y-4">
       <Card>
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="text-sm font-semibold">Route Lock • {fiscalLabel}</div>
-            <div className="text-xs text-[var(--to-ink-muted)]">Planned → Built → Actual.</div>
+            <div className="text-xs text-[var(--to-ink-muted)]">
+              Quota → planned schedule → built validation → actual check-in.
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <select className="to-input h-8 text-xs" value={mode} onChange={(e) => setMode(e.target.value as UnitMode)}>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              className="to-input h-8 text-xs"
+              value={mode}
+              onChange={(e) => setMode(e.target.value as UnitMode)}
+            >
               <option value="routes">Routes</option>
               <option value="hours">Hours</option>
-              <option value="units">Units</option>
+              <option value="units">Points</option>
             </select>
 
             {props.prevHref ? (
@@ -233,115 +288,111 @@ export function RouteLockCalendarClient(props: {
       </Card>
 
       <Card className="p-0 overflow-hidden">
-        <div className="grid grid-cols-7 border-b border-[var(--to-border)] bg-[var(--to-surface-2)]">
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-            <div key={d} className="px-3 py-2 text-xs font-medium text-[var(--to-ink-muted)]">
-              {d}
-            </div>
-          ))}
-        </div>
+        <div className="overflow-x-auto">
+          <div className="max-h-[620px] overflow-y-auto">
+            <table className="min-w-[1540px] table-fixed border-collapse text-sm">
+              <thead className="sticky top-0 z-10 bg-background text-xs text-[var(--to-ink-muted)] shadow-sm">
+                <tr>
+                  {[
+                    ["Date", "w-[150px] text-left"],
+                    ["State", "w-[82px] text-left"],
+                    ["Quota", "w-[76px] text-right border-r"],
+                    ["Plan Lock", "w-[88px] text-right"],
+                    ["Plan Travel", "w-[92px] text-right"],
+                    ["Plan Run", "w-[84px] text-right border-r"],
+                    ["Built Lock", "w-[90px] text-right"],
+                    ["Built Run", "w-[86px] text-right border-r"],
+                    ["Actual Lock", "w-[94px] text-right"],
+                    ["Actual Run", "w-[90px] text-right border-r"],
+                    ["Net", "w-[62px] text-right"],
+                    ["WORK", "w-[62px] text-right"],
+                    ["BPLOW", "w-[66px] text-right"],
+                    ["PRJT", "w-[62px] text-right"],
+                    ["TRVL", "w-[62px] text-right"],
+                    ["BPTRL", "w-[66px] text-right"],
+                    ["Run Rate", "w-[82px] text-right"],
+                    ["SV", "w-[48px] text-left"],
+                    ["Check-In", "w-[76px] text-left"],
+                    ["Lock", "w-[62px] text-left"],
+                  ].map(([label, cls]) => (
+                    <th
+                      key={label}
+                      className={`border-b border-[var(--to-border)] bg-background px-3 py-3 ${cls}`}
+                    >
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
 
-        <div className="grid gap-0">
-          {byWeek.map((week, wi) => (
-            <div key={wi} className="grid grid-cols-7">
-              {week.map((d, di) => {
-                if (!d) return <div key={di} className="min-h-[118px] border-b border-r border-[var(--to-border)]" />;
+              <tbody>
+                {rows.map((row) => {
+                  const d = row.day;
+                  const isToday = d.date === props.todayIso;
 
-                const isToday = d.date === props.todayIso;
-                const state = stateForDay(d);
-                const routesSch = state === "actual" ? n(d.actual_techs) : n(d.scheduled_routes);
-                const routesQuota = n(d.quota_routes);
-                const deltaRoutes = routesSch === null || routesQuota === null ? null : routesSch - routesQuota;
-
-                const lock = state === "actual" ? computeActualLock(d) : { verdict: "NA" as const };
-
-                const pillClass = state === "actual" ? pillClassActual(lock.verdict) : pillClassPlannedBuilt(deltaRoutes);
-
-                let verdictLabel: string | null = null;
-                if (state === "actual") {
-                  if (lock.verdict === "MET") verdictLabel = lock.note === "Routes+Units" ? "MET (Routes+Units)" : "MET";
-                  if (lock.verdict === "MISS") verdictLabel = "MISS";
-                }
-
-                const schQuotaDelta = valueForMode({ mode, state, d });
-
-                const total = n(d.total_headcount) ?? 0;
-                const worked = state === "actual" ? (n(d.actual_techs) ?? 0) : (n(d.scheduled_techs) ?? 0);
-                const pct = safePct(worked, total);
-                const hcRatio = total > 0 ? `${worked}/${total}` : `${worked}/—`;
-                const hcPct = pct === null ? "—" : `${pct}%`;
-
-                return (
-                  <div
-                    key={d.date}
-                    className={[
-                      "min-h-[118px] border-b border-r border-[var(--to-border)] px-3 py-2 bg-transparent",
-                      isToday
-                        ? "bg-[rgba(59,130,246,0.07)] shadow-[inset_0_0_0_2px_rgba(59,130,246,0.55)]"
-                        : "",
-                    ].join(" ")}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={[
-                              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums border",
-                              pillClass,
-                            ].join(" ")}
-                          >
-                            <span>{dayNum(d.date)}</span>
-                            <span className="text-[var(--to-ink-muted)] font-normal">{weekdayShort(d.date)}</span>
-                          </div>
-
-                          {verdictLabel ? (
-                            <div className={["text-[10px] font-semibold tabular-nums", verdictTextClass(lock.verdict)].join(" ")}>
-                              {verdictLabel}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1 text-[10px]">
-                        <span className="rounded px-1.5 py-0.5 border border-[var(--to-border)]">{chipLabel(state)}</span>
-                      </div>
-                    </div>
-
-                    <div className="mt-2 space-y-1 text-xs tabular-nums">
-                      <div className="flex justify-between">
-                        <span className="text-[var(--to-ink-muted)]">Capacity</span>
-                        <span>{fmt(mode, schQuotaDelta.sch)}</span>
-                      </div>
-
-                      <div className="flex justify-between">
-                        <span className="text-[var(--to-ink-muted)]">Quota</span>
-                        <span>{fmt(mode, schQuotaDelta.quota)}</span>
-                      </div>
-
-                      <div className="flex justify-between">
-                        <span className="text-[var(--to-ink-muted)]">Δ</span>
-                        <span
-                          className={[
-                            "font-medium",
-                            state === "actual" ? verdictTextClass(lock.verdict) : deltaTextClassPlannedBuilt(deltaRoutes),
-                          ].join(" ")}
-                        >
-                          {fmtDelta(mode, schQuotaDelta.delta)}
+                  return (
+                    <tr
+                      key={d.date}
+                      className={[
+                        "border-b hover:bg-muted/30",
+                        isToday ? "bg-[rgba(59,130,246,0.07)]" : "",
+                      ].join(" ")}
+                    >
+                      <td className="px-3 py-2 font-medium tabular-nums">
+                        {d.date}{" "}
+                        <span className="text-[var(--to-ink-muted)]">
+                          {weekdayShort(d.date)}
                         </span>
-                      </div>
-
-                      <div className="flex justify-between pt-1">
-                        <span className="text-[var(--to-ink-muted)]">Utilization</span>
-                        <span>
-                          {hcRatio} <span className="text-[var(--to-ink-muted)]">({hcPct})</span>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+                      </td>
+                      <td className="px-3 py-2">{stateLabel(row.state)}</td>
+                      <td className="border-r px-3 py-2 text-right tabular-nums">
+                        {fmtWhole(row.quota)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmt(row.plannedLock)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.plannedTravel}</td>
+                      <td className="border-r px-3 py-2 text-right tabular-nums">
+                        {fmt(row.plannedRun)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmt(row.builtLock)}</td>
+                      <td className="border-r px-3 py-2 text-right tabular-nums">
+                        {fmt(row.builtRun)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmt(row.actualLock)}</td>
+                      <td className="border-r px-3 py-2 text-right tabular-nums">
+                        {fmt(row.actualRun)}
+                      </td>
+                      <td
+                        className={[
+                          "px-3 py-2 text-right font-medium tabular-nums",
+                          deltaTone(row.net),
+                        ].join(" ")}
+                      >
+                        {fmtDelta(row.net)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.work}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.bplow}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.prjt}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.trvl}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.bptrl}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {fmtPct(row.runRatePct)}
+                      </td>
+                      <td className="px-3 py-2">{d.has_sv ? "Yes" : "No"}</td>
+                      <td className="px-3 py-2">{d.has_check_in ? "Yes" : "No"}</td>
+                      <td
+                        className={[
+                          "px-3 py-2 font-semibold",
+                          verdictTone(row.verdict),
+                        ].join(" ")}
+                      >
+                        {row.verdict === "NA" ? "—" : row.verdict}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </Card>
     </div>

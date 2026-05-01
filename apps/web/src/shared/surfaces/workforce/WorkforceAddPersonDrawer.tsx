@@ -52,9 +52,8 @@ function statusLabel(row: WorkforcePersonSearchRow) {
   }
 
   if (row.active_assignment_count > 0) {
-    return `${row.active_assignment_count} active assignment${
-      row.active_assignment_count === 1 ? "" : "s"
-    }`;
+    return `${row.active_assignment_count} active assignment${row.active_assignment_count === 1 ? "" : "s"
+      }`;
   }
 
   return "No active workforce assignment";
@@ -247,13 +246,21 @@ export function WorkforceAddPersonDrawer({
                   >
                     Stage Add
                   </button>
+                ) : row.is_in_workforce && row.person_status === "active" ? (
+                  <button
+                    type="button"
+                    onClick={() => onStageAdd(row)}
+                    className="rounded-xl border border-[var(--to-accent)] bg-[color-mix(in_oklab,var(--to-accent)_10%,white)] px-3 py-2 text-xs"
+                  >
+                    Start New Assignment
+                  </button>
                 ) : (
                   <button
                     type="button"
                     disabled
                     className="rounded-xl border bg-muted px-3 py-2 text-xs text-muted-foreground"
                   >
-                    {row.is_in_workforce ? "Already Here" : "Not Eligible"}
+                    Not Eligible
                   </button>
                 )}
               </div>

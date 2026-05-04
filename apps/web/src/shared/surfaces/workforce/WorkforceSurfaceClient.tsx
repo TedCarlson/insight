@@ -162,6 +162,11 @@ function buildReportsToOptions(args: {
 }): ReportsToOption[] {
   const { rows, selected, draft } = args;
   const activeAffiliationId = draft.affiliation_id ?? selected.affiliation_id;
+  const selectedSeat = draft.seat_type ?? selected.seat_type;
+  const selectedTitle = draft.position_title ?? selected.position_title;
+
+  const selectedIsLeadership =
+    selectedSeat === "LEADERSHIP" || isLeadershipTitle(selectedTitle);
 
   const affiliationOptions: ReportsToOption[] = [];
   const companyOptions: ReportsToOption[] = [];
@@ -171,19 +176,21 @@ function buildReportsToOptions(args: {
       continue;
     }
 
+    const rowIsLeadership =
+      row.seat_type === "LEADERSHIP" ||
+      isLeadershipTitle(row.position_title) ||
+      hasDirectReports(rows, row.assignment_id);
+
+    if (!rowIsLeadership) continue;
+
     const sameAffiliation =
-      activeAffiliationId && row.affiliation_id === activeAffiliationId;
+      Boolean(activeAffiliationId) && row.affiliation_id === activeAffiliationId;
 
     const isCompanyLeadership =
-      !row.affiliation_id && row.seat_type === "LEADERSHIP";
-
-    const isAffiliationLeader =
-      Boolean(sameAffiliation) &&
-      (row.seat_type === "LEADERSHIP" ||
-        isLeadershipTitle(row.position_title) ||
-        hasDirectReports(rows, row.assignment_id));
-
-    if (!isAffiliationLeader && !isCompanyLeadership) continue;
+      !row.affiliation_id ||
+      row.affiliation === "ITG" ||
+      row.affiliation === "Company" ||
+      row.affiliation === "Internal";
 
     const option: ReportsToOption = {
       assignment_id: row.assignment_id,
@@ -192,12 +199,14 @@ function buildReportsToOptions(args: {
       affiliation: row.affiliation ?? null,
     };
 
-    if (isAffiliationLeader) {
+    if (sameAffiliation) {
       affiliationOptions.push(option);
       continue;
     }
 
-    companyOptions.push(option);
+    if (isCompanyLeadership || selectedIsLeadership) {
+      companyOptions.push(option);
+    }
   }
 
   const ordered = [
@@ -277,7 +286,7 @@ export function WorkforceSurfaceClient({ payload }: Props) {
     return () => {
       cancelled = true;
     };
-    }, [pcOrgId, search, tab]);
+  }, [pcOrgId, search, tab]);
 
   const filtered = useMemo(() => {
     if (tab === "INCOMPLETE") {
@@ -654,12 +663,16 @@ export function WorkforceSurfaceClient({ payload }: Props) {
                   Seat
                   <select
                     value={draft.seat_type}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const nextPosition = e.target.value || null;
+                      const nextIsLeadership = isLeadershipTitle(nextPosition);
+
                       setDraft({
                         ...draft,
-                        seat_type: e.target.value as WorkforceSeatType,
-                      })
-                    }
+                        position_title: nextPosition,
+                        seat_type: nextIsLeadership ? "LEADERSHIP" : draft.seat_type,
+                      });
+                    }}
                     className="h-10 rounded-xl border px-3"
                   >
                     {WORKFORCE_SEAT_OPTIONS.map((option) => {

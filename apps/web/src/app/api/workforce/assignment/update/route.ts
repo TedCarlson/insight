@@ -39,6 +39,20 @@ function isSeatType(value: unknown): value is SeatType {
   );
 }
 
+function clean(value: string | null | undefined) {
+  const next = String(value ?? "").trim();
+  return next || null;
+}
+
+function requiresTechIdForNewAssignment(seatType: SeatType | undefined) {
+  return (
+    seatType === undefined ||
+    seatType === "FIELD" ||
+    seatType === "TRAVEL" ||
+    seatType === "DROP_BURY"
+  );
+}
+
 export async function POST(req: Request) {
   const userClient = await supabaseServer();
   const adminClient = await supabaseAdmin();
@@ -72,15 +86,22 @@ export async function POST(req: Request) {
     );
   }
 
-  if (isNew && !changes.tech_id) {
-    return NextResponse.json(
-      { error: "Missing tech_id for new workforce assignment" },
-      { status: 400 }
-    );
-  }
-
   if ("seat_type" in changes && !isSeatType(changes.seat_type)) {
     return NextResponse.json({ error: "Invalid seat_type" }, { status: 400 });
+  }
+
+  if (
+    isNew &&
+    requiresTechIdForNewAssignment(changes.seat_type) &&
+    !clean(changes.tech_id)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Missing tech_id for field workforce assignment. Leadership/support assignments may be created without Tech ID.",
+      },
+      { status: 400 }
+    );
   }
 
   if (
@@ -98,7 +119,7 @@ export async function POST(req: Request) {
     p_assignment_id: isNew ? null : assignment_id,
     p_person_id: isNew ? changes.person_id ?? null : null,
     p_pc_org_id: isNew ? changes.pc_org_id ?? null : null,
-    p_tech_id: isNew ? changes.tech_id ?? null : null,
+    p_tech_id: isNew ? clean(changes.tech_id) : null,
     p_position_title:
       "position_title" in changes ? changes.position_title : null,
     p_office_id: "office_id" in changes ? changes.office_id : null,
